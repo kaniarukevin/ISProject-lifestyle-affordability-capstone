@@ -1,0 +1,31 @@
+# --- Environment ---
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+.env
+
+# --- KIHBS microdata and anything derived from it (licence: do not redistribute) ---
+data/raw/
+data/processed/kihbs_*.csv
+
+# --- Real user / volunteer financial data: NEVER commit (consent + privacy) ---
+data/real/
+*.statement.pdf
+mpesa_*.pdf
+mpesa_*.csv
+
+# --- Superseded by git history ---
+_backup_*/
+
+# --- Large or regenerable artefacts (add back deliberately if needed) ---
+*.log
+
+# --- Regenerable from scripts 07/08 (commit the scripts + seeds, not each regenerated copy) ---
+data/processed/engineered_features_*.csv
+data/processed/features_with_hmm_states.csv
+
+# --- Scratch ---
+data_generation/test_print.py
+data_generation/run_log.txt
