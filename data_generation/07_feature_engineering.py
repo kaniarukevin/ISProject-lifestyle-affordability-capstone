@@ -9,7 +9,6 @@ OUT_DIR = ROOT / "data" / "processed"
 EXPENDITURE_CATS = [
     "housing", "food_groceries", "transport", "utilities", "airtime_data",
     "mobile_money_transfers", "loan_repayment", "school_fees", "entertainment", "savings",
-    "investment_vehicle", "transaction_fees",
 ]
 
 tx = pd.read_csv(DATA_DIR / "transactions.csv")
