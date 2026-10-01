@@ -29,3 +29,5 @@ data/processed/features_with_hmm_states.csv
 # --- Scratch ---
 data_generation/test_print.py
 data_generation/run_log.txt
+
+data/processed/features_with_causal_states.csv
