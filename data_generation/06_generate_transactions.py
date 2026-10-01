@@ -67,16 +67,16 @@ STATE_RATIO = {"Stable": (0.60, 0.92), "Strained": (0.85, 1.10), "Critical": (1.
 
 # Discretionary spending categories: base share of the discretionary budget, and state multipliers.
 DISC_SHARE = {"food_groceries": 0.50, "transport": 0.14, "airtime_data": 0.07, "mobile_money_transfers": 0.09,
-              "entertainment": 0.07, "savings": 0.08, "investment_vehicle": 0.05}
+              "entertainment": 0.07, "savings": 0.13}   # savings includes MMF / SACCO-share contributions (investment folded in)
 STATE_MULT = {
-    "Stable":   {"entertainment": 1.0, "savings": 1.0, "investment_vehicle": 1.0},
-    "Strained": {"entertainment": 0.6, "savings": 0.45, "investment_vehicle": 0.4},
-    "Critical": {"entertainment": 0.25, "savings": 0.10, "investment_vehicle": 0.10, "food_groceries": 1.05},
+    "Stable":   {"entertainment": 1.0, "savings": 1.0},
+    "Strained": {"entertainment": 0.6, "savings": 0.45},
+    "Critical": {"entertainment": 0.25, "savings": 0.10, "food_groceries": 1.05},
 }
 # Household-level random effects (fixed per household): some never save / invest, tastes differ.
 PROP_SIGMA = {"food_groceries": 0.15, "transport": 0.35, "airtime_data": 0.30, "mobile_money_transfers": 0.50,
-              "entertainment": 0.50, "savings": 0.70, "investment_vehicle": 0.80}
-P_NEVER_SAVES, P_NEVER_INVESTS = 0.25, 0.65
+              "entertainment": 0.50, "savings": 0.70}
+P_NEVER_SAVES = 0.25
 
 
 def seasonal(cat, m):  # m = 1..12 (Jan..Dec)
@@ -229,7 +229,7 @@ def month_transactions(h, hid, m, state, income, fixed, prop, debts, rent, schoo
     fee = split_and_fee(amounts["mobile_money_transfers"], rng.lognormal(np.log(1200), 0.4), SEND_BANDS)
     cash_spend = 0.35 * (amounts["food_groceries"] + amounts["transport"] + amounts["entertainment"])
     fee += split_and_fee(cash_spend, rng.lognormal(np.log(2000), 0.4), WITHDRAW_BANDS)
-    amounts["transaction_fees"] = fee
+    amounts["mobile_money_transfers"] += fee      # M-Pesa fees are part of mobile-money spending (proposal category list)
 
     rows = [{"household_id": hid, "month": m, "category": c, "amount": round(float(a), 2), "true_state": state}
             for c, a in amounts.items()]
@@ -258,7 +258,6 @@ for _, h in households.iterrows():
 
     prop = {c: rng.lognormal(0, PROP_SIGMA[c]) for c in DISC_SHARE}
     if rng.random() < P_NEVER_SAVES: prop["savings"] = 0.02
-    if rng.random() < P_NEVER_INVESTS: prop["investment_vehicle"] = 0.0
     if h["gives_support"]: prop["mobile_money_transfers"] *= 2.0                           # real KIHBS flag: household sends money to others
 
     plan = make_income_plan(h)
