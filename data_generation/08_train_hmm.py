@@ -46,7 +46,7 @@ def align_states(true_labels, pred_labels):
 
 def fit_hmm(X, lengths, seed):
     """Unsupervised: start from KMeans clusters (no true labels used), then refine with EM."""
-    km = KMeans(n_clusters=3, n_init=10, random_state=seed).fit(X)
+    km = KMeans(n_clusters=3, n_init=10, random_state=seed).fit(X)  # type: ignore[arg-type]  (stub typing quirk)
     m = hmm.GaussianHMM(n_components=3, covariance_type="diag", n_iter=300, tol=1e-4,
                         init_params="st", params="stmc", min_covar=1e-3, random_state=seed)
     m.means_ = km.cluster_centers_
@@ -75,12 +75,15 @@ def main():
                 best_score, best_model = score, m
         except Exception as e:
             print(f"seed {seed} failed: {e}")
+    if best_model is None:
+        raise RuntimeError("HMM training failed for every seed")
     model = best_model
 
     # Test sequences and true labels are built from the SAME household order.
     X_test, lengths_test = load_sequences(df, test_ids)
     pred = model.predict(X_test, lengths_test)
-    true_idx = df[df.household_id.isin(test_ids)].sort_values(["household_id", "month"])["true_state"].map(STATE_IDX).values
+    # df is already sorted by (household_id, month) and test_ids is sorted, so row order matches the sequences above.
+    true_idx = np.array([STATE_IDX[s] for s in df[df.household_id.isin(test_ids)]["true_state"]])
     # Name states WITHOUT looking at true labels: the state with the highest mean income/expenditure ratio is Stable,
     # the lowest is Critical. (The old Hungarian match against true labels leaked the test labels.)
     order = np.argsort(-model.means_[:, 0])
@@ -88,7 +91,8 @@ def main():
     aligned = np.array([mapping[p] for p in pred])
 
     acc = accuracy_score(true_idx, aligned)
-    prec, rec, f1, _ = precision_recall_fscore_support(true_idx, aligned, average=None, labels=[0, 1, 2], zero_division=0)
+    scores = precision_recall_fscore_support(true_idx, aligned, average=None, labels=[0, 1, 2], zero_division=0)  # type: ignore[arg-type]
+    prec, rec, f1 = (np.asarray(a) for a in scores[:3])
     cm = confusion_matrix(true_idx, aligned, labels=[0, 1, 2])
     majority = np.bincount(true_idx).max() / len(true_idx)
 
@@ -108,7 +112,7 @@ def main():
     all_X, all_lengths = load_sequences(df, all_ids)
     all_pred = np.array([mapping[p] for p in model.predict(all_X, all_lengths)])
     df["hmm_predicted_state_idx"] = all_pred
-    df["hmm_predicted_state"] = df["hmm_predicted_state_idx"].map(dict(enumerate(STATES)))
+    df["hmm_predicted_state"] = [STATES[i] for i in all_pred]
     df.to_csv(DATA_DIR / "features_with_hmm_states.csv", index=False)
     print("\nSaved model to models/hmm_model.joblib")
     print("Saved features + HMM states to data/processed/features_with_hmm_states.csv")
