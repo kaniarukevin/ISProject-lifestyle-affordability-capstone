@@ -76,44 +76,99 @@ def _load():
 threading.Thread(target=_load, daemon=True).start()
 
 
+def allocation_by_category(rows):
+    """Latest monthly budget per category from the rows we have, or None."""
+    if rows.empty:
+        return None
+    latest = rows["t"].max()
+    current = rows[rows["t"] == latest]
+    return current.groupby("category")["allocated_kes"].sum().reindex(STORE["categories"]).fillna(0)
+
+
+def peer_breakdown():
+    """Median monthly spend per category across all households (computed once, then cached)."""
+    if "peer" not in STORE:
+        everyone = pd.concat(STORE["by_user"], names=["uid"]).reset_index(level=0)
+        per_month = everyone.pivot_table(index=["uid", "t"], columns="category",
+                                         values="actual_kes", aggfunc="sum")
+        med = per_month.reindex(columns=STORE["categories"]).fillna(0).median(axis=0)
+        STORE["peer"] = {c: round(float(med[c]), 2) for c in STORE["categories"]}
+    return STORE["peer"]
+
+
+def risk_label(total, reference):
+    """LOW / MODERATE / HIGH from forecast versus budget (thresholds are in the README)."""
+    if reference <= 0:
+        return "MODERATE"
+    ratio = total / reference
+    if ratio > 1.20:
+        return "HIGH"
+    if ratio > 1.00:
+        return "MODERATE"
+    return "LOW"
+
+
 def make_forecast(user_key, month, year):
+    cats = STORE["categories"]
     uid = STORE["alias"].get(user_key, user_key)  # accept user_id or user_profile_id
     g = STORE["by_user"].get(uid)
-    if g is None:
-        return None, ("unknown userId", 404)
-
     target = year * 12 + month
+
+    # Known household with no rows at all: peer median.
+    if g is None:
+        known = user_key in STORE["alias"] or user_key in set(STORE["alias"].values())
+        if not known:
+            return None, ("unknown userId", 404)
+        breakdown = peer_breakdown()
+        return {"estimatedTotal": round(sum(breakdown.values()), 2), "breakdown": breakdown,
+                "confidence": 0.1, "riskFlag": "MODERATE",
+                "note": "New household with no history. Using the median of all households.",
+                "method": "peer_median", "monthsOfHistory": 0}, None
+
+    budgets = g[g["t"] <= target]
+    alloc = allocation_by_category(budgets)
+    allocated_total = float(alloc.sum()) if alloc is not None else 0.0
+
     hist = g[(g["t"] < target) & (g["t"] >= target - WINDOW)]
     months = sorted(hist["t"].unique())
-    if not months:
-        return None, ("no spending history before the requested month", 422)
 
-    cats = STORE["categories"]
+    # Rows exist but no history before this month: use the budget, else the peer median.
+    if not months:
+        if allocated_total > 0:
+            breakdown = {c: round(float(alloc[c]), 2) for c in cats}
+            return {"estimatedTotal": round(sum(breakdown.values()), 2), "breakdown": breakdown,
+                    "confidence": 0.1, "riskFlag": "LOW",
+                    "note": "No spending history before this month. Forecast equals the household's budget.",
+                    "method": "budget_allocation", "monthsOfHistory": 0}, None
+        breakdown = peer_breakdown()
+        return {"estimatedTotal": round(sum(breakdown.values()), 2), "breakdown": breakdown,
+                "confidence": 0.1, "riskFlag": "MODERATE",
+                "note": "No history or budget for this household. Using the median of all households.",
+                "method": "peer_median", "monthsOfHistory": 0}, None
+
     matrix = (hist.pivot_table(index="t", columns="category", values="actual_kes", aggfunc="sum")
                   .reindex(index=months, columns=cats).fillna(0))
     medians = matrix.median(axis=0)
     breakdown = {c: round(float(medians[c]), 2) for c in cats}
     total = round(sum(breakdown.values()), 2)
 
-    # Placeholder confidence: steadier history and more months of it means higher confidence.
     totals = matrix.sum(axis=1)
     cv = float(totals.std(ddof=0) / totals.mean()) if totals.mean() > 0 else 1.0
     confidence = round(max(0.05, min(0.95, 1 - cv)) * min(1.0, len(months) / WINDOW), 2)
 
-    # riskFlag: forecast exceeds the household's budget for that month (or its latest budget before it).
-    budgets = g[g["t"] <= target]
-    latest = budgets["t"].max()
-    allocated = float(budgets.loc[budgets["t"] == latest, "allocated_kes"].sum())
-    risk_flag = bool(total > allocated)
+    note = None
+    if allocated_total > 0:
+        reference = allocated_total
+    else:
+        reference = float(totals.iloc[-1])
+        note = "No budget found. Risk compared with last month's actual spending."
+    if len(months) < 6:
+        short = f"Only {len(months)} months of history, so treat this as a rough estimate."
+        note = f"{note} {short}" if note else short
 
-    return {
-        "estimatedTotal": total,
-        "breakdown": breakdown,
-        "confidence": confidence,
-        "riskFlag": risk_flag,
-        "method": "trailing_median_12m",
-        "monthsOfHistory": len(months),
-    }, None
+    return {"estimatedTotal": total, "breakdown": breakdown, "confidence": confidence,
+            "riskFlag": risk_label(total, reference), "note": note,
+            "method": "trailing_median_12m", "monthsOfHistory": len(months)}, None
 
 
 @app.get("/health")
