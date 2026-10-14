@@ -92,7 +92,28 @@ def _load():
         print("data load failed:", exc, flush=True)
 
 
-threading.Thread(target=_load, daemon=True).start()
+_LOADER = {"pid": None}
+_LOADER_LOCK = threading.Lock()
+
+
+def ensure_loading():
+    """Start loading the data in THIS process, once.
+
+    gunicorn can import this file in its master process and then fork the worker. A thread
+    started before the fork does not exist in the worker, so the worker would wait forever
+    with dataLoaded=false. Each process (identified by its pid) therefore starts its own
+    loader, with fresh state instead of a copy made at fork time.
+    """
+    with _LOADER_LOCK:
+        if _LOADER["pid"] == os.getpid():
+            return
+        _LOADER["pid"] = os.getpid()
+        STORE["ready"] = threading.Event()
+        STORE["error"] = None
+        threading.Thread(target=_load, daemon=True).start()
+
+
+ensure_loading()
 
 
 def allocation_by_category(rows):
@@ -192,6 +213,7 @@ def make_forecast(user_key, month, year):
 
 @app.get("/health")
 def health():
+    ensure_loading()
     return jsonify(status="ok", dataLoaded=STORE["ready"].is_set()), 200
 
 
@@ -208,6 +230,7 @@ def forecast():
     if not 1 <= month <= 12 or not 2000 <= year <= 2100:
         return jsonify(error="month must be 1-12 and year a four-digit year"), 400
 
+    ensure_loading()
     if STORE["error"]:
         return jsonify(error="data could not be loaded"), 503
     if not STORE["ready"].wait(timeout=20):
