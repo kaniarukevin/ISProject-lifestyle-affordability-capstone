@@ -15,6 +15,7 @@ from flask import Flask, jsonify, request
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DIR = Path(os.environ.get("STAGING_DIR", ROOT / "data" / "staging"))
+BUNDLED_DIR = Path(__file__).resolve().parent / "data"  # compact copy shipped with the service
 API_BASE = os.environ.get("WASAA_API_BASE", "https://api-wasaa-lifestyle.webmasterskenya.com/api/v1")
 WINDOW = 12  # months of history used by the trailing median
 
@@ -47,10 +48,13 @@ def _find(obj, key):
 
 
 def _read_csv(name, session):
-    """Use the local CSV if present (development); otherwise download it from the staging API."""
+    """Load a table: local CSV (development), else the bundled copy, else download from the staging API."""
     local = LOCAL_DIR / f"{name}.csv"
     if local.exists():
         return pd.read_csv(local)
+    bundled = BUNDLED_DIR / f"{name}.csv.gz"
+    if bundled.exists():
+        return pd.read_csv(bundled)
     if "token" not in session:
         body = json.dumps({"email": os.environ["WASAA_EMAIL"],
                            "password": os.environ["WASAA_PASSWORD"]}).encode()
