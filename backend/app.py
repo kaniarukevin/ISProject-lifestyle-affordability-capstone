@@ -7,6 +7,7 @@ import io
 import json
 import os
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -51,10 +52,13 @@ def _read_csv(name, session):
     """Load a table: local CSV (development), else the bundled copy, else download from the staging API."""
     local = LOCAL_DIR / f"{name}.csv"
     if local.exists():
+        print(f"[load] {name}: using local CSV {local}", flush=True)
         return pd.read_csv(local)
     bundled = BUNDLED_DIR / f"{name}.csv.gz"
     if bundled.exists():
+        print(f"[load] {name}: using bundled copy {bundled}", flush=True)
         return pd.read_csv(bundled)
+    print(f"[load] {name}: no local or bundled copy, downloading from the API (slow)", flush=True)
     if "token" not in session:
         body = json.dumps({"email": os.environ["WASAA_EMAIL"],
                            "password": os.environ["WASAA_PASSWORD"]}).encode()
@@ -62,16 +66,27 @@ def _read_csv(name, session):
     return pd.read_csv(io.BytesIO(_http(f"{API_BASE}/sandbox/dataset/{name}.csv", token=session["token"])))
 
 
+def _timed_read(name, session):
+    """Read one table and log how many rows it had and how long it took."""
+    start = time.time()
+    df = _read_csv(name, session)
+    print(f"[load] {name}: {len(df)} rows in {time.time() - start:.1f}s", flush=True)
+    return df
+
+
 def _load():
     try:
+        print(f"[boot] bundled dir {BUNDLED_DIR} exists={BUNDLED_DIR.exists()} "
+              f"files={sorted(p.name for p in BUNDLED_DIR.glob('*')) if BUNDLED_DIR.exists() else []}", flush=True)
         session = {}
-        budget = _read_csv("budget_categories", session)
-        households = _read_csv("households", session)
+        budget = _timed_read("budget_categories", session)
+        households = _timed_read("households", session)
         budget["t"] = budget["year"] * 12 + budget["month"]
         STORE["categories"] = sorted(budget["category"].unique())
         STORE["by_user"] = {uid: g for uid, g in budget.groupby("user_profile_id")}
         STORE["alias"] = dict(zip(households["user_id"], households["user_profile_id"]))
         STORE["ready"].set()
+        print("[load] ready: data loaded, service can answer /forecast", flush=True)
     except Exception as exc:  # keep the service up; /forecast reports 503
         STORE["error"] = str(exc)
         print("data load failed:", exc, flush=True)
