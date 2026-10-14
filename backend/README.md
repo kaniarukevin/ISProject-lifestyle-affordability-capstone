@@ -83,8 +83,10 @@ Households with little or no history are not errors. They get a 200 and a low co
 
 - The budget for the requested month is used if it exists in the data. If it does not, the
   household's latest earlier budget is used.
-- History is read once, when the service starts, and is not refreshed while it runs. If the
-  data changes, the service needs a restart.
+- History comes from a snapshot of the staging data that ships with the service (`backend/data/`,
+  taken from the staging dataset on 7 October 2026: budget categories and households only).
+  It is loaded once when the service starts and is not refreshed while it runs. If the staging
+  data changes and you want the service to use it, tell me and I will regenerate the snapshot.
 
 ## Limitations
 
@@ -99,7 +101,7 @@ Environment variables:
 
 | Variable | Purpose |
 |---|---|
-| WASAA_EMAIL, WASAA_PASSWORD | Staging API login. Used when no local CSVs are present. |
+| WASAA_EMAIL, WASAA_PASSWORD | Staging API login. Only used if the bundled snapshot is missing (the API is slow for the large file, so the snapshot is preferred). |
 | WASAA_API_BASE | Optional. Defaults to the staging API. |
 | STAGING_DIR | Optional. Folder holding local CSVs, for development. |
 | PORT | Port to listen on. |
