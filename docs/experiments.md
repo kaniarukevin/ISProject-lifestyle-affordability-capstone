@@ -116,3 +116,22 @@ Findings:
 - The LSTM is the weakest. With 500 households and 6 to 11 training months per test month it has too few examples to learn sequence patterns, and the data has little month-to-month structure to find.
 
 Decision: the service forecasts the total with the blend when the month's budget exists, and the 12-month median otherwise. The LSTM is kept as an evaluated option, not deployed. Revisit if real (non-synthetic) data with longer histories becomes available.
+
+## 2026-10-22: Financial-state detection, HMM vs rule vs Random Forest classifier
+
+Data: KIHBS-informed synthetic dataset v2 (data/processed/features_with_causal_states.csv): 300 households x 12 months, same 240/60 household split as the HMM evaluation. Scored on the 60 held-out households (720 household-months) against the generator's true state. Notebook: notebooks/05_state_detection.ipynb.
+
+| Method | Exact | Within one | Stable/Critical mix-ups |
+|---|---|---|---|
+| Always guess the most common (Strained) | 0.378 | 1.000 | 0.000 |
+| HMM, causal states (unsupervised) | 0.531 | 0.936 | 0.064 |
+| Rule: thresholds on 3-month income/spending ratio, fitted on train | 0.532 | 0.896 | 0.104 |
+| Random Forest classifier (300 trees, min leaf 5), trained on train households | **0.799** | **0.993** | **0.007** |
+
+Within-one for the majority guess is 1.0 only because the guess is the middle state.
+
+Top features of the classifier: income_to_expenditure_ratio 0.162, savings_share 0.106, entertainment_share 0.090, ratio_roll3 0.077, overspend_flag 0.068, savings_rate 0.058, savings 0.057, overspend_roll3 0.051, entertainment 0.041, transport_share 0.022. All are plausible strain signals; no identifier or label-derived column appears, so no sign of leakage.
+
+Decision: the Random Forest classifier replaces the HMM as the state detector for the affordability score. The HMM is kept in the report as evaluated and replaced (deviation from the proposal, allowed by the supervisor on 13 Oct).
+
+Caveat: the classifier learns states as defined by the synthetic generator's rules, so this shows it recovers those definitions, not that it is accurate on real households. Real-user testing (friends' statements) is the check for that.
