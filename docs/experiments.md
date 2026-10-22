@@ -202,3 +202,29 @@ What to cut. Only entertainment, transport and airtime/data are treated as flexi
 | Save KES 6,000 more | cut KES 1,401 split across the three categories | n/a |
 
 When nothing is reachable, the app says so and suggests a cheaper option, a longer repayment period or saving up first.
+
+## 2026-10-22: Making the forecast deployable (only use what is known at request time)
+
+Notebook: notebooks/04_model_comparison.ipynb (last cells). Problem: the blend and the boosted tree used the budget of the month being forecast. For "next month" requests that budget usually does not exist yet (the bundled snapshot ends in Sep 2026), so the service would silently fall back to the median.
+
+| Method (months 16-18) | Total MAE (KES) | Total WAPE | Category WAPE |
+|---|---|---|---|
+| Median 12m (service until now) | 9,618 | 0.129 | 0.259 |
+| Blend with this month's budget | 7,931 | 0.106 | 0.226 |
+| Blend with last month's budget | 8,402 | 0.112 | 0.261 |
+| Hybrid, last month's budget, tree trained with this month's budget | 8,402 | 0.112 | 0.224 |
+| Hybrid, last month's budget, tree retrained on known inputs only | 8,402 | 0.112 | 0.264 |
+| Last month's budget for the total, median proportions for the split | 8,402 | 0.112 | 0.269 |
+
+Validation months 13-15 showed the same pattern (median 8,742; lagged blend 7,789).
+
+Findings:
+- Using last month's budget still cuts total error by about 13% against the median, on both validation and test months. This works for real next-month requests.
+- The boosted tree's category advantage came from this month's budget. Retrained on inputs known in advance, its split is no better than the median's. This was a leakage-style trap caught before deployment.
+- Scaling any split up to the larger blended total raises per-category error slightly (0.259 to 0.261-0.269), a small cost accepted for the better total, which is the headline number and drives riskFlag.
+- Months 16-18 have now been looked at several times, so these figures are indicative rather than a clean final test.
+
+Deployed rule (backend/app.py, make_forecast):
+- This month's budget exists and the last 3 months are present: total = 0.75 x budget + 0.25 x 12-month median, split by the boosted tree (method blend_budget_tree_split). Tree trained by scripts/train_forecast_tree.py on all staging months.
+- Only last month's budget exists: total = 0.75 x last month's budget + 0.25 x median, split by median proportions (blend_last_budget_median_split).
+- No budget: trailing 12-month median. Fallbacks for thin or no history unchanged.
