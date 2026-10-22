@@ -11,6 +11,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+import joblib
+import numpy as np
 import pandas as pd
 from flask import Flask, jsonify, request
 
@@ -150,6 +152,39 @@ def risk_label(total, reference):
     return "LOW"
 
 
+def _forecast_tree():
+    """Boosted tree that splits the total across categories; loaded once, None if not trained yet."""
+    if "tree" not in STORE:
+        path = Path(__file__).resolve().parent / "models" / "forecast_tree.joblib"
+        STORE["tree"] = joblib.load(path) if path.exists() else None
+    return STORE["tree"]
+
+
+def _budget_at(g, t, cats):
+    """The household's budget for month t by category, or None if there is no budget for that month."""
+    rows = g[g["t"] == t]
+    if rows.empty:
+        return None
+    s = rows.groupby("category")["allocated_kes"].sum().reindex(cats).fillna(0)
+    return s if s.sum() > 0 else None
+
+
+def _tree_split(matrix, target, cats, budget_now, budget_prev):
+    """Category proportions from the boosted tree; None when its inputs are not all available."""
+    art = _forecast_tree()
+    if art is None or budget_prev is None or not {target - 1, target - 2, target - 3} <= set(matrix.index):
+        return None
+    if any(c not in art["categories"] for c in cats):
+        return None
+    med, avg = matrix.median(axis=0), matrix.mean(axis=0)
+    X = np.array([[budget_now[c], matrix.loc[target - 1, c], matrix.loc[target - 2, c], matrix.loc[target - 3, c],
+                   med[c], avg[c], budget_prev[c], art["categories"].index(c)] for c in cats], dtype=float)
+    pred = np.clip(art["model"].predict(X), 0, None)
+    unused = np.array([med[c] == 0 and budget_now[c] == 0 for c in cats])
+    pred[unused] = 0.0   # not usually spent on and not budgeted: keep it at zero, not a few shillings
+    return pd.Series(pred, index=cats) if pred.sum() > 0 else None
+
+
 def make_forecast(user_key, month, year):
     cats = STORE["categories"]
     uid = STORE["alias"].get(user_key, user_key)  # accept user_id or user_profile_id
@@ -191,7 +226,23 @@ def make_forecast(user_key, month, year):
     matrix = (hist.pivot_table(index="t", columns="category", values="actual_kes", aggfunc="sum")
                   .reindex(index=months, columns=cats).fillna(0))
     medians = matrix.median(axis=0)
-    breakdown = {c: round(float(medians[c]), 2) for c in cats}
+    median_total = float(medians.sum())
+
+    # Forecast ensemble (docs/experiments.md, 22 Oct): the total leans on the budget, the split on the best
+    # method available. This month's budget: blend total + boosted-tree split. Only last month's budget:
+    # blend with it + median split. No budget: trailing median.
+    budget_now = _budget_at(g, target, cats)
+    budget_prev = _budget_at(g, target - 1, cats)
+    split, total_value, method = medians, median_total, "trailing_median_12m"
+    if budget_now is not None:
+        total_value = 0.75 * float(budget_now.sum()) + 0.25 * median_total
+        tree = _tree_split(matrix, target, cats, budget_now, budget_prev)
+        split, method = (tree, "blend_budget_tree_split") if tree is not None else (medians, "blend_budget_median_split")
+    elif budget_prev is not None:
+        total_value = 0.75 * float(budget_prev.sum()) + 0.25 * median_total
+        method = "blend_last_budget_median_split"
+    shares = split / split.sum() if split.sum() > 0 else pd.Series(1 / len(cats), index=cats)
+    breakdown = {c: round(float(shares[c] * total_value), 2) for c in cats}
     total = round(sum(breakdown.values()), 2)
 
     totals = matrix.sum(axis=1)
@@ -210,7 +261,7 @@ def make_forecast(user_key, month, year):
 
     return {"estimatedTotal": total, "breakdown": breakdown, "confidence": confidence,
             "riskFlag": risk_label(total, reference), "note": note,
-            "method": "trailing_median_12m", "monthsOfHistory": len(months)}, None
+            "method": method, "monthsOfHistory": len(months)}, None
 
 
 @app.get("/health")
