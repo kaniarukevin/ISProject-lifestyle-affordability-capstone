@@ -154,3 +154,30 @@ Decision: the hybrid ensemble. It matches the best total (by construction it kee
 So the deployed forecaster becomes: total = 0.75 x this month's budget + 0.25 x 12-month median; that total is split across categories in the proportions predicted by the gradient-boosted tree. Fallback when the month's budget is missing: 12-month median.
 
 Note: the category gain is real but small (about 0.005 WAPE); the main value of the learned component is the category split, not the total.
+
+## 2026-10-22: Affordability engine (score, scenarios, safety rule)
+
+Notebook: notebooks/06_affordability.ipynb. Data: KIHBS-informed synthetic dataset v2, same 240/60 household split.
+
+How it works. A scenario adds a monthly amount to a category (for example housing or loan_repayment) or changes income, applied to the household's last 3 months so the rolling features reflect it. All features are then recomputed with build_features(), which reproduces 07_feature_engineering.py (largest difference 5.8e-11). Score = 100 x (P(Stable) + 0.5 x P(Strained)).
+
+Consistency test (60 held-out households, rent +10%, +25%, +50% of income):
+
+| Score model | Held-out state accuracy | Households where a bigger cost never raises the score | Mean score now: Critical / Strained / Stable |
+|---|---|---|---|
+| Random Forest on all features | 0.799 | 0.40 | 15 / 55 / 74 |
+| Monotonic gradient boosting (two binary models, direction constraints, no share features) | 0.654 | **1.00** | 20 / 46 / 66 |
+
+The Random Forest relies on spending shares; raising one category lowers every other share, so a costlier scenario could look healthier. The monotonic model is constrained so that more spending, overspending and debt can only lower the score and more income, ratio and savings rate can only raise it, which guarantees consistent answers.
+
+Decisions:
+- Current financial state shown to the user: Random Forest (most accurate).
+- "Can I afford this?" score: monotonic model (never rewards a bigger cost). Deliberate trade of accuracy for consistency, as in credit scoring.
+- Verdict cut-offs set halfway between the mean scores of neighbouring states: Affordable at 56 and above, Stretch 33 to 55, Not affordable below 33.
+- Safety rule: if the monthly shortfall after the change is larger than the household's current savings, the verdict is Not affordable regardless of the score.
+
+Example (held-out household H063, income KES 25,314, score now 85): rent +10% of income gives 54 Stretch (KES 2,068 left); rent +25% gives 48 Stretch (short KES 1,729, coverable by pausing savings); a loan of 30% of income gives 46 and the safety rule makes it Not affordable (short KES 2,995, more than KES 1,772 saved; debt 30% of income).
+
+Saved as models/affordability_engine.joblib.
+
+Limits: trained on synthetic states; cut-offs and the scenario method should be checked against real households (friends' statements).
