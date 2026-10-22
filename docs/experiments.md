@@ -68,3 +68,30 @@ HMM, held-out causal states (720 household-months).
 - Predicted mix 16/36/48 vs true 30/38/32 (Stable/Strained/Critical).
 - Interpretation: Strained overlaps both neighbours by construction (median income/expenditure ratio 1.19 / 0.93 / 0.73). The HMM recovers the ordering but leans pessimistic.
 - Next: downstream check (#10), then LSTM (#12).
+
+## 2026-10-14: Staging-data baselines, budget blend and the riskFlag finding
+
+Data: Web Masters staging dataset (notebooks/03_staging_explore.ipynb). 500 households x 18 months (Apr 2025 to Sep 2026) x 17 categories; about 20% of budget rows PENDING; average actual total 74,433 KES per household-month. Backtest: forecast months 13-18 from the months before them (rolling, one step ahead), so no future data leaks into a forecast.
+
+Trailing baselines (total spend, six forecast months):
+- last month: MAE 11,621 KES, WAPE 0.156, category WAPE 0.350
+- median 3 months: MAE 9,556, WAPE 0.128, category WAPE 0.287
+- median 6 months: MAE 9,024, WAPE 0.121, category WAPE 0.266
+- median 12 months: MAE 9,180, WAPE 0.123, category WAPE 0.255 (best by category)
+- mean 12 months: MAE 8,779, WAPE 0.118, category WAPE 0.277 (best by total)
+- same month last year: MAE 12,428, WAPE 0.167
+- Decision: the service uses the 12-month median because the response includes a per-category breakdown and this has the lowest category WAPE.
+
+Budget as a clue. Forecasting with the month's own budget alone gives MAE 7,853 KES, WAPE 0.106, category WAPE 0.222, better than any history-only baseline. Blending budget weight w with the 12-month median:
+- w 0.00: MAE 9,180, WAPE 0.123, category 0.255
+- w 0.25: MAE 8,302, WAPE 0.112, category 0.241
+- w 0.50: MAE 7,788, WAPE 0.105, category 0.230
+- w 0.75: MAE 7,635, WAPE 0.103, category 0.222 (best)
+- w 1.00: MAE 7,853, WAPE 0.106, category 0.222
+- Caveat: this assumes the month's budget exists when the forecast is requested. Not yet confirmed with Web Masters. The service falls back to history when it does not.
+
+riskFlag. Overspending (actual above budget) happens in about 34% of budget lines and is almost flat across segments: APPROVED 0.34 vs PENDING 0.35; recurring 0.34 vs not 0.34; by category 0.33 to 0.37. Actual divided by budget has median 0.91, mean 0.99, 90th percentile 1.36. Nothing simple predicts which lines overspend, so riskFlag stays a transparent rule: forecast over 120% of budget is HIGH, over 100% MODERATE, otherwise LOW.
+
+Targets for the model comparison: beat total MAE 7,635 KES (WAPE 0.103) and category WAPE 0.222 on the same rolling backtest, or ship the blend and say so.
+
+Open: HMM downstream check (#10); boosted-tree and LSTM against these numbers.
