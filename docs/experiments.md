@@ -135,3 +135,22 @@ Top features of the classifier: income_to_expenditure_ratio 0.162, savings_share
 Decision: the Random Forest classifier replaces the HMM as the state detector for the affordability score. The HMM is kept in the report as evaluated and replaced (deviation from the proposal, allowed by the supervisor on 13 Oct).
 
 Caveat: the classifier learns states as defined by the synthetic generator's rules, so this shows it recovers those definitions, not that it is accurate on real households. Real-user testing (friends' statements) is the check for that.
+
+## 2026-10-22: Forecast ensembles, chosen on validation months and confirmed on held-out months
+
+Notebook: notebooks/04_model_comparison.ipynb (last cell). Staging data, same models as the earlier comparison. To avoid choosing on the months we report, candidates were compared on months 13-15 (validation) and the choice was confirmed on months 16-18 (final test).
+
+| Method | Val MAE (KES) | Val cat. WAPE | Test MAE (KES) | Test WAPE | Test cat. WAPE |
+|---|---|---|---|---|---|
+| blend_75_25 | 7,340 | 0.218 | 7,931 | 0.106 | 0.226 |
+| boosted tree | 8,218 | 0.204 | 8,917 | 0.119 | 0.212 |
+| LSTM | 9,363 | 0.247 | 10,586 | 0.142 | 0.258 |
+| **hybrid: blend total, boosted-tree split** | **7,340** | 0.213 | **7,931** | **0.106** | 0.221 |
+| average of blend and tree | 7,399 | 0.208 | 8,074 | 0.108 | 0.217 |
+| average of blend, tree and LSTM | 7,450 | 0.216 | 8,262 | 0.110 | 0.225 |
+
+Decision: the hybrid ensemble. It matches the best total (by construction it keeps the blend's total) and improves the category breakdown over the blend on both validation (0.213 vs 0.218) and the final test (0.221 vs 0.226). The averages give slightly better category accuracy but a worse total, and the total is the headline number for users and for Web Masters. Adding the LSTM to the average makes both worse.
+
+So the deployed forecaster becomes: total = 0.75 x this month's budget + 0.25 x 12-month median; that total is split across categories in the proportions predicted by the gradient-boosted tree. Fallback when the month's budget is missing: 12-month median.
+
+Note: the category gain is real but small (about 0.005 WAPE); the main value of the learned component is the category split, not the total.
