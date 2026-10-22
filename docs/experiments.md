@@ -95,3 +95,24 @@ riskFlag. Overspending (actual above budget) happens in about 34% of budget line
 Targets for the model comparison: beat total MAE 7,635 KES (WAPE 0.103) and category WAPE 0.222 on the same rolling backtest, or ship the blend and say so.
 
 Open: HMM downstream check (#10); boosted-tree and LSTM against these numbers.
+
+## 2026-10-22: Model comparison on staging data (boosted tree, LSTM)
+
+Notebook: notebooks/04_model_comparison.ipynb. Same rolling backtest as the 14 Oct entry (forecast months 13-18, each model retrained on earlier months only, scored by one shared function). The harness reproduced the earlier baselines exactly (median 9,180; blend 7,635), so the numbers are comparable.
+
+| Method | Total MAE (KES) | Total WAPE | Category WAPE |
+|---|---|---|---|
+| median_12m | 9,180 | 0.123 | 0.255 |
+| blend_75_25 (budget 0.75 + median 0.25) | **7,635** | **0.103** | 0.222 |
+| boosted tree, absolute-error loss | 8,567 | 0.115 | **0.208** |
+| boosted tree, squared-error loss | 8,155 | 0.110 | 0.237 |
+| LSTM (6-month sequence of spend and budget, plus this month's budget) | 9,974 | 0.134 | 0.253 |
+
+Features for the learned models: this month's budget, last three months, trailing median and mean, last month's budget, category. LSTM: one hidden layer of 64, MSE loss, 300 epochs, per-category scaling from training months only. All variants tried are reported; no further tuning on these test months.
+
+Findings:
+- No learned model beats the simple blend on total spend. In this dataset actual spending is close to budget times a random factor, so the budget carries most of the predictable signal and there is little left for a model to learn.
+- The absolute-error boosted tree is the best on per-category accuracy (0.208 vs 0.222). Aiming for the median per category makes each category closer but the sum too low, because spending relative to budget is right-skewed (median 0.91, mean 0.99). Switching to squared error raised the total accuracy but lost the category gain.
+- The LSTM is the weakest. With 500 households and 6 to 11 training months per test month it has too few examples to learn sequence patterns, and the data has little month-to-month structure to find.
+
+Decision: the service forecasts the total with the blend when the month's budget exists, and the 12-month median otherwise. The LSTM is kept as an evaluated option, not deployed. Revisit if real (non-synthetic) data with longer histories becomes available.
