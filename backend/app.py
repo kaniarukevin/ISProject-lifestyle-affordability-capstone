@@ -14,6 +14,8 @@ from pathlib import Path
 import pandas as pd
 from flask import Flask, jsonify, request
 
+from affordability import AffordabilityInputError, evaluate
+
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DIR = Path(os.environ.get("STAGING_DIR", ROOT / "data" / "staging"))
 BUNDLED_DIR = Path(__file__).resolve().parent / "data"  # compact copy shipped with the service
@@ -241,6 +243,15 @@ def forecast():
         return jsonify(error=err[0]), err[1]
     return jsonify(result), 200
 
+
+
+@app.post("/affordability")
+def affordability():
+    """Capstone endpoint: can this household afford a lifestyle change? Not part of the U-CS 37 contract."""
+    try:
+        return jsonify(evaluate(request.get_json(silent=True))), 200
+    except AffordabilityInputError as exc:
+        return jsonify(error=str(exc)), 400
 
 if __name__ == "__main__":
     app.run(port=int(os.environ.get("PORT", 8000)))
