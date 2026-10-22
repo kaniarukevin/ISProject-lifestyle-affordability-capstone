@@ -181,3 +181,24 @@ Example (held-out household H063, income KES 25,314, score now 85): rent +10% of
 Saved as models/affordability_engine.joblib.
 
 Limits: trained on synthetic states; cut-offs and the scenario method should be checked against real households (friends' statements).
+
+## 2026-10-22: Affordability engine, part 2 (purchases, savings goals, what to cut)
+
+Notebook: notebooks/06_affordability.ipynb, cells 8 to 10. Same held-out household H063 (income KES 25,314, KES 4,599 left over per month, score now 85).
+
+Decision types added:
+- One-off purchase: shown two ways. Paying in instalments is scored as a temporary monthly repayment (optional monthly interest, standard instalment formula); saving up first is price divided by monthly left-over. Phone KES 30,000 over 6 months: KES 5,000 a month, score 49 Stretch (short KES 401, coverable by pausing savings); or 7 months of saving.
+- Savings goal: saving more moves left-over money into savings, so it is compared with the left-over and not run through the score (the score counts savings as spending and would wrongly penalise it). Save KES 3,000 more: Affordable. Save KES 6,000 more: short KES 1,401.
+
+What to cut. Only entertainment, transport and airtime/data are treated as flexible (rent, food, school fees, loans and mobile-money support to family are not). Equal percentage cuts in 5% steps up to 50%, reported at two levels:
+- To break even (no monthly shortfall) and to be comfortable (verdict Affordable).
+- A first version that only aimed for Affordable asked for a 50% cut (KES 2,764) to fix a KES 401 shortfall, and reported the rent case as impossible; the two-level version fixes both.
+
+| Scenario | To break even | To be comfortable |
+|---|---|---|
+| Phone in instalments (KES 5,000/month) | cut 10% (KES 553), KES 152 left, score 50 | cut 50% (KES 2,764), KES 2,363 left, score 57 |
+| Rent +25% of income | cut 35% (KES 1,935), KES 205 left, score 50 | not reachable by flexible cuts |
+| Loan of 30% of income | not reachable | not reachable |
+| Save KES 6,000 more | cut KES 1,401 split across the three categories | n/a |
+
+When nothing is reachable, the app says so and suggests a cheaper option, a longer repayment period or saving up first.
