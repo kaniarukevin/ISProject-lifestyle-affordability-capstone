@@ -228,3 +228,32 @@ Deployed rule (backend/app.py, make_forecast):
 - This month's budget exists and the last 3 months are present: total = 0.75 x budget + 0.25 x 12-month median, split by the boosted tree (method blend_budget_tree_split). Tree trained by scripts/train_forecast_tree.py on all staging months.
 - Only last month's budget exists: total = 0.75 x last month's budget + 0.25 x median, split by median proportions (blend_last_budget_median_split).
 - No budget: trailing 12-month median. Fallbacks for thin or no history unchanged.
+
+## 2026-10-28: Dynamic budget
+
+Notebook: notebooks/07_dynamic_budget.ipynb. Data: KIHBS-informed synthetic dataset v2, same household split. Learned from 974 Stable household-months (train), tested on 215 (held out).
+
+Design: commitments (housing, loan repayment, school fees) set aside exactly; savings 10% of income or the goal's monthly amount; everyday money (food, transport, utilities, airtime/data, mobile-money transfers, entertainment) split across categories; dynamic rules for state and last month's overspending.
+
+Everyday split, average KES error per category on held-out Stable households:
+
+| Category | One-size (average Stable split) | Random Forest | Half and half |
+|---|---|---|---|
+| food_groceries | 1,845 | 1,806 | 1,721 |
+| transport | 1,405 | 1,476 | 1,413 |
+| utilities | 858 | 518 | 643 |
+| airtime_data | 638 | 528 | 575 |
+| mobile_money_transfers | 1,540 | 1,939 | 1,728 |
+| entertainment | 1,009 | 888 | 941 |
+| **Total** | 7,295 | 7,155 | **7,021** |
+
+Random Forest features: income, money available after commitments and savings, household size, dependants, formal job, urban/peri-urban. Personalising helps where costs depend on circumstances (utilities, airtime) and hurts for transfers to family, which depend on personal obligations. Decision rule fixed before the test: lowest total wins, so the budget uses half personalised, half average (shrinkage), 4% better than one-size.
+
+Design fix found in review: a first version lowered the savings rate for Strained (7%) and Critical (5%) households, which gave a Strained household more entertainment money than a Stable one. Corrected: savings stays at 10% for all; Strained moves 25% and Critical 50% of entertainment into savings. Family example (KES 25,300): entertainment 1,162 / 872 / 581 and savings 2,530 / 2,821 / 3,111 for Stable / Strained / Critical. Overspend rule: a category overspent last month loses half the overspend this month, moved to savings (student example: entertainment 605 to 305 after a KES 600 overspend).
+
+Does following the budget help? 44 held-out households that are Strained or Critical in their last month were given the budget and assumed to follow it for 3 months, then rescored with the deployed affordability and state models:
+- Average affordability score 30 now, 70 following the budget; 91% of households improve.
+- State seen by the model: of 27 Critical, 20 move to Strained and 4 to Stable; of 15 Strained, 4 move to Stable and 11 stay.
+- Caveat: following the budget means spending within income by construction, so this shows the budget is sound if followed, not that people will follow it. Real-user testing is the check for that. Student airtime/data limits (about KES 460) look low for students because the model learned from KIHBS households; to be checked with friends.
+
+Saved as backend/models/budget_split.joblib (1.8 MB); served by POST /budget.

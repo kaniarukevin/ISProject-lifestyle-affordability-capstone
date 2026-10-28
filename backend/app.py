@@ -17,6 +17,7 @@ import pandas as pd
 from flask import Flask, jsonify, request
 
 from affordability import AffordabilityInputError, evaluate
+import budget
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DIR = Path(os.environ.get("STAGING_DIR", ROOT / "data" / "staging"))
@@ -302,6 +303,15 @@ def affordability():
     try:
         return jsonify(evaluate(request.get_json(silent=True))), 200
     except AffordabilityInputError as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.post("/budget")
+def budget_route():
+    """Capstone endpoint: a dynamic monthly budget per category. Not part of the U-CS 37 contract."""
+    try:
+        return jsonify(budget.evaluate(request.get_json(silent=True))), 200
+    except budget.BudgetInputError as exc:
         return jsonify(error=str(exc)), 400
 
 if __name__ == "__main__":
