@@ -19,6 +19,8 @@ from flask import Flask, jsonify, request
 from affordability import AffordabilityInputError, evaluate
 import budget
 import commitments
+import store
+from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parent.parent
 LOCAL_DIR = Path(os.environ.get("STAGING_DIR", ROOT / "data" / "staging"))
@@ -27,6 +29,9 @@ API_BASE = os.environ.get("WASAA_API_BASE", "https://api-wasaa-lifestyle.webmast
 WINDOW = 12  # months of history used by the trailing median
 
 app = Flask(__name__)
+CORS(app)  # the Flutter web app runs on another origin; auth is by token, not cookies
+store.init()
+app.register_blueprint(store.bp)
 STORE = {"ready": threading.Event(), "error": None}
 
 

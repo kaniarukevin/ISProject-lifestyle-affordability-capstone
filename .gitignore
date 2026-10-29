@@ -33,3 +33,10 @@ data_generation/run_log.txt
 data/processed/features_with_causal_states.csv
 data/staging/
 data/staging/
+
+# Secrets and local databases: never commit
+.env.*
+!.env.example
+backend/local.db
+.neon
+node_modules/
