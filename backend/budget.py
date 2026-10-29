@@ -13,7 +13,7 @@ import pandas as pd
 import affordability as aff
 
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "budget_split.joblib"
-FIXED = ["housing", "loan_repayment", "school_fees"]
+FIXED = ["housing", "loan_repayment", "school_fees", "other_commitments"]
 STATES = ("Stable", "Strained", "Critical")
 TRIM_FUN = {"Stable": 0.0, "Strained": 0.25, "Critical": 0.50}
 _MODEL = {}
@@ -105,7 +105,7 @@ def evaluate(payload):
         raise BudgetInputError("income must be more than 0")
     fixed = payload.get("fixed") or {}
     if not isinstance(fixed, dict) or any(k not in FIXED for k in fixed):
-        raise BudgetInputError("fixed may only contain housing, loan_repayment and school_fees")
+        raise BudgetInputError("fixed may only contain housing, loan_repayment, school_fees and other_commitments")
     fixed = {k: _num(v, k) for k, v in fixed.items()}
     goal = _num(payload.get("goal_per_month", 0), "goal_per_month")
 
