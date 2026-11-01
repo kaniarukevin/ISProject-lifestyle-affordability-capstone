@@ -37,6 +37,11 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.person_outline),
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ProfileScreen())),
           ),
+          IconButton(
+            tooltip: 'Log out',
+            icon: const Icon(Icons.logout),
+            onPressed: () => context.read<AppState>().signOut(),
+          ),
         ],
       ),
       body: pages[_tab],

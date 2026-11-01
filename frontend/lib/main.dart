@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/profile_screen.dart';
 import 'state/app_state.dart';
@@ -21,7 +22,7 @@ class App extends StatelessWidget {
       );
 }
 
-/// First launch: ask for the household. After that: go straight to the app.
+/// Not signed in: account screen. Signed in without a household: profile. Otherwise: the app.
 class _Start extends StatelessWidget {
   const _Start();
 
@@ -29,6 +30,7 @@ class _Start extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     if (!state.loaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (!state.signedIn) return const AuthScreen();
     return state.profile == null ? const ProfileScreen() : const HomeScreen();
   }
 }
