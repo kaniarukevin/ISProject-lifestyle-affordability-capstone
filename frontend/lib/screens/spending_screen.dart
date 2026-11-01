@@ -116,7 +116,8 @@ class _MonthCard extends StatelessWidget {
       child: ExpansionTile(
         initiallyExpanded: true,
         title: Text('${_monthNames[group.month - 1]} ${group.year}'),
-        subtitle: Text('${kes(group.total)} · ${group.items.length} records'),
+        subtitle: Text('${kes(group.total)} · ${group.items.length} records'
+            '${group.oneOffTotal > 0 ? ' · one-off ${kes(group.oneOffTotal)}' : ''}'),
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -132,7 +133,8 @@ class _MonthCard extends StatelessWidget {
           ...group.items.map((t) => ListTile(
                 dense: true,
                 title: Text(t.description.isEmpty ? spendingCategories[t.category] ?? t.category : t.description),
-                subtitle: Text('${t.date.day} ${_monthNames[t.date.month - 1]} · ${spendingCategories[t.category]}'),
+                subtitle: Text('${t.oneOff ? 'One-off · ' : ''}${t.date.day} ${_monthNames[t.date.month - 1]} · '
+                    '${spendingCategories[t.category]}'),
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(kes(t.amount)),
                   IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => onDelete(t)),
@@ -156,6 +158,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
   final note = TextEditingController();
   String category = 'food_groceries';
   DateTime date = DateTime.now();
+  bool oneOff = false;
   String? error;
 
   @override
@@ -178,7 +181,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
       setState(() => error = 'Enter an amount above 0.');
       return;
     }
-    Navigator.of(context).pop(Txn(date: date, amount: a, category: category, description: note.text.trim()));
+    Navigator.of(context).pop(Txn(date: date, amount: a, category: category, description: note.text.trim(), oneOff: oneOff));
   }
 
   @override
@@ -204,6 +207,14 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
               leading: const Icon(Icons.event),
               title: Text('${date.day} ${_monthNames[date.month - 1]} ${date.year}'),
               trailing: TextButton(onPressed: _pickDate, child: const Text('Change')),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('One-off purchase'),
+              subtitle: const Text('Big, rare payments like a plot, a car deposit or a wedding. '
+                  'Shown, but not counted as your usual spending. Put any loan for it under Commitments.'),
+              value: oneOff,
+              onChanged: (v) => setState(() => oneOff = v),
             ),
             if (error != null) Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ]),

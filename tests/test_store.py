@@ -114,3 +114,92 @@ def test_only_known_websites_may_call_from_a_browser(client):
     bad = client.get("/health", headers={"Origin": "https://evil.example.com"})
     assert ok.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
     assert "Access-Control-Allow-Origin" not in bad.headers
+
+
+def test_overview_needs_a_household_first(client):
+    h = signup(client)
+    assert client.get("/me/overview", headers=h).status_code == 400
+
+
+def _student(client):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Allowance", "amount": 12000}]})
+    for m in (8, 9, 10):
+        client.post("/me/transactions", headers=h, json=[
+            {"date": f"2026-{m:02d}-02", "amount": 4000, "category": "housing"},
+            {"date": f"2026-{m:02d}-05", "amount": 3500 + m * 10, "category": "food_groceries"},
+            {"date": f"2026-{m:02d}-09", "amount": 900, "category": "transport"}])
+    return h
+
+
+def test_overview_gives_state_score_and_this_months_forecast(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["has_data"] and o["state"] in ("Stable", "Strained", "Critical") and 0 <= o["score"] <= 100
+    assert (o["forecast"]["year"], o["forecast"]["month"]) == (2026, 11)
+    assert o["forecast"]["method"] == "trailing_median"
+    assert abs(o["forecast"]["total"] - 8490) <= 3                    # median of 8480, 8490, 8500
+    assert abs(o["forecast"]["breakdown"]["food_groceries"] - 3590) <= 3
+    assert o["latest"]["left_over"] == 12000 - (4000 + 3600 + 900) and not o["latest"]["partial"]
+
+
+def test_sparse_categories_do_not_collapse_the_forecast(client, monkeypatch):
+    """Found in testing: one big month and categories used only now and then gave a forecast of KES 0."""
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 12, 2))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 50000}]})
+    client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-09-03", "amount": 20000, "category": "housing"},
+        {"date": "2026-10-03", "amount": 1000000, "category": "entertainment"},
+        {"date": "2026-11-03", "amount": 4000, "category": "utilities"},
+        {"date": "2026-11-04", "amount": 300, "category": "transport"}])
+    fc = client.get("/me/overview", headers=h).get_json()["forecast"]
+    assert abs(fc["total"] - 20000) <= 3                              # median of 20,000 / 1,000,000 / 4,300
+
+
+def test_the_month_in_progress_is_shown_but_not_used_for_the_forecast(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    before = client.get("/me/overview", headers=h).get_json()["forecast"]["total"]
+    client.post("/me/transactions", headers=h, json={"date": "2026-11-02", "amount": 100000, "category": "entertainment"})
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["forecast"]["total"] == before and o["latest"]["partial"] and o["latest"]["spent"] == 100000
+
+
+def test_saved_budget_steers_the_forecast(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    budget = {"housing": 4000, "food_groceries": 3000, "transport": 800}
+    client.put("/me/budgets/2026/11", headers=h, json={"budget": budget})
+    fc = client.get("/me/overview", headers=h).get_json()["forecast"]
+    assert fc["method"] == "blend_budget_median"
+    assert abs(fc["breakdown"]["food_groceries"] - (0.75 * 3000 + 0.25 * 3590)) <= 3
+
+
+def test_one_off_purchases_stay_out_of_usual_spending(client, monkeypatch):
+    """Found in testing: a KES 1,000,000 apartment made October look like reckless overspending."""
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    before = client.get("/me/overview", headers=h).get_json()
+    client.post("/me/transactions", headers=h, json={"date": "2026-10-20", "amount": 1000000,
+                                                     "category": "housing", "one_off": True,
+                                                     "description": "Apartment deposit"})
+    after = client.get("/me/overview", headers=h).get_json()
+    assert after["forecast"]["total"] == before["forecast"]["total"]
+    assert (after["state"], after["score"]) == (before["state"], before["score"])
+    assert after["latest"]["one_off"] == 1000000 and after["latest"]["spent"] == before["latest"]["spent"]
+    listed = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    assert any(t["one_off"] for t in listed)
+
+
+def test_old_database_gets_the_new_column_without_losing_data(tmp_path):
+    db = tmp_path / "old.db"
+    from sqlalchemy import create_engine as ce, text as tx
+    with ce(f"sqlite:///{db}").begin() as c:
+        c.execute(tx("CREATE TABLE transactions (id INTEGER PRIMARY KEY, user_id INTEGER, day DATE, amount FLOAT, "
+                     "category VARCHAR(40), description VARCHAR(200), source VARCHAR(20))"))
+        c.execute(tx("INSERT INTO transactions VALUES (1, 1, '2026-10-01', 500, 'transport', '', 'manual')"))
+    engine = store.init(f"sqlite:///{db}")
+    with engine.connect() as c:
+        assert c.execute(tx("SELECT amount, one_off FROM transactions")).fetchall() == [(500.0, 0)]
