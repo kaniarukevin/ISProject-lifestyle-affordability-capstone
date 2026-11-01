@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import 'commitments_screen.dart';
 import 'profile_screen.dart';
 
 /// The app's main frame. Each tab is one step of the user journey; most are placeholders for now.
@@ -26,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       const _Placeholder(title: 'Budget', text: 'Coming: your monthly limits per category.'),
       const _Placeholder(title: 'Can I afford it?', text: 'Coming: test a lifestyle change before you commit.'),
-      const _Placeholder(title: 'Commitments', text: 'Coming: rent, fees, debts and goals.'),
+      const CommitmentsScreen(),
     ];
     return Scaffold(
       appBar: AppBar(

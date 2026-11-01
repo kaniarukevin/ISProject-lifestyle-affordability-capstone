@@ -80,4 +80,11 @@ class Api {
   }
 
   Future<void> putProfile(Map<String, dynamic> profile) => put('/me/profile', profile);
+
+  // ---- commitments ----
+  Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
+
+  /// Saves and returns the engine's summary: monthly figures, debt plans, goal amounts, warnings.
+  Future<Map<String, dynamic>> putCommitments(Map<String, dynamic> c) async =>
+      ((await put('/me/commitments', c)) as Map<String, dynamic>)['summary'] as Map<String, dynamic>;
 }
