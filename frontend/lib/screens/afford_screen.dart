@@ -263,7 +263,11 @@ class ResultScreen extends StatelessWidget {
           ),
           if (result['instalment_per_month_KES'] != null)
             _Box(title: 'Two ways to pay', children: [
-              Text('In instalments: ${kes(result['instalment_per_month_KES'] as num)} a month.'),
+              Text('In instalments: ${kes(result['instalment_per_month_KES'] as num)} a month'
+                  '${result['lasts_months'] != null ? ' for ${result['lasts_months']} month(s)' : ''}'
+                  '${result['total_paid_KES'] != null ? ', ${kes(result['total_paid_KES'] as num)} in total' : ''}.'),
+              if (result['pay_from_savings'] is Map && (result['pay_from_savings'] as Map)['possible'] == true)
+                Text('Or pay it all now from savings, keeping ${kes((result['pay_from_savings'] as Map)['savings_left_KES'] as num)}.'),
               Text(result['months_to_save_up_first'] is num
                   ? 'Or save up first: about ${result['months_to_save_up_first']} months from what you have left over.'
                   : 'Saving up first: ${result['months_to_save_up_first']}'),
@@ -276,6 +280,10 @@ class ResultScreen extends StatelessWidget {
                   after: (result['after'] as Map).cast<String, dynamic>()),
             ],
           ]),
+          if (result['cash_flow'] is List && (result['cash_flow'] as List).isNotEmpty)
+            _Box(title: 'Month by month', children: [
+              _CashFlow(rows: (result['cash_flow'] as List).map((r) => (r as Map).cast<String, dynamic>()).toList()),
+            ]),
           if (cut is Map && cut['to_break_even'] != null) ...[
             _cutPlan(context, 'To stop being short each month', cut['to_break_even']),
             _cutPlan(context, 'To be comfortable', cut['to_be_comfortable']),
@@ -314,6 +322,37 @@ class _Box extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// What happens to the money each month while paying: left over, paused saving, savings balance.
+class _CashFlow extends StatelessWidget {
+  const _CashFlow({required this.rows});
+  final List<Map<String, dynamic>> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final small = Theme.of(context).textTheme.bodySmall;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      ...rows.take(12).map((r) {
+        final parts = <String>['pay ${kes(r['pay_KES'] as num)}', '${kes(r['left_after_KES'] as num)} left'];
+        if ((r['saving_paused_KES'] as num) > 0) parts.add('saving paused (${kes(r['saving_paused_KES'] as num)})');
+        if ((r['from_savings_KES'] as num) > 0) parts.add('${kes(r['from_savings_KES'] as num)} from savings');
+        final bal = r['savings_balance_KES'] as num;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Text.rich(TextSpan(children: [
+            TextSpan(text: 'Month ${r['month']}: ', style: const TextStyle(fontWeight: FontWeight.w600)),
+            TextSpan(text: '${parts.join(', ')}. Savings: '),
+            TextSpan(text: kes(bal), style: TextStyle(color: bal < 0 ? Theme.of(context).colorScheme.error : null,
+                fontWeight: FontWeight.w600)),
+          ])),
+        );
+      }),
+      if (rows.length > 12) Text('…and ${rows.length - 12} more month(s) like this.', style: small),
+      if (rows.any((r) => (r['savings_balance_KES'] as num) < 0))
+        Text('A negative balance means your savings run out before it is paid off.', style: small),
+    ]);
+  }
 }
 
 class _BeforeAfter extends StatelessWidget {

@@ -203,6 +203,7 @@ def test_old_database_gets_the_new_column_without_losing_data(tmp_path):
     engine = store.init(f"sqlite:///{db}")
     with engine.connect() as c:
         assert c.execute(tx("SELECT amount, one_off FROM transactions")).fetchall() == [(500.0, 0)]
+        assert "savings_balance" in {col["name"] for col in store.inspect(engine).get_columns("profiles")}
 
 
 def test_budget_plan_uses_profile_commitments_and_history(client, monkeypatch):
@@ -299,3 +300,42 @@ def test_afford_rejects_bad_choices(client, monkeypatch, bad):
     monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
     h = _student(client)
     assert client.post("/me/afford", headers=h, json=bad).status_code == 400
+
+
+def test_savings_balance_is_saved_and_shown(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "savingsBalance": 15000,
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    assert client.get("/me/profile", headers=h).get_json()["savingsBalance"] == 15000
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["savings_balance"] == 15000 and o["score_explained"]
+
+
+def test_dashboard_and_afford_agree_on_the_household(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.put("/me/commitments", headers=h, json={"debts": [{"name": "SACCO", "balance": 20000,
+                                                             "annual_rate": 12, "monthly_payment": 2000}]})
+    o = client.get("/me/overview", headers=h).get_json()
+    a = client.post("/me/afford", headers=h, json={"preset": "income_change", "amount": 0}).get_json()
+    assert o["score"] == a["score_before"] and o["state"] == a["state_now"]
+
+
+def test_a_one_month_purchase_can_be_carried_by_savings(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                                         # about 3,000 left a month
+    phone = {"preset": "purchase", "price": 15000, "months": 1, "label": "Phone"}
+    assert client.post("/me/afford", headers=h, json=phone).get_json()["verdict"] == "Not affordable"
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "savingsBalance": 20000,
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    r = client.post("/me/afford", headers=h, json=phone).get_json()
+    assert r["verdict"] == "Stretch" and len(r["cash_flow"]) == 1
+
+
+def test_a_temporary_new_cost_is_labelled(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "school_fees",
+                                                   "amount": 2000, "months": 3, "label": "Course"}).get_json()
+    assert r["lasts_months"] == 3 and r["title"].endswith("for 3 month(s)")

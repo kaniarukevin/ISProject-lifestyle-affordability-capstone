@@ -121,18 +121,31 @@ def _facts(f):
             "savings_KES": round(r.savings)}
 
 
-def assess(m, changes=None, income_change=0.0):
-    """Score now and after a monthly change, with the savings safety rule and plain-language reasons."""
+def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0):
+    """Score now and after a monthly change, with the savings safety rule and plain-language reasons.
+
+    duration: how many months the change lasts (None = for good). A 1-month cost is applied to 1 month only,
+    not treated as permanent. savings_balance: money already saved; a temporary shortfall it can cover is a
+    Stretch, not Not affordable (found in testing, 1 Nov: a 1-month instalment was judged as a permanent cost)."""
+    span = min(int(duration), 3) if duration else 3
     bf = build_features(m).iloc[[-1]]
-    af = build_features(_apply(m, changes, income_change)).iloc[[-1]]
+    af = build_features(_apply(m, changes, income_change, months=span)).iloc[[-1]]
     sb, sa = _score(bf), _score(af)
     b, a = _facts(bf), _facts(af)
     verdict = _verdict(sa)
     shortfall = max(0, -a["left_over_KES"])
+    gap = max(0, shortfall - b["savings_KES"])          # still missing after pausing the usual monthly saving
+    balance = max(0, round(float(savings_balance or 0)))
     reasons = []
-    if shortfall > b["savings_KES"]:
+    if gap > 0 and duration and gap * int(duration) <= balance:
+        verdict = "Stretch"
+        reasons.append(f"For {int(duration)} month(s) you would be short KES {gap:,} a month even after pausing "
+                       f"savings. Your savings of KES {balance:,} cover that, leaving KES {balance - gap * int(duration):,}.")
+    elif gap > 0:
         verdict = "Not affordable"
         reasons.append(f"You would be short KES {shortfall:,} a month, more than the KES {b['savings_KES']:,} you save.")
+        if balance > 0:
+            reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {balance // gap} month(s).")
     elif shortfall > 0:
         reasons.append(f"You would be short KES {shortfall:,} a month; you could cover it only by pausing savings.")
     else:
@@ -142,10 +155,11 @@ def assess(m, changes=None, income_change=0.0):
     if a["spending_KES"] - a["savings_KES"] > a["income_KES"]:
         reasons.append("Your spending, before savings, would be more than you earn.")
     return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict,
-            "state_now": _state(bf), "before": b, "after": a, "reasons": reasons}
+            "state_now": _state(bf), "before": b, "after": a, "reasons": reasons,
+            "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None}
 
 
-def what_to_cut(m, changes=None, income_change=0.0):
+def what_to_cut(m, changes=None, income_change=0.0, **kw):
     """Smallest equal % cut to flexible spending to (1) stop being short, (2) reach Affordable."""
     typical = m.sort_values("month").tail(3)[FLEXIBLE].mean()
     break_even = comfortable = None
@@ -154,7 +168,7 @@ def what_to_cut(m, changes=None, income_change=0.0):
         cuts = {c: round(float(typical[c]) * pct / 100) for c in FLEXIBLE}
         for c, v in cuts.items():
             combined[c] = combined.get(c, 0) - v
-        r = assess(m, combined, income_change)
+        r = assess(m, combined, income_change, **kw)
         plan = {"cut_each_by_percent": pct, "monthly_cuts_KES": cuts, "total_cut_KES": sum(cuts.values()),
                 "left_over_after_KES": r["after"]["left_over_KES"], "score": r["score_after"], "verdict": r["verdict"]}
         if break_even is None and r["after"]["left_over_KES"] >= 0:
@@ -167,13 +181,16 @@ def what_to_cut(m, changes=None, income_change=0.0):
     return {"to_break_even": break_even or none, "to_be_comfortable": comfortable or none}
 
 
-def _advice(before, per_month, months=None):
+def _advice(before, per_month, months=None, balance=0):
     """When a change does not work, say what would: the most the household can take on per month."""
     room = before["left_over_KES"] + before["savings_KES"]   # left over, plus savings if paused
+    if months and balance > 0:
+        room += round(balance / months)                       # plus the savings balance, spread over the months
     if before["left_over_KES"] < 0 and room <= 0:
         return [f"You are already short KES {-before['left_over_KES']:,} a month before this change. "
                 "Bring your current spending within your income first."]
-    tips = [f"The most you could take on is about KES {max(0, room):,} a month, and only by pausing savings."]
+    how = "by pausing savings and using what you have saved" if months and balance > 0 else "and only by pausing savings"
+    tips = [f"The most you could take on is about KES {max(0, room):,} a month, {how}."]
     if months:
         tips.append(f"Over {months} months that is a price of up to about KES {max(0, room) * months:,}.")
         if room > 0:
@@ -181,20 +198,44 @@ def _advice(before, per_month, months=None):
     return tips
 
 
-def purchase(m, price, months=6, monthly_interest=0.0):
-    """One-off purchase: paying in instalments (scored) and saving up first (arithmetic)."""
+def _cash_flow(before, per_month, months, balance):
+    """Month by month while paying: what is left, whether the usual saving pauses, and the savings balance."""
+    left, usual_saving, bal, rows = before["left_over_KES"], before["savings_KES"], float(balance), []
+    for i in range(1, min(int(months), 36) + 1):
+        short = max(0.0, per_month - left)
+        paused = min(usual_saving, short)
+        drawn = short - paused
+        bal += usual_saving - paused - drawn
+        rows.append({"month": i, "pay_KES": round(per_month), "left_after_KES": round(max(0.0, left - per_month)),
+                     "saving_paused_KES": round(paused), "from_savings_KES": round(drawn),
+                     "savings_balance_KES": round(bal)})
+    return rows
+
+
+def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0):
+    """A purchase paid over `months` months (1 = pay it all now). The cost lasts only those months, the savings
+    balance can cover a temporary gap, and the answer says what happens month by month."""
     price, months, r = float(price), int(months), float(monthly_interest)
     if price <= 0 or months < 1 or r < 0:
         raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
+    balance = max(0.0, float(savings_balance or 0))
     per_month = price * r / (1 - (1 + r) ** -months) if r > 0 else price / months
-    result = assess(m, {"loan_repayment": per_month})
-    left = result["before"]["left_over_KES"]
-    result.update({"instalment_per_month_KES": round(per_month),
-                   "months_to_save_up_first": math.ceil(price / left) if left > 0 else None})
+    kw = {"duration": months, "savings_balance": balance}
+    result = assess(m, {"loan_repayment": per_month}, **kw)
+    left, saving = result["before"]["left_over_KES"], result["before"]["savings_KES"]
+    rate = left + saving                                   # what can be put aside each month
+    still_needed = max(0.0, price - balance)
+    result.update({"instalment_per_month_KES": round(per_month), "total_paid_KES": round(per_month * months),
+                   "cash_flow": _cash_flow(result["before"], per_month, months, balance),
+                   "months_to_save_up_first": 0 if still_needed == 0 else (math.ceil(still_needed / rate) if rate > 0 else None)})
+    if balance > 0:
+        result["pay_from_savings"] = {"possible": balance >= price, "savings_left_KES": round(balance - price)}
+        if balance >= price:
+            result["reasons"].append(f"You could also pay it all now from your savings and keep KES {round(balance - price):,}.")
     if result["verdict"] != "Affordable":
-        result["what_to_cut"] = what_to_cut(m, {"loan_repayment": per_month})
+        result["what_to_cut"] = what_to_cut(m, {"loan_repayment": per_month}, **kw)
     if result["verdict"] == "Not affordable":
-        result["advice"] = _advice(result["before"], per_month, months)
+        result["advice"] = _advice(result["before"], per_month, months, balance)
     if result["months_to_save_up_first"] is None:
         result["months_to_save_up_first"] = "Not possible yet: nothing is left over each month."
     return result
@@ -235,21 +276,31 @@ def evaluate(payload):
     if size < 1 or deps < 0:
         raise AffordabilityInputError("household_size must be at least 1 and num_dependants not negative")
     m = months_frame(payload.get("months"), size, deps)
+    try:
+        balance = float(payload.get("savings_balance", 0) or 0)
+    except (TypeError, ValueError):
+        raise AffordabilityInputError("savings_balance must be a number")
+    if balance < 0:
+        raise AffordabilityInputError("savings_balance cannot be negative")
     sc = payload.get("scenario") or {"type": "none"}
     kind = sc.get("type", "none")
     if kind == "none":
         return assess(m)
     if kind == "monthly_change":
         changes, inc = sc.get("changes") or {}, float(sc.get("income_change", 0) or 0)
-        result = assess(m, changes, inc)
+        lasts = sc.get("months")                         # None = for good; a number = a temporary change
+        if lasts is not None and (not isinstance(lasts, (int, float)) or lasts < 1):
+            raise AffordabilityInputError("scenario.months must be at least 1 (leave it out for a lasting change)")
+        kw = {"duration": int(lasts) if lasts else None, "savings_balance": balance}
+        result = assess(m, changes, inc, **kw)
         if result["verdict"] != "Affordable":
-            result["what_to_cut"] = what_to_cut(m, changes, inc)
+            result["what_to_cut"] = what_to_cut(m, changes, inc, **kw)
         if result["verdict"] == "Not affordable":
             extra = sum(float(v) for v in changes.values()) - inc
-            result["advice"] = _advice(result["before"], extra)
+            result["advice"] = _advice(result["before"], extra, kw["duration"], balance)
         return result
     if kind == "purchase":
-        return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0))
+        return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance)
     if kind == "savings_goal":
         return savings_goal(m, sc.get("extra_per_month", 0))
     raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase or savings_goal")
