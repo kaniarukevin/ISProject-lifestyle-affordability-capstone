@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/profile.dart';
+import '../services/api.dart';
 import '../state/app_state.dart';
 
 String kes(num v) => 'KES ${v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
@@ -36,7 +37,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
       return;
     }
-    await context.read<AppState>().saveProfile(draft);
+    try {
+      await context.read<AppState>().saveProfile(draft);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    }
     if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
