@@ -29,7 +29,11 @@ API_BASE = os.environ.get("WASAA_API_BASE", "https://api-wasaa-lifestyle.webmast
 WINDOW = 12  # months of history used by the trailing median
 
 app = Flask(__name__)
-CORS(app)  # the Flutter web app runs on another origin; auth is by token, not cookies
+# Only these websites may call the API from a browser: the app while developing on this machine, plus the
+# deployed app's address(es) listed in ALLOWED_ORIGINS on Render (comma-separated). Server-to-server callers
+# such as Web Masters are not affected by CORS.
+CORS(app, origins=[r"^https?://localhost(:\d+)?$", r"^https?://127\.0\.0\.1(:\d+)?$",
+                   *[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]])
 store.init()
 app.register_blueprint(store.bp)
 STORE = {"ready": threading.Event(), "error": None}
