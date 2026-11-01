@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/transaction.dart';
+
 /// Where the backend lives. Override when running locally:
 ///   flutter run -d chrome --dart-define=API_URL=http://localhost:8000
 const String apiUrl = String.fromEnvironment('API_URL', defaultValue: 'https://budget-forecast-cdc0.onrender.com');
@@ -80,6 +82,24 @@ class Api {
   }
 
   Future<void> putProfile(Map<String, dynamic> profile) => put('/me/profile', profile);
+
+  // ---- spending ----
+  Future<List<Txn>> getTransactions() async {
+    final d = await get('/me/transactions') as Map<String, dynamic>;
+    return (d['transactions'] as List).map((e) => Txn.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  /// One transaction or many (a parsed statement) in a single request.
+  Future<List<Txn>> addTransactions(List<Txn> txns) async {
+    final d = await post('/me/transactions', txns.map((t) => t.toJson()).toList()) as Map<String, dynamic>;
+    return (d['transactions'] as List).map((e) => Txn.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> deleteTransaction(int id) => delete('/me/transactions/$id');
+
+  /// Monthly totals per category plus income: the 'months' list the engines take.
+  Future<List<Map<String, dynamic>>> months() async =>
+      ((await get('/me/months') as Map<String, dynamic>)['months'] as List).cast<Map<String, dynamic>>();
 
   // ---- commitments ----
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
