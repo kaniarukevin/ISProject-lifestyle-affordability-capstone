@@ -110,6 +110,11 @@ class Api {
   /// Everything the dashboard shows: state, score, latest month and next month's forecast.
   Future<Map<String, dynamic>> overview() async => (await get('/me/overview')) as Map<String, dynamic>;
 
+  /// This month's dynamic budget plan, spending so far, and any budget already saved.
+  Future<Map<String, dynamic>> budgetPlan() async => (await get('/me/budget-plan')) as Map<String, dynamic>;
+
+  Future<void> saveBudget(int year, int month, Map<String, dynamic> plan) => put('/me/budgets/$year/$month', plan);
+
   // ---- commitments ----
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import 'budget_screen.dart';
 import 'commitments_screen.dart';
 import 'dashboard_screen.dart';
 import 'spending_screen.dart';
@@ -23,7 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
     context.watch<AppState>(); // rebuild when the household changes
     final pages = [
       DashboardScreen(onAddSpending: () => setState(() => _tab = 3)),
-      const _Placeholder(title: 'Budget', text: 'Coming: your monthly limits per category.'),
+      const BudgetScreen(),
       const _Placeholder(title: 'Can I afford it?', text: 'Coming: test a lifestyle change before you commit.'),
       const SpendingScreen(),
       const CommitmentsScreen(),

@@ -487,6 +487,62 @@ def overview():
                    forecast=fc, notes=notes)
 
 
+@bp.get("/me/budget-plan")
+@login_required
+def budget_plan():
+    """This month's dynamic budget, assembled from everything the user has saved: income (profile), commitments
+    (rent, fees, debts, goals), health state (completed months), and last month's saved budget and spending
+    (overspend rule). Also returns what has been spent so far this month and any budget already saved."""
+    import budget as bud
+    import commitments as cm
+    today = _today()
+    y, m = today.year, today.month
+    py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
+    with session() as s:
+        profile = s.get(Profile, g.user_id)
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        months, income, _ = _user_months(s, g.user_id)
+        c = s.get(Commitments, g.user_id)
+        saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
+        saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
+        saved_now_data = saved_now.data if saved_now else None
+        prev_limits = (saved_prev.data or {}).get("budget") if saved_prev else None
+    if income <= 0:
+        return jsonify(error="add your income in your household profile first"), 400
+
+    notes = []
+    fixed, goal = {}, 0
+    if c and c.data:
+        summary = cm.evaluate(c.data)
+        fixed, goal = dict(summary["for_budget"]["fixed"]), summary["for_budget"]["goal_per_month"]
+    complete = [mo for mo in months if (mo["year"], mo["month"]) < (y, m)]
+    current = next((mo for mo in months if (mo["year"], mo["month"]) == (y, m)), None)
+    # Rent, fees or loans recorded as spending but not entered as commitments: use the usual amount.
+    for cat, label in (("housing", "rent"), ("school_fees", "school fees"), ("loan_repayment", "loan repayments")):
+        usual = statistics.median([mo[cat] for mo in complete]) if complete else 0
+        if not fixed.get(cat) and usual > 0:
+            fixed[cat] = round(usual)
+            notes.append(f"Your usual {label} (KES {round(usual):,}) is set aside. Add it under Commitments to make it exact.")
+
+    payload = {"income": income, "fixed": fixed, "goal_per_month": goal,
+               "household": {"household_size": profile.household_size, "num_dependants": profile.dependants,
+                             "urban_rural": profile.urban_rural, "formal_job": profile.formal_job}}
+    if complete:
+        payload["months"] = complete[-12:]
+    else:
+        payload["state"] = "Stable"
+        notes.append("Your health state is assumed Stable until a full month of spending is recorded.")
+    prev_month = next((mo for mo in complete if (mo["year"], mo["month"]) == (py, pm)), None)
+    if isinstance(prev_limits, dict) and prev_month:
+        payload["last_month"] = {"limits": prev_limits,
+                                 "spent": {cat: prev_month[cat] for cat in SPENDING_CATEGORIES if cat in prev_limits}}
+    plan = bud.evaluate(payload)
+    plan["notes"] = notes + plan["notes"]
+    spent = {cat: round(current[cat]) for cat in SPENDING_CATEGORIES if current and current[cat] > 0}
+    return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data)
+
+
 # ---------------- commitments, budgets, scenarios ----------------
 
 @bp.get("/me/commitments")
