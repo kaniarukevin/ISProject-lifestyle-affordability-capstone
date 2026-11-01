@@ -15,18 +15,23 @@ const Map<String, String> spendingCategories = {
 };
 
 class Txn {
-  Txn({this.id, required this.date, required this.amount, required this.category, this.description = '', this.source = 'manual'});
+  Txn({this.id, required this.date, required this.amount, required this.category, this.description = '',
+      this.source = 'manual', this.oneOff = false});
 
   int? id;
   DateTime date;
   double amount;
   String category, description, source;
 
+  /// Big, rare payments (a plot, a car deposit, a wedding): shown, but not counted as usual spending.
+  bool oneOff;
+
   String get isoDate =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
 
   Map<String, dynamic> toJson() =>
-      {'date': isoDate, 'amount': amount, 'category': category, 'description': description, 'source': source};
+      {'date': isoDate, 'amount': amount, 'category': category, 'description': description, 'source': source,
+       'one_off': oneOff};
 
   factory Txn.fromJson(Map<String, dynamic> j) => Txn(
         id: j['id'] as int?,
@@ -35,6 +40,7 @@ class Txn {
         category: j['category'] as String,
         description: (j['description'] ?? '') as String,
         source: (j['source'] ?? 'manual') as String,
+        oneOff: (j['one_off'] ?? false) as bool,
       );
 }
 
@@ -57,10 +63,15 @@ class MonthGroup {
   final int year, month;
   final List<Txn> items = [];
   final Map<String, double> byCategory = {};
-  double total = 0;
+  double total = 0; // usual spending only
+  double oneOffTotal = 0;
 
   void add(Txn t) {
     items.add(t);
+    if (t.oneOff) {
+      oneOffTotal += t.amount;
+      return;
+    }
     total += t.amount;
     byCategory[t.category] = (byCategory[t.category] ?? 0) + t.amount;
   }

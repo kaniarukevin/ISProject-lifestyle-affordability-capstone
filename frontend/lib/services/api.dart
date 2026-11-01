@@ -46,7 +46,13 @@ class Api {
     } catch (_) {
       throw ApiException('Could not reach the server. Check your internet connection and try again.');
     }
-    final data = r.body.isEmpty ? null : jsonDecode(r.body);
+    dynamic data;
+    try {
+      data = r.body.isEmpty ? null : jsonDecode(r.body);
+    } on FormatException {
+      // A crash on the server returns an HTML error page, not JSON: report it instead of hanging.
+      throw ApiException('The server had a problem (${r.statusCode}). Please try again.', r.statusCode);
+    }
     if (r.statusCode >= 400) {
       final msg = data is Map && data['error'] != null ? data['error'].toString() : 'Something went wrong (${r.statusCode}).';
       throw ApiException(msg, r.statusCode);
@@ -100,6 +106,9 @@ class Api {
   /// Monthly totals per category plus income: the 'months' list the engines take.
   Future<List<Map<String, dynamic>>> months() async =>
       ((await get('/me/months') as Map<String, dynamic>)['months'] as List).cast<Map<String, dynamic>>();
+
+  /// Everything the dashboard shows: state, score, latest month and next month's forecast.
+  Future<Map<String, dynamic>> overview() async => (await get('/me/overview')) as Map<String, dynamic>;
 
   // ---- commitments ----
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import 'commitments_screen.dart';
+import 'dashboard_screen.dart';
 import 'spending_screen.dart';
 import 'profile_screen.dart';
 
@@ -19,13 +20,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final profile = context.watch<AppState>().profile!;
+    context.watch<AppState>(); // rebuild when the household changes
     final pages = [
-      _Placeholder(
-        title: 'Dashboard',
-        text: 'Coming next: your financial state, next month\'s forecast and where your money goes.\n\n'
-            'Monthly income so far: ${kes(profile.monthlyIncome)}',
-      ),
+      DashboardScreen(onAddSpending: () => setState(() => _tab = 3)),
       const _Placeholder(title: 'Budget', text: 'Coming: your monthly limits per category.'),
       const _Placeholder(title: 'Can I afford it?', text: 'Coming: test a lifestyle change before you commit.'),
       const SpendingScreen(),

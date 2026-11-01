@@ -5,6 +5,7 @@ what each user enters and what they decide, behind sign-up/log-in, so the app wo
 dynamic budget can see last month. Connection string comes from DATABASE_URL (never from code).
 """
 import os
+import statistics
 import threading
 import time
 from collections import defaultdict, deque
@@ -15,7 +16,7 @@ from pathlib import Path
 from flask import Blueprint, g, jsonify, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint,
-                        create_engine, delete, select)
+                        create_engine, delete, inspect, select, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -101,6 +102,9 @@ class Transaction(Base):
     category: Mapped[str] = mapped_column(String(40))
     description: Mapped[str] = mapped_column(String(200), default="")
     source: Mapped[str] = mapped_column(String(20), default="manual")   # manual, mpesa, bank_csv
+    # Big, rare payments (a plot, a car deposit, a wedding): shown, but kept out of usual spending,
+    # the health score and the forecast. Their ongoing cost (a mortgage) belongs in commitments as a debt.
+    one_off: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Commitments(Base):
@@ -144,8 +148,19 @@ def init(url=None):
         # Neon suspends idle databases: check connections before use and recycle them regularly.
         engine = create_engine(url, pool_pre_ping=True, pool_recycle=300, pool_size=5, max_overflow=5)
     Base.metadata.create_all(engine)
+    _upgrade(engine)
     _DB["engine"], _DB["Session"] = engine, sessionmaker(engine, expire_on_commit=False)
     return engine
+
+
+def _upgrade(engine):
+    """Small in-place upgrades for tables created by an earlier version (keeps existing data).
+    create_all() makes missing tables but never adds columns to existing ones."""
+    cols = {c["name"] for c in inspect(engine).get_columns("transactions")}
+    if "one_off" not in cols:
+        false = "0" if engine.dialect.name == "sqlite" else "FALSE"
+        with engine.begin() as conn:
+            conn.execute(text(f"ALTER TABLE transactions ADD COLUMN one_off BOOLEAN NOT NULL DEFAULT {false}"))
 
 
 def session():
@@ -320,7 +335,7 @@ def put_profile():
 
 def _tx_json(t):
     return {"id": t.id, "date": t.day.isoformat(), "amount": t.amount, "category": t.category,
-            "description": t.description, "source": t.source}
+            "description": t.description, "source": t.source, "one_off": bool(t.one_off)}
 
 
 @bp.get("/me/transactions")
@@ -349,7 +364,7 @@ def add_transactions():
             raise InputError("date must look like 2026-10-29")
         rows.append(Transaction(user_id=g.user_id, day=day, amount=_num(t.get("amount"), "amount"),
                                 category=t["category"], description=str(t.get("description", ""))[:200],
-                                source=str(t.get("source", "manual"))[:20]))
+                                source=str(t.get("source", "manual"))[:20], one_off=bool(t.get("one_off", False))))
     with session() as s:
         s.add_all(rows)
         s.commit()
@@ -365,23 +380,111 @@ def delete_transaction(tx_id):
     return (jsonify(deleted=True), 200) if n else (jsonify(error="not found"), 404)
 
 
-@bp.get("/me/months")
-@login_required
-def monthly_summary():
-    """Spending per category per month (oldest first) plus monthly income from the profile:
-    exactly the 'months' list the /affordability and /budget engines take."""
-    with session() as s:
-        txs = s.scalars(select(Transaction).where(Transaction.user_id == g.user_id)).all()
-        incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == g.user_id)).all()
+def _user_months(s, user_id):
+    """Spending per category per month (oldest first), with monthly income from the profile."""
+    txs = s.scalars(select(Transaction).where(Transaction.user_id == user_id)).all()
+    incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)).all()
     income = sum(i.amount * FREQUENCIES[i.frequency] / 12 for i in incomes)
-    by_month = {}
+    by_month, one_offs = {}, {}
     for t in txs:
         key = (t.day.year, t.day.month)
+        if t.one_off:
+            one_offs[key] = one_offs.get(key, 0.0) + t.amount
+            continue
         m = by_month.setdefault(key, {c: 0.0 for c in SPENDING_CATEGORIES})
         m[t.category] += t.amount
     months = [{"year": y, "month": mo, **cats, "income_primary": round(income, 2)}
               for (y, mo), cats in sorted(by_month.items())]
+    return months, income, one_offs
+
+
+@bp.get("/me/months")
+@login_required
+def monthly_summary():
+    """Exactly the 'months' list the /affordability and /budget engines take."""
+    with session() as s:
+        months, _, _ = _user_months(s, g.user_id)
     return jsonify(months=months)
+
+
+def _saved_budget(s, user_id, year, month):
+    b = s.scalar(select(Budget).where(Budget.user_id == user_id, Budget.year == year, Budget.month == month))
+    lines = (b.data or {}).get("budget") if b else None
+    return {c: float(lines.get(c, 0)) for c in SPENDING_CATEGORIES} if isinstance(lines, dict) else None
+
+
+def _today():
+    return date.today()
+
+
+def forecast_for_user(s, user_id, months, target_year, target_month):
+    """The user's own forecast. The total is the median of monthly totals (robust to one wild month, the
+    method that won the experiments, docs/experiments.md); it is split by the household's average share per
+    category. A per-category median is NOT used: most people skip some categories in some months, so the
+    median of each category is often 0 and the forecast collapsed to KES 0 (found in testing, 1 Nov).
+    With a saved budget for the month: 0.75 x budget + 0.25 x usual; with only last month's budget: the same
+    with that. The boosted-tree split is not used: it was trained on the 17 staging categories, not these 10."""
+    hist = months[-12:]
+    totals = [sum(m[c] for c in SPENDING_CATEGORIES) for m in hist]
+    usual_total = statistics.median(totals)
+    shares = {c: sum(m[c] / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in SPENDING_CATEGORIES}
+    norm = sum(shares.values()) or 1.0
+    usual = {c: usual_total * shares[c] / norm for c in SPENDING_CATEGORIES}
+    py, pm = (target_year, target_month - 1) if target_month > 1 else (target_year - 1, 12)
+    this_budget = _saved_budget(s, user_id, target_year, target_month)
+    last_budget = _saved_budget(s, user_id, py, pm)
+    if this_budget:
+        split, method = {c: 0.75 * this_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, "blend_budget_median"
+    elif last_budget:
+        split, method = {c: 0.75 * last_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, "blend_last_budget_median"
+    else:
+        split, method = usual, "trailing_median"
+    breakdown = {c: round(v) for c, v in split.items() if round(v) > 0}
+    return {"year": target_year, "month": target_month, "total": sum(breakdown.values()),
+            "breakdown": breakdown, "method": method, "months_used": len(hist)}
+
+
+@bp.get("/me/overview")
+@login_required
+def overview():
+    """Everything the dashboard shows in one call. The current calendar month is still in progress, so it is
+    shown as 'so far' and left out of the state and forecast (a half-recorded month looks deceptively cheap)."""
+    with session() as s:
+        profile = s.get(Profile, g.user_id)
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        months, income, one_offs = _user_months(s, g.user_id)
+        if not months:
+            return jsonify(has_data=False, income_monthly=round(income))
+        today = _today()
+        cur = (today.year, today.month)
+        complete = [m for m in months if (m["year"], m["month"]) < cur]
+        current = next((m for m in months if (m["year"], m["month"]) == cur), None)
+        basis = complete or months
+        fc = forecast_for_user(s, g.user_id, basis, *cur)
+    health = aff.evaluate({"household": {"household_size": profile.household_size,
+                                         "num_dependants": profile.dependants},
+                           "months": basis[-12:]})
+    shown = current or basis[-1]
+    spent = {c: round(shown[c]) for c in SPENDING_CATEGORIES if shown[c] > 0}
+    total = sum(spent.values())
+    notes = []
+    if not complete:
+        notes.append("You have only recorded spending for this month so far. Your health score and forecast "
+                     "become reliable once at least one full month is recorded.")
+    elif len(complete) < 3:
+        notes.append(f"Based on {len(complete)} full month(s) of records. Add more for a more reliable picture.")
+    if fc["total"] > income > 0:
+        notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
+                     f"KES {round(income):,}.")
+    return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
+                   state=health["state_now"], score=health["score_before"],
+                   latest={"year": shown["year"], "month": shown["month"], "spent": total, "by_category": spent,
+                           "left_over": round(income - total), "partial": current is not None,
+                           "one_off": round(one_offs.get((shown["year"], shown["month"]), 0))},
+                   history=[{"year": m["year"], "month": m["month"],
+                             "spent": round(sum(m[c] for c in SPENDING_CATEGORIES))} for m in months[-6:]],
+                   forecast=fc, notes=notes)
 
 
 # ---------------- commitments, budgets, scenarios ----------------

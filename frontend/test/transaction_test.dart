@@ -22,4 +22,15 @@ void main() {
     expect(spendingCategories.length, 10);
     expect(spendingCategories.containsKey('mobile_money_transfers'), isTrue);
   });
+
+  test('one-off purchases are kept apart from usual spending', () {
+    final g = groupByMonth([
+      Txn(date: DateTime(2026, 10, 3), amount: 3000, category: 'food_groceries'),
+      Txn(date: DateTime(2026, 10, 20), amount: 1000000, category: 'housing', oneOff: true),
+    ]).single;
+    expect(g.total, 3000);
+    expect(g.oneOffTotal, 1000000);
+    expect(g.byCategory.containsKey('housing'), isFalse);
+    expect(Txn(date: DateTime(2026, 10, 20), amount: 1, category: 'housing', oneOff: true).toJson()['one_off'], isTrue);
+  });
 }
