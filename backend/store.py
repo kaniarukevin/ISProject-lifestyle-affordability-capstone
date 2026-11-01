@@ -543,6 +543,106 @@ def budget_plan():
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data)
 
 
+def _afford_months(s, user_id):
+    """The household's recent months for affordability: completed months (or what exists), with commitments
+    from the Commitments screen counted even if they were never recorded as spending."""
+    import commitments as cm
+    months, _, _ = _user_months(s, user_id)
+    today = _today()
+    complete = [mo for mo in months if (mo["year"], mo["month"]) < (today.year, today.month)] or months
+    c = s.get(Commitments, user_id)
+    if c and c.data and complete:
+        fixed = cm.evaluate(c.data)["for_budget"]["fixed"]
+        for mo in complete:
+            for cat in ("housing", "school_fees", "loan_repayment"):
+                mo[cat] = max(mo[cat], float(fixed.get(cat, 0)))
+            # chama, insurance, support to family: payments to others
+            mo["mobile_money_transfers"] = max(mo["mobile_money_transfers"], float(fixed.get("other_commitments", 0)))
+    return complete[-12:]
+
+
+PRESETS = ("move_house", "new_expense", "new_baby", "purchase", "loan", "savings_goal", "income_change")
+
+
+def _scenario_from_preset(p, months):
+    """Turn a choice from the app ('move house, new rent 18,000') into an affordability-engine scenario.
+    Kept on the server so the logic is in one tested place."""
+    kind = p.get("preset")
+    if kind not in PRESETS:
+        raise InputError(f"preset must be one of {', '.join(PRESETS)}")
+
+    def usual(cat):
+        return statistics.median([mo[cat] for mo in months]) if months else 0.0
+
+    if kind == "move_house":
+        rent = _num(p.get("new_rent"), "new_rent")
+        changes = {"housing": rent - usual("housing")}
+        if p.get("extra_transport"):
+            changes["transport"] = _num(p["extra_transport"], "extra_transport")
+        return {"type": "monthly_change", "changes": changes}, f"Move to a place with rent of KES {round(rent):,}"
+    if kind == "new_expense":
+        cat = p.get("category")
+        if cat not in SPENDING_CATEGORIES:
+            raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES)}")
+        amount = _num(p.get("amount"), "amount")
+        label = str(p.get("label") or "A new monthly cost")[:60]
+        return {"type": "monthly_change", "changes": {cat: amount}}, f"{label}: KES {round(amount):,} a month"
+    if kind == "new_baby":
+        food, utilities = _num(p.get("food", 6000), "food"), _num(p.get("utilities", 1500), "utilities")
+        help_ = _num(p.get("house_help", 0), "house_help")
+        changes = {"food_groceries": food, "utilities": utilities}
+        if help_:
+            changes["mobile_money_transfers"] = help_      # wages paid to a house help
+        return {"type": "monthly_change", "changes": changes}, "A new baby"
+    if kind in ("purchase", "loan"):
+        price = _num(p.get("price" if kind == "purchase" else "amount"), "amount", 1)
+        months_n = int(_num(p.get("months", 6), "months", 1))
+        rate = _num(p.get("annual_rate", 0), "annual_rate")
+        label = str(p.get("label") or ("A purchase" if kind == "purchase" else "A loan"))[:60]
+        return ({"type": "purchase", "price": price, "months": months_n, "monthly_interest": rate / 1200},
+                f"{label}: KES {round(price):,} over {months_n} months")
+    if kind == "savings_goal":
+        target = _num(p.get("target"), "target", 1)
+        months_n = int(_num(p.get("months", 6), "months", 1))
+        label = str(p.get("label") or "A savings goal")[:60]
+        return ({"type": "savings_goal", "extra_per_month": target / months_n},
+                f"{label}: KES {round(target):,} in {months_n} months")
+    try:
+        delta = float(p.get("amount"))
+    except (TypeError, ValueError):
+        raise InputError("amount must be a number (negative for a drop in income)")
+    word = "rises" if delta >= 0 else "drops"
+    return {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
+
+
+@bp.post("/me/afford")
+@login_required
+def afford():
+    """'Can I afford this?' on the user's own saved data. Every check is kept in the history (scenarios)."""
+    b = _body()
+    with session() as s:
+        profile = s.get(Profile, g.user_id)
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        months = _afford_months(s, g.user_id)
+        if not months:
+            return jsonify(error="record your spending for a few weeks first, so the answer is about your real money"), 400
+        scenario, title = _scenario_from_preset(b, months)
+        try:
+            result = aff.evaluate({"household": {"household_size": profile.household_size,
+                                                 "num_dependants": profile.dependants},
+                                   "months": months, "scenario": scenario})
+        except aff.AffordabilityInputError as exc:
+            raise InputError(str(exc))
+        result["title"] = title
+        result["months_used"] = len(months)
+        row = Scenario(user_id=g.user_id, request=b, result=result)
+        s.add(row)
+        s.commit()
+        result["id"] = row.id
+    return jsonify(result), 200
+
+
 # ---------------- commitments, budgets, scenarios ----------------
 
 @bp.get("/me/commitments")

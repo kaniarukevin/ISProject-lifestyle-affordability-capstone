@@ -236,3 +236,66 @@ def test_budget_plan_shows_spending_so_far_and_saved_budget(client, monkeypatch)
     assert r["spent_so_far"] == {"transport": 700} and r["saved"] is None
     client.put("/me/budgets/2026/11", headers=h, json=r["plan"])
     assert client.get("/me/budget-plan", headers=h).get_json()["saved"]["total"] == 12000
+
+
+def test_afford_needs_some_spending_first(client):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 12000}]})
+    r = client.post("/me/afford", headers=h, json={"preset": "savings_goal", "target": 3000, "months": 3})
+    assert r.status_code == 400 and "spending" in r.get_json()["error"]
+
+
+def test_moving_house_uses_the_difference_from_current_rent(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                                           # usual rent 4,000, income 12,000
+    cheaper = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 3500}).get_json()
+    pricier = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 9000}).get_json()
+    assert cheaper["score_after"] >= cheaper["score_before"]
+    assert pricier["after"]["spending_KES"] - pricier["before"]["spending_KES"] == 5000
+    assert pricier["verdict"] == "Not affordable" and pricier["advice"]
+    assert pricier["title"] == "Move to a place with rent of KES 9,000"
+
+
+def test_every_preset_answers_and_is_kept_in_history(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    presets = [
+        {"preset": "new_expense", "category": "entertainment", "amount": 1500, "label": "Gym"},
+        {"preset": "new_baby"},
+        {"preset": "purchase", "price": 45000, "months": 12, "label": "Laptop"},
+        {"preset": "loan", "amount": 50000, "months": 12, "annual_rate": 14},
+        {"preset": "savings_goal", "target": 3000, "months": 3, "label": "Trip"},
+        {"preset": "income_change", "amount": -2000},
+        {"preset": "income_change", "amount": 5000},
+    ]
+    for p in presets:
+        r = client.post("/me/afford", headers=h, json=p)
+        assert r.status_code == 200, (p, r.get_json())
+        assert r.get_json()["verdict"]
+    assert len(client.get("/me/scenarios", headers=h).get_json()["scenarios"]) == len(presets)
+
+
+def test_a_raise_helps_and_a_pay_cut_hurts(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    up = client.post("/me/afford", headers=h, json={"preset": "income_change", "amount": 5000}).get_json()
+    down = client.post("/me/afford", headers=h, json={"preset": "income_change", "amount": -3000}).get_json()
+    assert up["score_after"] >= up["score_before"] >= down["score_after"]
+
+
+def test_commitments_count_even_if_not_recorded_as_spending(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    base = client.post("/me/afford", headers=h, json={"preset": "income_change", "amount": 0}).get_json()
+    client.put("/me/commitments", headers=h, json={"debts": [{"name": "SACCO", "balance": 20000,
+                                                             "annual_rate": 12, "monthly_payment": 2000}]})
+    with_debt = client.post("/me/afford", headers=h, json={"preset": "income_change", "amount": 0}).get_json()
+    assert with_debt["before"]["spending_KES"] == base["before"]["spending_KES"] + 2000
+
+
+@pytest.mark.parametrize("bad", [{"preset": "lottery"}, {"preset": "new_expense", "category": "pets", "amount": 5},
+                                 {"preset": "purchase", "price": 0}, {"preset": "income_change", "amount": "lots"}])
+def test_afford_rejects_bad_choices(client, monkeypatch, bad):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    assert client.post("/me/afford", headers=h, json=bad).status_code == 400

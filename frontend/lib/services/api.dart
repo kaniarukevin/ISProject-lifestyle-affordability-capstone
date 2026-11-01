@@ -115,6 +115,13 @@ class Api {
 
   Future<void> saveBudget(int year, int month, Map<String, dynamic> plan) => put('/me/budgets/$year/$month', plan);
 
+  /// 'Can I afford this?' on the user's own data. [choice] is a preset with its inputs.
+  Future<Map<String, dynamic>> afford(Map<String, dynamic> choice) async =>
+      (await post('/me/afford', choice)) as Map<String, dynamic>;
+
+  Future<List<Map<String, dynamic>>> scenarios() async =>
+      ((await get('/me/scenarios') as Map<String, dynamic>)['scenarios'] as List).cast<Map<String, dynamic>>();
+
   // ---- commitments ----
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
 
