@@ -12,6 +12,7 @@ import store  # noqa: E402
 @pytest.fixture()
 def client():
     store.init("sqlite://")
+    store._ATTEMPTS.clear()
     return svc.app.test_client()
 
 
@@ -92,3 +93,24 @@ def test_delete_account_removes_everything(client):
     client.post("/me/transactions", json={"date": "2026-10-01", "amount": 500, "category": "transport"}, headers=h)
     assert client.delete("/me", headers=h).status_code == 200
     assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "strong-pass-1"}).status_code == 401
+
+
+def test_repeated_wrong_passwords_lock_the_account_for_a_while(client):
+    signup(client)
+    for _ in range(5):
+        assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "wrong"}).status_code == 401
+    r = client.post("/auth/login", json={"email": "kevin@example.com", "password": "strong-pass-1"})
+    assert r.status_code == 429                      # even the right password waits now
+
+
+def test_sign_ups_from_one_network_are_limited(client):
+    codes = [client.post("/auth/register", json={"email": f"u{i}@example.com", "password": "strong-pass-1"}).status_code
+             for i in range(6)]
+    assert codes[:5] == [201] * 5 and codes[5] == 429
+
+
+def test_only_known_websites_may_call_from_a_browser(client):
+    ok = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    bad = client.get("/health", headers={"Origin": "https://evil.example.com"})
+    assert ok.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
+    assert "Access-Control-Allow-Origin" not in bad.headers

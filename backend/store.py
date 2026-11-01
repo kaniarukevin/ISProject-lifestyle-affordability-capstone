@@ -5,6 +5,9 @@ what each user enters and what they decide, behind sign-up/log-in, so the app wo
 dynamic budget can see last month. Connection string comes from DATABASE_URL (never from code).
 """
 import os
+import threading
+import time
+from collections import defaultdict, deque
 from datetime import date, datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -153,6 +156,32 @@ def session():
 
 # ---------------- auth ----------------
 
+# ---------------- rate limits (in memory; the service runs one worker) ----------------
+
+_ATTEMPTS = defaultdict(deque)
+_ATTEMPTS_LOCK = threading.Lock()
+
+
+def _client_ip():
+    """Render sits behind a proxy, so the caller's address is the first entry of X-Forwarded-For."""
+    return request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+
+
+def _recent(key, window):
+    """How many attempts were recorded for key within the last `window` seconds."""
+    now = time.monotonic()
+    with _ATTEMPTS_LOCK:
+        q = _ATTEMPTS[key]
+        while q and now - q[0] > window:
+            q.popleft()
+        return len(q)
+
+
+def _record(key):
+    with _ATTEMPTS_LOCK:
+        _ATTEMPTS[key].append(time.monotonic())
+
+
 def _serializer():
     return URLSafeTimedSerializer(os.environ.get("SECRET_KEY", "dev-only-change-me"), salt="auth")
 
@@ -203,6 +232,10 @@ def _bad_input(exc):
 
 @bp.post("/auth/register")
 def register():
+    ip = _client_ip()
+    if _recent(("register", ip), 3600) >= 5:
+        return jsonify(error="too many new accounts from this network, try again later"), 429
+    _record(("register", ip))
     b = _body()
     email = str(b.get("email", "")).strip().lower()
     password = str(b.get("password", ""))
@@ -221,11 +254,18 @@ def register():
 
 @bp.post("/auth/login")
 def login():
+    ip = _client_ip()
+    if _recent(("login-ip", ip), 300) >= 20:
+        return jsonify(error="too many log-in attempts, wait a few minutes"), 429
+    _record(("login-ip", ip))
     b = _body()
     email = str(b.get("email", "")).strip().lower()
+    if _recent(("login-fail", email), 900) >= 5:
+        return jsonify(error="too many wrong passwords for this account, wait 15 minutes"), 429
     with session() as s:
         user = s.scalar(select(User).where(User.email == email))
         if not user or not check_password_hash(user.password_hash, str(b.get("password", ""))):
+            _record(("login-fail", email))
             return jsonify(error="wrong email or password"), 401
         return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 200
 
