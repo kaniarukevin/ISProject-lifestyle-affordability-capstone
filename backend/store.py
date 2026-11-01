@@ -81,6 +81,7 @@ class Profile(Base):
     urban_rural: Mapped[str] = mapped_column(String(20), default="urban")
     formal_job: Mapped[bool] = mapped_column(Boolean, default=False)
     pays_own_fees: Mapped[bool] = mapped_column(Boolean, default=False)
+    savings_balance: Mapped[float] = mapped_column(Float, default=0.0)   # money already saved (M-Shwari, SACCO, bank)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
@@ -161,6 +162,9 @@ def _upgrade(engine):
         false = "0" if engine.dialect.name == "sqlite" else "FALSE"
         with engine.begin() as conn:
             conn.execute(text(f"ALTER TABLE transactions ADD COLUMN one_off BOOLEAN NOT NULL DEFAULT {false}"))
+    if "savings_balance" not in {c["name"] for c in inspect(engine).get_columns("profiles")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN savings_balance FLOAT NOT NULL DEFAULT 0"))
 
 
 def session():
@@ -297,6 +301,7 @@ def get_profile():
         incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == g.user_id)).all()
         return jsonify(householdSize=p.household_size, dependants=p.dependants, urbanRural=p.urban_rural,
                        formalJob=p.formal_job, paysOwnFees=p.pays_own_fees,
+                       savingsBalance=p.savings_balance or 0.0,
                        incomes=[{"name": i.name, "amount": i.amount, "frequency": i.frequency} for i in incomes])
 
 
@@ -324,6 +329,7 @@ def put_profile():
         p = s.get(Profile, g.user_id) or Profile(user_id=g.user_id)
         p.household_size, p.dependants, p.urban_rural = size, deps, where
         p.formal_job, p.pays_own_fees = bool(b.get("formalJob")), bool(b.get("paysOwnFees"))
+        p.savings_balance = _num(b.get("savingsBalance", 0) or 0, "savingsBalance")
         s.add(p)
         s.execute(delete(IncomeSource).where(IncomeSource.user_id == g.user_id))
         s.add_all(rows)
@@ -444,27 +450,62 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
             "breakdown": breakdown, "method": method, "months_used": len(hist)}
 
 
+def household_picture(s, user_id):
+    """ONE view of the household that the dashboard, the budget and 'Can I afford it?' all use, so their numbers
+    agree (found in testing, 1 Nov: each screen built its own and they disagreed).
+      months    every recorded month, oldest first (one-off purchases kept out)
+      complete  months before the current calendar month; the month in progress is never scored (it looks cheap)
+      current   the month in progress, or None
+      scored    the last 12 completed months (or what exists) with commitments counted even if never recorded
+                as spending - exactly what the engines score
+      fixed, goal_per_month   from the Commitments screen
+      savings_balance         money already saved (profile)"""
+    import commitments as cm
+    profile = s.get(Profile, user_id)
+    months, income, one_offs = _user_months(s, user_id)
+    today = _today()
+    cur = (today.year, today.month)
+    complete = [mo for mo in months if (mo["year"], mo["month"]) < cur]
+    current = next((mo for mo in months if (mo["year"], mo["month"]) == cur), None)
+    fixed, goal = {}, 0
+    c = s.get(Commitments, user_id)
+    if c and c.data:
+        summary = cm.evaluate(c.data)
+        fixed, goal = dict(summary["for_budget"]["fixed"]), summary["for_budget"]["goal_per_month"]
+    scored = [dict(mo) for mo in (complete or months)[-12:]]
+    for mo in scored:
+        for cat in ("housing", "school_fees", "loan_repayment"):
+            mo[cat] = max(mo[cat], float(fixed.get(cat, 0)))
+        # chama, insurance, support to family are payments to others; max, not +, so nothing is counted twice
+        mo["mobile_money_transfers"] = max(mo["mobile_money_transfers"], float(fixed.get("other_commitments", 0)))
+    return {"profile": profile, "income": income, "months": months, "complete": complete, "current": current,
+            "one_offs": one_offs, "scored": scored, "fixed": fixed, "goal_per_month": goal, "today": today,
+            "savings_balance": float(profile.savings_balance or 0) if profile else 0.0}
+
+
+SCORE_EXPLAINED = ("Your score (0-100) is how closely your recent months match households that stay on top of "
+                   "their money: 56 or more is comfortable, below 33 is at risk. Your state (Stable, Strained or "
+                   "Critical) describes your latest month on its own, so the two can differ for a while.")
+
+
 @bp.get("/me/overview")
 @login_required
 def overview():
     """Everything the dashboard shows in one call. The current calendar month is still in progress, so it is
     shown as 'so far' and left out of the state and forecast (a half-recorded month looks deceptively cheap)."""
     with session() as s:
-        profile = s.get(Profile, g.user_id)
+        pic = household_picture(s, g.user_id)
+        profile, months, income, one_offs = pic["profile"], pic["months"], pic["income"], pic["one_offs"]
         if profile is None:
             return jsonify(error="set up your household first"), 400
-        months, income, one_offs = _user_months(s, g.user_id)
         if not months:
-            return jsonify(has_data=False, income_monthly=round(income))
-        today = _today()
-        cur = (today.year, today.month)
-        complete = [m for m in months if (m["year"], m["month"]) < cur]
-        current = next((m for m in months if (m["year"], m["month"]) == cur), None)
+            return jsonify(has_data=False, income_monthly=round(income), savings_balance=round(pic["savings_balance"]))
+        complete, current = pic["complete"], pic["current"]
         basis = complete or months
-        fc = forecast_for_user(s, g.user_id, basis, *cur)
+        fc = forecast_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
     health = aff.evaluate({"household": {"household_size": profile.household_size,
                                          "num_dependants": profile.dependants},
-                           "months": basis[-12:]})
+                           "months": pic["scored"]})
     shown = current or basis[-1]
     spent = {c: round(shown[c]) for c in SPENDING_CATEGORIES if shown[c] > 0}
     total = sum(spent.values())
@@ -478,7 +519,8 @@ def overview():
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
     return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
-                   state=health["state_now"], score=health["score_before"],
+                   state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED,
+                   savings_balance=round(pic["savings_balance"]),
                    latest={"year": shown["year"], "month": shown["month"], "spent": total, "by_category": spent,
                            "left_over": round(income - total), "partial": current is not None,
                            "one_off": round(one_offs.get((shown["year"], shown["month"]), 0))},
@@ -494,16 +536,13 @@ def budget_plan():
     (rent, fees, debts, goals), health state (completed months), and last month's saved budget and spending
     (overspend rule). Also returns what has been spent so far this month and any budget already saved."""
     import budget as bud
-    import commitments as cm
-    today = _today()
-    y, m = today.year, today.month
-    py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
     with session() as s:
-        profile = s.get(Profile, g.user_id)
+        pic = household_picture(s, g.user_id)
+        profile, income = pic["profile"], pic["income"]
         if profile is None:
             return jsonify(error="set up your household first"), 400
-        months, income, _ = _user_months(s, g.user_id)
-        c = s.get(Commitments, g.user_id)
+        y, m = pic["today"].year, pic["today"].month
+        py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
         saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
         saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
         saved_now_data = saved_now.data if saved_now else None
@@ -512,12 +551,8 @@ def budget_plan():
         return jsonify(error="add your income in your household profile first"), 400
 
     notes = []
-    fixed, goal = {}, 0
-    if c and c.data:
-        summary = cm.evaluate(c.data)
-        fixed, goal = dict(summary["for_budget"]["fixed"]), summary["for_budget"]["goal_per_month"]
-    complete = [mo for mo in months if (mo["year"], mo["month"]) < (y, m)]
-    current = next((mo for mo in months if (mo["year"], mo["month"]) == (y, m)), None)
+    fixed, goal = dict(pic["fixed"]), pic["goal_per_month"]
+    complete, current = pic["complete"], pic["current"]
     # Rent, fees or loans recorded as spending but not entered as commitments: use the usual amount.
     for cat, label in (("housing", "rent"), ("school_fees", "school fees"), ("loan_repayment", "loan repayments")):
         usual = statistics.median([mo[cat] for mo in complete]) if complete else 0
@@ -529,7 +564,7 @@ def budget_plan():
                "household": {"household_size": profile.household_size, "num_dependants": profile.dependants,
                              "urban_rural": profile.urban_rural, "formal_job": profile.formal_job}}
     if complete:
-        payload["months"] = complete[-12:]
+        payload["months"] = pic["scored"]          # the same months the dashboard and Afford screen score
     else:
         payload["state"] = "Stable"
         notes.append("Your health state is assumed Stable until a full month of spending is recorded.")
@@ -541,24 +576,6 @@ def budget_plan():
     plan["notes"] = notes + plan["notes"]
     spent = {cat: round(current[cat]) for cat in SPENDING_CATEGORIES if current and current[cat] > 0}
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data)
-
-
-def _afford_months(s, user_id):
-    """The household's recent months for affordability: completed months (or what exists), with commitments
-    from the Commitments screen counted even if they were never recorded as spending."""
-    import commitments as cm
-    months, _, _ = _user_months(s, user_id)
-    today = _today()
-    complete = [mo for mo in months if (mo["year"], mo["month"]) < (today.year, today.month)] or months
-    c = s.get(Commitments, user_id)
-    if c and c.data and complete:
-        fixed = cm.evaluate(c.data)["for_budget"]["fixed"]
-        for mo in complete:
-            for cat in ("housing", "school_fees", "loan_repayment"):
-                mo[cat] = max(mo[cat], float(fixed.get(cat, 0)))
-            # chama, insurance, support to family: payments to others
-            mo["mobile_money_transfers"] = max(mo["mobile_money_transfers"], float(fixed.get("other_commitments", 0)))
-    return complete[-12:]
 
 
 PRESETS = ("move_house", "new_expense", "new_baby", "purchase", "loan", "savings_goal", "income_change")
@@ -586,7 +603,11 @@ def _scenario_from_preset(p, months):
             raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES)}")
         amount = _num(p.get("amount"), "amount")
         label = str(p.get("label") or "A new monthly cost")[:60]
-        return {"type": "monthly_change", "changes": {cat: amount}}, f"{label}: KES {round(amount):,} a month"
+        sc, title = {"type": "monthly_change", "changes": {cat: amount}}, f"{label}: KES {round(amount):,} a month"
+        if p.get("months"):                       # a temporary cost, e.g. a 3-month course
+            sc["months"] = int(_num(p["months"], "months", 1))
+            title += f" for {sc['months']} month(s)"
+        return sc, title
     if kind == "new_baby":
         food, utilities = _num(p.get("food", 6000), "food"), _num(p.get("utilities", 1500), "utilities")
         help_ = _num(p.get("house_help", 0), "house_help")
@@ -612,7 +633,11 @@ def _scenario_from_preset(p, months):
     except (TypeError, ValueError):
         raise InputError("amount must be a number (negative for a drop in income)")
     word = "rises" if delta >= 0 else "drops"
-    return {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
+    sc, title = {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
+    if p.get("months"):                           # e.g. HELB delayed for 2 months
+        sc["months"] = int(_num(p["months"], "months", 1))
+        title += f" for {sc['months']} month(s)"
+    return sc, title
 
 
 @bp.post("/me/afford")
@@ -621,17 +646,18 @@ def afford():
     """'Can I afford this?' on the user's own saved data. Every check is kept in the history (scenarios)."""
     b = _body()
     with session() as s:
-        profile = s.get(Profile, g.user_id)
+        pic = household_picture(s, g.user_id)
+        profile, months = pic["profile"], pic["scored"]
         if profile is None:
             return jsonify(error="set up your household first"), 400
-        months = _afford_months(s, g.user_id)
         if not months:
             return jsonify(error="record your spending for a few weeks first, so the answer is about your real money"), 400
         scenario, title = _scenario_from_preset(b, months)
         try:
             result = aff.evaluate({"household": {"household_size": profile.household_size,
                                                  "num_dependants": profile.dependants},
-                                   "months": months, "scenario": scenario})
+                                   "months": months, "scenario": scenario,
+                                   "savings_balance": pic["savings_balance"]})
         except aff.AffordabilityInputError as exc:
             raise InputError(str(exc))
         result["title"] = title

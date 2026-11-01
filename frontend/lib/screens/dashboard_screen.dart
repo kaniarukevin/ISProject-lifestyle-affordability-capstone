@@ -87,7 +87,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _StateCard(state: d['state'] as String, score: (d['score'] as num).toInt()),
+          _StateCard(state: d['state'] as String, score: (d['score'] as num).toInt(),
+              explained: d['score_explained'] as String?),
           ...((d['notes'] as List?) ?? []).map((n) => Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(n as String, style: theme.textTheme.bodySmall),
@@ -102,6 +103,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 8),
                 _Line('Money in', kes(d['income_monthly'] as num)),
                 _Line('Spent', kes(latest['spent'] as num)),
+                if (((d['savings_balance'] ?? 0) as num) > 0) _Line('Savings', kes(d['savings_balance'] as num)),
                 if (((latest['one_off'] ?? 0) as num) > 0)
                   _Line('One-off purchases (not counted)', kes(latest['one_off'] as num)),
                 const Divider(),
@@ -179,9 +181,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
 }
 
 class _StateCard extends StatelessWidget {
-  const _StateCard({required this.state, required this.score});
+  const _StateCard({required this.state, required this.score, this.explained});
   final String state;
   final int score;
+  final String? explained;
 
   @override
   Widget build(BuildContext context) {
@@ -210,7 +213,19 @@ class _StateCard extends StatelessWidget {
                 backgroundColor: color.withValues(alpha: 0.15)),
           ),
           const SizedBox(height: 4),
-          Text('Score $score out of 100', style: theme.textTheme.bodySmall),
+          Row(children: [
+            Text('Score $score out of 100', style: theme.textTheme.bodySmall),
+            if (explained != null)
+              IconButton(
+                icon: const Icon(Icons.info_outline, size: 18),
+                tooltip: 'What does this mean?',
+                onPressed: () => showDialog<void>(context: context, builder: (_) => AlertDialog(
+                      title: const Text('Score and state'),
+                      content: Text(explained!),
+                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+                    )),
+              ),
+          ]),
         ]),
       ),
     );

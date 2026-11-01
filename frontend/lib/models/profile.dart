@@ -46,6 +46,7 @@ class Profile {
     this.urbanRural = 'urban',
     this.formalJob = false,
     this.paysOwnFees = false,
+    this.savingsBalance = 0,
     List<IncomeSource>? incomes,
   }) : incomes = incomes ?? [];
 
@@ -54,6 +55,7 @@ class Profile {
   String urbanRural; // urban, peri_urban or rural
   bool formalJob;
   bool paysOwnFees;
+  double savingsBalance; // money already saved: M-Shwari, SACCO, bank
   List<IncomeSource> incomes;
 
   double get monthlyIncome => incomes.fold(0, (sum, s) => sum + s.monthly);
@@ -72,6 +74,7 @@ class Profile {
         'urbanRural': urbanRural,
         'formalJob': formalJob,
         'paysOwnFees': paysOwnFees,
+        'savingsBalance': savingsBalance,
         'incomes': incomes.map((s) => s.toJson()).toList(),
       };
 
@@ -81,6 +84,7 @@ class Profile {
         urbanRural: j['urbanRural'] as String,
         formalJob: j['formalJob'] as bool,
         paysOwnFees: j['paysOwnFees'] as bool,
+        savingsBalance: (j['savingsBalance'] as num?)?.toDouble() ?? 0,
         incomes: (j['incomes'] as List)
             .map((e) => IncomeSource.fromJson(e as Map<String, dynamic>))
             .toList(),
