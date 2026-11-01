@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import 'afford_screen.dart';
 import 'budget_screen.dart';
 import 'commitments_screen.dart';
 import 'dashboard_screen.dart';
@@ -25,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final pages = [
       DashboardScreen(onAddSpending: () => setState(() => _tab = 3)),
       const BudgetScreen(),
-      const _Placeholder(title: 'Can I afford it?', text: 'Coming: test a lifestyle change before you commit.'),
+      const AffordScreen(),
       const SpendingScreen(),
       const CommitmentsScreen(),
     ];
@@ -59,23 +60,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.title, required this.text});
-
-  final String title, text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 12),
-            Text(text),
-          ],
-        ),
-      );
 }
