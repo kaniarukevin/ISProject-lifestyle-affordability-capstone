@@ -203,3 +203,36 @@ def test_old_database_gets_the_new_column_without_losing_data(tmp_path):
     engine = store.init(f"sqlite:///{db}")
     with engine.connect() as c:
         assert c.execute(tx("SELECT amount, one_off FROM transactions")).fetchall() == [(500.0, 0)]
+
+
+def test_budget_plan_uses_profile_commitments_and_history(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                                   # income 12,000; rent 4,000 recorded as spending
+    r = client.get("/me/budget-plan", headers=h).get_json()
+    plan = r["plan"]
+    assert (r["year"], r["month"]) == (2026, 11)
+    assert plan["total"] == 12000 and plan["budget"]["housing"] == 4000          # usual rent set aside
+    assert any("usual rent" in n for n in plan["notes"])
+    client.put("/me/commitments", headers=h, json={"obligations": [{"name": "Hostel", "amount": 4500, "category": "housing"}],
+                                                  "goals": [{"name": "Phone", "target": 6000, "months_left": 3}]})
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]
+    assert plan["budget"]["housing"] == 4500 and plan["budget"]["savings"] >= 2000   # commitment and goal win
+
+
+def test_budget_plan_applies_last_months_overspend(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    october = {"housing": 4000, "food_groceries": 3000, "transport": 400, "savings": 1200}
+    client.put("/me/budgets/2026/10", headers=h, json={"budget": october})      # transport actual was 900
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]
+    assert any("transport" in n for n in plan["notes"])
+
+
+def test_budget_plan_shows_spending_so_far_and_saved_budget(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.post("/me/transactions", headers=h, json={"date": "2026-11-03", "amount": 700, "category": "transport"})
+    r = client.get("/me/budget-plan", headers=h).get_json()
+    assert r["spent_so_far"] == {"transport": 700} and r["saved"] is None
+    client.put("/me/budgets/2026/11", headers=h, json=r["plan"])
+    assert client.get("/me/budget-plan", headers=h).get_json()["saved"]["total"] == 12000
