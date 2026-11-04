@@ -84,6 +84,7 @@ class Profile(Base):
     formal_job: Mapped[bool] = mapped_column(Boolean, default=False)
     pays_own_fees: Mapped[bool] = mapped_column(Boolean, default=False)
     savings_balance: Mapped[float] = mapped_column(Float, default=0.0)   # money already saved (M-Shwari, SACCO, bank)
+    estimates: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # rough usual monthly spending, from setup
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
@@ -167,6 +168,9 @@ def _upgrade(engine):
     if "savings_balance" not in {c["name"] for c in inspect(engine).get_columns("profiles")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE profiles ADD COLUMN savings_balance FLOAT NOT NULL DEFAULT 0"))
+    if "estimates" not in {c["name"] for c in inspect(engine).get_columns("profiles")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN estimates JSON"))
 
 
 def session():
@@ -303,7 +307,7 @@ def get_profile():
         incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == g.user_id)).all()
         return jsonify(householdSize=p.household_size, dependants=p.dependants, urbanRural=p.urban_rural,
                        formalJob=p.formal_job, paysOwnFees=p.pays_own_fees,
-                       savingsBalance=p.savings_balance or 0.0,
+                       savingsBalance=p.savings_balance or 0.0, estimates=p.estimates or {},
                        incomes=[{"name": i.name, "amount": i.amount, "frequency": i.frequency} for i in incomes])
 
 
@@ -327,11 +331,16 @@ def put_profile():
             raise InputError(f"each income needs a name, an amount and a frequency ({', '.join(FREQUENCIES)})")
         rows.append(IncomeSource(user_id=g.user_id, name=str(i.get("name", "Income"))[:80],
                                  amount=_num(i.get("amount"), "income amount"), frequency=i.get("frequency", "monthly")))
+    est = b.get("estimates") or {}
+    if not isinstance(est, dict) or any(k not in SPENDING_CATEGORIES for k in est):
+        raise InputError("estimates must be an object of spending categories and monthly amounts")
+    estimates = {k: _num(v or 0, f"estimate for {k}") for k, v in est.items() if v}
     with session() as s:
         p = s.get(Profile, g.user_id) or Profile(user_id=g.user_id)
         p.household_size, p.dependants, p.urban_rural = size, deps, where
         p.formal_job, p.pays_own_fees = bool(b.get("formalJob")), bool(b.get("paysOwnFees"))
         p.savings_balance = _num(b.get("savingsBalance", 0) or 0, "savingsBalance")
+        p.estimates = estimates
         s.add(p)
         s.execute(delete(IncomeSource).where(IncomeSource.user_id == g.user_id))
         s.add_all(rows)
@@ -469,6 +478,14 @@ def household_picture(s, user_id):
     cur = (today.year, today.month)
     complete = [mo for mo in months if (mo["year"], mo["month"]) < cur]
     current = next((mo for mo in months if (mo["year"], mo["month"]) == cur), None)
+    estimated = False
+    if not complete and profile is not None and profile.estimates:
+        # Day one: the user's rough figures from setup stand in for last month until a real month is recorded,
+        # so the dashboard, budget and "Can I afford it?" work in the first minute (audit: cold start).
+        py, pm = (cur[0], cur[1] - 1) if cur[1] > 1 else (cur[0] - 1, 12)
+        complete = [{"year": py, "month": pm, **{c: float(profile.estimates.get(c, 0)) for c in SPENDING_CATEGORIES},
+                     "income_primary": round(income, 2)}]
+        estimated = True
     fixed, goal = {}, 0
     c = s.get(Commitments, user_id)
     if c and c.data:
@@ -481,6 +498,7 @@ def household_picture(s, user_id):
         # chama, insurance, support to family are payments to others; max, not +, so nothing is counted twice
         mo["mobile_money_transfers"] = max(mo["mobile_money_transfers"], float(fixed.get("other_commitments", 0)))
     return {"profile": profile, "income": income, "months": months, "complete": complete, "current": current,
+            "estimated": estimated,
             "one_offs": one_offs, "scored": scored, "fixed": fixed, "goal_per_month": goal, "today": today,
             "savings_balance": float(profile.savings_balance or 0) if profile else 0.0}
 
@@ -500,7 +518,7 @@ def overview():
         profile, months, income, one_offs = pic["profile"], pic["months"], pic["income"], pic["one_offs"]
         if profile is None:
             return jsonify(error="set up your household first"), 400
-        if not months:
+        if not months and not pic["estimated"]:
             return jsonify(has_data=False, income_monthly=round(income), savings_balance=round(pic["savings_balance"]))
         complete, current = pic["complete"], pic["current"]
         basis = complete or months
@@ -513,7 +531,10 @@ def overview():
     total = sum(spent.values())
     saved = round(shown["savings"])          # saving is not spending: shown on its own line (audit 6)
     notes = []
-    if not complete:
+    if pic["estimated"]:
+        notes.append("Based on the rough figures you gave when setting up. Record your spending or upload a "
+                     "statement and your real numbers take over.")
+    elif not complete:
         notes.append("You have only recorded spending for this month so far. Your health score and forecast "
                      "become reliable once at least one full month is recorded.")
     elif len(complete) < 3:
@@ -522,7 +543,7 @@ def overview():
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
     return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
-                   state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED,
+                   state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED, estimated=pic["estimated"],
                    savings_balance=round(pic["savings_balance"]),
                    latest={"year": shown["year"], "month": shown["month"], "spent": total, "by_category": spent,
                            "saved": saved, "left_over": round(income - total - saved), "partial": current is not None,

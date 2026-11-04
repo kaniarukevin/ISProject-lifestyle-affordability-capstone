@@ -48,7 +48,9 @@ class Profile {
     this.paysOwnFees = false,
     this.savingsBalance = 0,
     List<IncomeSource>? incomes,
-  }) : incomes = incomes ?? [];
+    Map<String, double>? estimates,
+  })  : incomes = incomes ?? [],
+        estimates = estimates ?? {};
 
   int householdSize;
   int dependants;
@@ -57,6 +59,9 @@ class Profile {
   bool paysOwnFees;
   double savingsBalance; // money already saved: M-Shwari, SACCO, bank
   List<IncomeSource> incomes;
+
+  /// Rough usual monthly spending per category, given at setup. Used until real months are recorded.
+  Map<String, double> estimates;
 
   double get monthlyIncome => incomes.fold(0, (sum, s) => sum + s.monthly);
 
@@ -75,6 +80,7 @@ class Profile {
         'formalJob': formalJob,
         'paysOwnFees': paysOwnFees,
         'savingsBalance': savingsBalance,
+        'estimates': estimates,
         'incomes': incomes.map((s) => s.toJson()).toList(),
       };
 
@@ -85,6 +91,8 @@ class Profile {
         formalJob: j['formalJob'] as bool,
         paysOwnFees: j['paysOwnFees'] as bool,
         savingsBalance: (j['savingsBalance'] as num?)?.toDouble() ?? 0,
+        estimates: ((j['estimates'] as Map?) ?? {})
+            .map((k, v) => MapEntry(k as String, (v as num).toDouble())),
         incomes: (j['incomes'] as List)
             .map((e) => IncomeSource.fromJson(e as Map<String, dynamic>))
             .toList(),
