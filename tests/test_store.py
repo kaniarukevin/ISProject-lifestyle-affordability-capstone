@@ -437,3 +437,37 @@ def test_saving_is_shown_apart_from_spending(client, monkeypatch):
     latest = client.get("/me/overview", headers=h).get_json()["latest"]
     assert latest["saved"] == 1500 and latest["spent"] == 4000 + 3600 + 900
     assert latest["left_over"] == 12000 - (4000 + 3600 + 900) - 1500
+
+
+ROUGH = {"housing": 4000, "food_groceries": 3500, "transport": 1000, "airtime_data": 500}
+
+
+def test_rough_estimates_make_the_app_work_on_day_one(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": ROUGH,
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    assert client.get("/me/profile", headers=h).get_json()["estimates"]["food_groceries"] == 3500
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["has_data"] and o["estimated"] and o["latest"]["spent"] == 9000
+    assert "rough figures" in o["notes"][0]
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]
+    assert plan["budget"]["housing"] == 4000 and plan["budget"].get("entertainment", 0) == 0
+    r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "entertainment", "amount": 1000})
+    assert r.status_code == 200 and r.get_json()["verdict"]
+
+
+def test_real_months_replace_the_estimates(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": {"food_groceries": 99999},
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    o = client.get("/me/overview", headers=h).get_json()
+    assert not o["estimated"] and o["latest"]["spent"] == 4000 + 3600 + 900
+
+
+def test_estimates_must_be_known_categories(client):
+    h = signup(client)
+    r = client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": {"pets": 500},
+                                                   "incomes": [{"name": "Pay", "amount": 1000}]})
+    assert r.status_code == 400

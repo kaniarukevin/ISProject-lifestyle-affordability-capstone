@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/profile.dart';
+import '../models/transaction.dart' show spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
 
@@ -128,6 +129,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Savings (KES)', hintText: '0'),
             onChanged: (v) => draft.savingsBalance = double.tryParse(v.replaceAll(',', '')) ?? 0,
+          ),
+          const Divider(height: 32),
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            initiallyExpanded: draft.estimates.isEmpty,
+            title: Text('Your usual month (rough is fine)', style: theme.textTheme.titleMedium),
+            subtitle: Text('Optional. Lets the app give answers today. Your real records replace these '
+                'once a full month is recorded.', style: theme.textTheme.bodySmall),
+            children: spendingCategories.entries
+                .where((e) => e.key != 'savings')
+                .map((e) => TextFormField(
+                      initialValue: (draft.estimates[e.key] ?? 0) == 0 ? '' : draft.estimates[e.key]!.round().toString(),
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(labelText: '${e.value} per month (KES)', hintText: '0'),
+                      onChanged: (v) {
+                        final n = double.tryParse(v.replaceAll(',', '')) ?? 0;
+                        if (n > 0) {
+                          draft.estimates[e.key] = n;
+                        } else {
+                          draft.estimates.remove(e.key);
+                        }
+                      },
+                    ))
+                .toList(),
           ),
           const SizedBox(height: 16),
           FilledButton(onPressed: _save, child: const Text('Save')),
