@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/presets.dart';
-import '../models/transaction.dart' show spendingCategories;
+import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
@@ -225,7 +225,7 @@ class ResultScreen extends StatelessWidget {
   const ResultScreen({super.key, required this.result});
   final Map<String, dynamic> result;
 
-  String _cat(String k) => spendingCategories[k] ?? k;
+  String _cat(String k) => categoryLabel(k);
 
   Widget _cutPlan(BuildContext context, String title, dynamic plan) {
     if (plan == null) return const SizedBox.shrink();

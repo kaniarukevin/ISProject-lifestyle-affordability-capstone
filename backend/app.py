@@ -36,6 +36,20 @@ CORS(app, origins=[r"^https?://localhost(:\d+)?$", r"^https?://127\.0\.0\.1(:\d+
                    *[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]])
 store.init()
 app.register_blueprint(store.bp)
+
+
+def _warm_models():
+    """Load the models when the server starts, not on a user's first screen (that took 2.2 s, measured 4 Nov)."""
+    try:
+        import affordability
+        affordability.engine()
+        budget.model()
+        store.user_forecast_model()
+    except Exception as exc:          # a missing model must not stop the server; the screen that needs it says so
+        print(f"[warm] model load skipped: {exc}", flush=True)
+
+
+_warm_models()
 STORE = {"ready": threading.Event(), "error": None}
 
 

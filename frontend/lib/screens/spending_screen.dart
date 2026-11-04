@@ -5,6 +5,8 @@ import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
+import 'payees_screen.dart';
+import 'statement_screen.dart';
 
 const _monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
   'October', 'November', 'December'];
@@ -82,8 +84,34 @@ class _SpendingScreenState extends State<SpendingScreen> {
           children: [
             Text('Your spending', style: theme.textTheme.headlineSmall),
             const SizedBox(height: 4),
-            Text('Add what you spend. A few weeks of records is enough for your budget and forecast to start '
-                'working; statement upload is coming.', style: theme.textTheme.bodySmall),
+            Text('Upload your M-PESA statement to bring in months of spending at once, or add spending by hand.',
+                style: theme.textTheme.bodySmall),
+            const SizedBox(height: 8),
+            Wrap(spacing: 8, runSpacing: 4, children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Upload M-PESA statement'),
+                onPressed: () async {
+                  final done = await Navigator.of(context)
+                      .push<bool>(MaterialPageRoute(builder: (_) => const StatementScreen()));
+                  if (done == true) _load();
+                },
+              ),
+              if (txns!.any((t) => t.source == 'mpesa'))
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.people_outline),
+                  label: const Text('Who you pay'),
+                  onPressed: () async {
+                    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PayeesScreen()));
+                    _load();
+                  },
+                ),
+            ]),
+            if (txns!.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('Tap any payment to change what it is.', style: theme.textTheme.bodySmall),
+              ),
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -94,7 +122,9 @@ class _SpendingScreenState extends State<SpendingScreen> {
                 padding: EdgeInsets.only(top: 48),
                 child: Center(child: Text('Nothing yet. Tap "Add spending" to record your first expense.')),
               ),
-            ...groups.map((g) => _MonthCard(group: g, onDelete: _delete)),
+            ...groups.map((g) => _MonthCard(group: g, expanded: g == groups.first, onDelete: _delete, onTap: (t) async {
+                  if (await showCorrectSheet(context, t)) _load();
+                })),
           ],
         ),
       ),
@@ -103,9 +133,11 @@ class _SpendingScreenState extends State<SpendingScreen> {
 }
 
 class _MonthCard extends StatelessWidget {
-  const _MonthCard({required this.group, required this.onDelete});
+  const _MonthCard({required this.group, required this.onDelete, required this.onTap, this.expanded = false});
   final MonthGroup group;
+  final bool expanded;
   final void Function(Txn) onDelete;
+  final void Function(Txn) onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -114,7 +146,7 @@ class _MonthCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(top: 16),
       child: ExpansionTile(
-        initiallyExpanded: true,
+        initiallyExpanded: expanded, // only the latest month: a statement can bring in over a thousand records
         title: Text('${_monthNames[group.month - 1]} ${group.year}'),
         subtitle: Text('${kes(group.total)} · ${group.items.length} records'
             '${group.oneOffTotal > 0 ? ' · one-off ${kes(group.oneOffTotal)}' : ''}'),
@@ -125,16 +157,20 @@ class _MonthCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 4,
               children: cats
-                  .map((e) => Chip(label: Text('${spendingCategories[e.key] ?? e.key}: ${kes(e.value)}',
+                  .map((e) => Chip(label: Text('${categoryLabel(e.key)}: ${kes(e.value)}',
                       style: theme.textTheme.bodySmall)))
                   .toList(),
             ),
           ),
           ...group.items.map((t) => ListTile(
                 dense: true,
-                title: Text(t.description.isEmpty ? spendingCategories[t.category] ?? t.category : t.description),
+                onTap: () => onTap(t),
+                title: Text(t.title),
                 subtitle: Text('${t.oneOff ? 'One-off · ' : ''}${t.date.day} ${_monthNames[t.date.month - 1]} · '
-                    '${spendingCategories[t.category]}'),
+                    '${t.type != null ? '${mpesaTypes[t.type] ?? t.type} · ' : ''}${categoryLabel(t.category)}'
+                    '${t.pinned ? ' (changed by you)' : ''}'
+                    // The line exactly as it appears on the statement, kept next to the app's label.
+                    '${t.source == 'mpesa' && t.description.isNotEmpty && t.description != t.title ? '\n${t.description}' : ''}'),
                 trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(kes(t.amount)),
                   IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => onDelete(t)),

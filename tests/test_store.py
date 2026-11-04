@@ -1,10 +1,12 @@
 """Tests for the data layer, on an in-memory SQLite database. Run: python -m pytest tests/test_store.py -q"""
+import io
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import app as svc  # noqa: E402
 import store  # noqa: E402
 
@@ -524,3 +526,205 @@ def test_chama_set_aside_is_explained_not_called_unused(client, monkeypatch):
     notes = client.get("/me/budget-plan", headers=h).get_json()["plan"]["notes"]
     assert any("already set aside" in n for n in notes)
     assert not any("money sent to others: you have not spent" in n for n in notes)
+
+
+def _upload(client, h, monkeypatch, text=None):
+    import mpesa
+    from test_mpesa import SAMPLE
+    monkeypatch.setattr(mpesa, "read_pdf", lambda data, password=None: text or SAMPLE)
+    return client.post("/me/statements/preview", headers=h,
+                       data={"file": (io.BytesIO(b"%PDF-fake"), "statement.pdf")}, content_type="multipart/form-data")
+
+
+def _statement_user(client, monkeypatch, **profile):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 30000}],
+                                               **profile})
+    return h
+
+
+def _import(client, h, prev, **extra):
+    r = client.post("/me/statements/import", headers=h, json={"transactions": prev["transactions"],
+                                                              "period": prev["period"], **extra})
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()
+
+
+JOHN = "person:0711***111:JOHN MWANGI"
+EQUITY = "paybill:247247:000123457157"
+
+
+def test_statement_preview_saves_nothing_and_import_keeps_types_and_payees(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    p = _upload(client, h, monkeypatch)
+    assert p.status_code == 200, p.get_json()
+    prev = p.get_json()
+    assert prev["checks"]["ok"] and prev["payees"][0]["key"] == JOHN
+    assert prev["payees"][0]["suggestion"]["tag"] == "housing"
+    assert client.get("/me/transactions", headers=h).get_json()["transactions"] == []      # preview saves nothing
+    _import(client, h, prev, tags={JOHN: "housing", EQUITY: "own_account"})
+    txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    john = [t for t in txs if t["payee_key"] == JOHN]
+    assert len(john) == 3 and all(t["category"] == "housing" and t["type"] == "sent" for t in john)
+    assert not any(t["payee_key"] == EQUITY for t in txs)                       # own account: not spending
+    charges = [t for t in txs if t["type"] == "charges"]
+    assert len(charges) == 3 and all(t["label"] == "M-PESA charges" for t in charges)
+    assert {t["category"] for t in txs if t["payee"] in ("Mary W", "FRANCY ENTERPRISES", "Cash")} == {"unsorted"}
+    again = _upload(client, h, monkeypatch).get_json()
+    assert again["new"] == 0 and JOHN not in [x["key"] for x in again["payees"]]   # remembered, nothing repeated
+    _import(client, h, again)
+    assert len(client.get("/me/transactions", headers=h).get_json()["transactions"]) == len(txs)
+
+
+def test_unsorted_money_counts_in_totals_and_switches_to_the_statement_safe_model(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    prev = _upload(client, h, monkeypatch).get_json()
+    for t in prev["transactions"]:
+        t["one_off"] = False                                 # keep the 15,000 Equity payment as usual spending
+    _import(client, h, prev)
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["statement_safe"] and o["unsorted_share"] > 0.10
+    assert o["latest"]["by_category"]["unsorted"] == 15000 + 300 + 250
+    assert o["latest"]["spent"] == 8100 + 15000 + 300 + 250 + 1200          # every shilling still counted
+    assert any("not sorted yet" in n for n in o["notes"])
+    months = client.get("/me/months", headers=h).get_json()["months"]
+    oct_ = next(m for m in months if m["month"] == 10)
+    spread = sum(oct_[c] for c in ("food_groceries", "transport", "utilities", "airtime_data",
+                                   "mobile_money_transfers", "entertainment"))
+    assert abs(spread - (1200 + 8100 + 15550)) < 1                         # unsorted spread for the engines
+    plan = client.get("/me/budget-plan", headers=h).get_json()
+    assert plan["plan"]["total"] == 30000 and plan["spent_so_far"] == {}
+
+
+def test_correct_one_payment_or_always_for_a_payee_and_undo(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    francy = next(t for t in txs if t["payee"] == "FRANCY ENTERPRISES")
+    john = [t for t in txs if t["payee_key"] == JOHN]
+    r = client.patch(f"/me/transactions/{john[0]['id']}", headers=h, json={"category": "food_groceries"})
+    assert r.get_json()["updated"] == 1                                       # just this one, pinned
+    r = client.patch(f"/me/transactions/{francy['id']}", headers=h, json={"category": "food_groceries", "scope": "payee"})
+    assert r.status_code == 200 and r.get_json()["updated"] == 1
+    r = client.put("/me/payees", headers=h, json={"key": JOHN, "tag": "housing"})
+    body = r.get_json()
+    assert body["updated"] == 2                                               # the pinned one is left alone
+    assert body["offer"]["category"] == "housing" and body["offer"]["amount"] == 8000
+    payees = client.get("/me/payees", headers=h).get_json()["payees"]
+    assert next(p for p in payees if p["key"] == JOHN)["tag"] == "housing"
+    assert client.delete(f"/me/payees?key={JOHN}", headers=h).get_json()["updated"] == 2
+    txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    assert sorted(t["category"] for t in txs if t["payee_key"] == JOHN) == ["food_groceries",
+                                                                            "mobile_money_transfers",
+                                                                            "mobile_money_transfers"]
+    assert client.patch(f"/me/transactions/{francy['id']}", headers=h, json={"category": "pets"}).status_code == 400
+
+
+def test_tagging_a_landlord_offers_rent_that_the_budget_then_sets_aside(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    offer = client.put("/me/payees", headers=h, json={"key": JOHN, "tag": "housing"}).get_json()["offer"]
+    assert "Add rent of KES 8,000 a month" in offer["text"]
+    assert client.post("/me/payees/commitment", headers=h, json=offer).status_code == 200
+    c = client.get("/me/commitments", headers=h).get_json()
+    assert [o["amount"] for o in c["obligations"] if o["category"] == "housing"] == [8000]
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]
+    assert plan["budget"]["housing"] == 8000
+
+
+def test_a_one_off_purchase_can_complete_a_goal(client, monkeypatch):
+    h = _statement_user(client, monkeypatch, savingsBalance=20000)
+    client.put("/me/commitments", headers=h, json={"goals": [{"name": "Phone", "target": 15500, "saved": 12000,
+                                                             "months_left": 2}]})
+    prev = _upload(client, h, monkeypatch).get_json()
+    big = next(t for t in prev["transactions"] if t["amount"] == 15000 and t["direction"] == "out")
+    assert big["one_off"] and big["goals"][0]["name"] == "Phone"
+    eq = next(p for p in prev["payees"] if p["key"] == EQUITY)
+    assert any('goal "Phone"' in hint for hint in eq["hints"])
+    r = _import(client, h, prev, completed_goals=["Phone"])
+    assert any("Goal reached: Phone" in n for n in r["notes"])
+    assert client.get("/me/profile", headers=h).get_json()["savingsBalance"] == 8000
+    summary = client.put("/me/commitments", headers=h, json=client.get("/me/commitments", headers=h).get_json()).get_json()
+    assert summary["summary"]["for_budget"]["goal_per_month"] == 0 and summary["summary"]["completed_goals"]
+
+
+def test_hand_entered_records_in_statement_months_are_replaced_not_doubled(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-10-20", "amount": 1200, "category": "food_groceries"},       # the same Quick Mart trip, typed
+        {"date": "2026-06-10", "amount": 900, "category": "transport"}])             # a month the statement lacks
+    prev = _upload(client, h, monkeypatch).get_json()
+    assert prev["manual_overlap"] == {"count": 1, "months": ["2026-10"]}
+    r = _import(client, h, prev)
+    assert any("Replaced 1 hand-entered" in n for n in r["notes"])
+    txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    assert sum(1 for t in txs if t["amount"] == 1200) == 1
+    assert any(t["date"] == "2026-06-10" for t in txs)
+
+
+def test_undo_statement_import(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    client.post("/me/transactions", headers=h, json={"date": "2026-06-10", "amount": 900, "category": "transport"})
+    assert client.delete("/me/statements", headers=h).get_json()["removed"] > 10
+    assert [t["source"] for t in client.get("/me/transactions", headers=h).get_json()["transactions"]] == ["manual"]
+
+
+def test_statement_errors_are_clear(client, monkeypatch):
+    h = signup(client)
+    assert client.post("/me/statements/preview", headers=h, data={}, content_type="multipart/form-data").status_code == 400
+    r = _upload(client, h, monkeypatch, text="not a statement at all")
+    assert r.status_code == 400 and "does not look like" in r.get_json()["error"]
+    assert client.post("/me/statements/import", headers=h, json={"transactions": [], "tags": {"x": "pets"}}).status_code == 400
+
+
+def test_a_seller_paid_by_send_money_can_be_tagged_shopping(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    mary = "pochi:0712***345:MARY W"
+    assert client.put("/me/payees", headers=h, json={"key": mary, "tag": "shopping"}).status_code == 200
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["latest"]["by_category"]["shopping"] == 300                  # shown by its real name
+    assert "unsorted" in o["latest"]["by_category"]                       # the rest is still honestly unsorted
+    plan = client.get("/me/budget-plan", headers=h).get_json()
+    assert plan["plan"]["total"] == 30000
+
+
+def test_timeline_scores_each_month_and_warns_when_records_are_old(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    o = client.get("/me/overview", headers=h).get_json()
+    assert [(x["year"], x["month"]) for x in o["timeline"]] == [(2026, 8), (2026, 9), (2026, 10)]
+    assert o["timeline"][-1]["state"] == o["state"] and o["timeline"][-1]["score"] == o["score"]
+    assert o["timeline_summary"].startswith("Past 3 months:")
+    monkeypatch.setattr(store, "_today", lambda: store.date(2027, 2, 10))
+    o = client.get("/me/overview", headers=h).get_json()
+    assert any("latest records are from October 2026" in n for n in o["notes"])
+
+
+def test_tagging_a_bank_as_my_allowance_uses_what_actually_arrived(client, monkeypatch):
+    h = _statement_user(client, monkeypatch)
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    before = {(x["year"], x["month"]): x["income"] for x in client.get("/me/overview", headers=h).get_json()["timeline"]}
+    assert set(before.values()) == {30000}                                  # profile income until told otherwise
+    payees = client.get("/me/payees", headers=h).get_json()["payees"]
+    bank = next(p for p in payees if p["key"] == "in:standard chartered bank")
+    assert bank["direction"] == "in" and bank["category"] == "own_account"
+    assert client.put("/me/payees", headers=h, json={"key": bank["key"], "tag": "income"}).status_code == 200
+    o = client.get("/me/overview", headers=h).get_json()
+    after = {(x["year"], x["month"]): x["income"] for x in o["timeline"]}
+    assert after[(2026, 10)] == 30000 + 15000                               # salary + the bank money that arrived
+    assert after[(2026, 8)] == 30000 and all(x["income_from"] == "statement" for x in o["timeline"])
+    assert client.put("/me/payees", headers=h, json={"key": bank["key"], "tag": "housing"}).status_code == 400
+    client.delete("/me/payees?key=in:standard%20chartered%20bank", headers=h)
+    assert {x["income"] for x in client.get("/me/overview", headers=h).get_json()["timeline"]} == {30000}
+
+
+def test_a_bank_that_mixes_pay_and_own_money_never_inflates_income(client, monkeypatch):
+    h = _statement_user(client, monkeypatch, incomes=[{"name": "Allowance", "amount": 40000}])
+    _import(client, h, _upload(client, h, monkeypatch).get_json())
+    client.put("/me/payees", headers=h, json={"key": "in:standard chartered bank", "tag": "mixed"})
+    t = {(x["year"], x["month"]): x["income"] for x in client.get("/me/overview", headers=h).get_json()["timeline"]}
+    assert t[(2026, 8)] == 30000                 # only the 30,000 salary arrived: less than the 40,000 plan
+    assert t[(2026, 10)] == 40000                # salary 30,000 + bank 15,000 = 45,000, capped at the plan
