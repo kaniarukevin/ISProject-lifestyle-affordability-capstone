@@ -4,6 +4,7 @@ The engines (forecast, affordability, budget, commitments) stay stateless calcul
 what each user enters and what they decide, behind sign-up/log-in, so the app works across devices and the
 dynamic budget can see last month. Connection string comes from DATABASE_URL (never from code).
 """
+import copy
 import os
 import statistics
 import threading
@@ -740,6 +741,123 @@ def save_scenario():
         s.add(r)
         s.commit()
         return jsonify(id=r.id), 201
+
+
+def _apply_choice(s, user_id, req, result, how):
+    """Turn a checked scenario into a real change to the household, so the budget, dashboard and future checks
+    use it (found in testing, 1 Nov: deciding to go ahead changed nothing). Returns what changed, in words.
+    Only lasting things become commitments; everyday habits (a gym, more transport) are learnt from spending."""
+    import commitments as cm
+    kind = req.get("preset")
+    label = str(req.get("label") or result.get("title") or "Plan")[:60]
+    profile = s.get(Profile, user_id)
+    c = s.get(Commitments, user_id) or Commitments(user_id=user_id, data={})
+    data = copy.deepcopy({"obligations": [], "debts": [], "goals": [], **(c.data or {})})
+    notes = []
+
+    def obligation(name, cat, amount, months=None):
+        data["obligations"].append({"name": name, "category": cat, "amount": round(amount), "frequency": "monthly"})
+        notes.append(f"Added {name} (KES {round(amount):,} a month) to your commitments.")
+        if months:
+            notes.append(f"It lasts {months} month(s): remove it under Commitments when it ends.")
+
+    if kind in ("purchase", "loan"):
+        price = float(req.get("price" if kind == "purchase" else "amount"))
+        if how == "from_savings":
+            if (profile.savings_balance or 0) < price:
+                raise InputError("your savings are less than the price")
+            profile.savings_balance = (profile.savings_balance or 0) - price
+            s.add(profile)
+            notes.append(f"Paid from savings. Your savings are now KES {round(profile.savings_balance):,}.")
+        else:
+            pay = float(result.get("instalment_per_month_KES") or price / max(1, int(req.get("months", 6))))
+            data["debts"].append({"name": label, "balance": round(price), "annual_rate": float(req.get("annual_rate", 0)),
+                                  "monthly_payment": round(pay)})
+            notes.append(f"Added {label} as a debt: KES {round(pay):,} a month until it is paid off.")
+    elif kind == "move_house":
+        data["obligations"] = [o for o in data["obligations"] if o.get("category") != "housing"]
+        obligation("Rent", "housing", float(req["new_rent"]))
+        if req.get("extra_transport"):
+            notes.append("Record your new transport costs under Spending; your budget learns them from there.")
+    elif kind == "new_expense":
+        cat = req.get("category")
+        if cat in ("school_fees", "mobile_money_transfers"):
+            obligation(label, "school_fees" if cat == "school_fees" else "other_commitments",
+                       float(req["amount"]), req.get("months"))
+        else:
+            notes.append(f"{label} is everyday spending, not a commitment. Record it under Spending and your "
+                         "budget and forecast adjust from next month.")
+    elif kind == "new_baby":
+        profile.household_size += 1
+        profile.dependants += 1
+        s.add(profile)
+        notes.append(f"Your household is now {profile.household_size} people, {profile.dependants} dependant(s).")
+        if float(req.get("house_help", 0) or 0) > 0:
+            obligation("House help", "other_commitments", float(req["house_help"]))
+    elif kind == "savings_goal":
+        months = int(req.get("months", 6))
+        data["goals"].append({"name": label, "target": round(float(req["target"])), "saved": 0, "months_left": months})
+        notes.append(f"Added the goal {label}: KES {round(float(req['target']) / months):,} a month is set aside in your budget.")
+    elif kind == "income_change":
+        delta = float(req["amount"])
+        if req.get("months"):
+            notes.append("This is temporary, so your usual income is unchanged. Your savings carry the gap.")
+        elif delta > 0:
+            s.add(IncomeSource(user_id=user_id, name=label if req.get("label") else "Extra income",
+                               amount=round(delta), frequency="monthly"))
+            notes.append(f"Added KES {round(delta):,} a month to your income.")
+        else:
+            cut = -delta
+            sources = sorted(s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)).all(),
+                             key=lambda i: i.amount * FREQUENCIES[i.frequency], reverse=True)
+            for i in sources:                     # take it off the biggest source first
+                per_month = i.amount * FREQUENCIES[i.frequency] / 12
+                take = min(cut, per_month)
+                i.amount = round((per_month - take) * 12 / FREQUENCIES[i.frequency], 2)
+                cut -= take
+                s.add(i)
+                if cut <= 0:
+                    break
+            notes.append(f"Your income is now KES {round(-delta):,} a month lower in your profile.")
+    else:
+        raise InputError("this check cannot be applied")
+    try:
+        cm.evaluate(data)
+    except cm.CommitmentsInputError as exc:
+        raise InputError(str(exc))
+    c.data = data
+    s.add(c)
+    return notes
+
+
+@bp.post("/me/scenarios/<int:sid>/apply")
+@login_required
+def apply_scenario(sid):
+    """'I'm doing this': record the decision. Body: {"how": "instalments" | "from_savings"} for purchases."""
+    how = (_body() if request.data else {}).get("how", "instalments")
+    with session() as s:
+        r = s.get(Scenario, sid)
+        if r is None or r.user_id != g.user_id:
+            return jsonify(error="no such check"), 404
+        if (r.result or {}).get("applied"):
+            return jsonify(error="you already went ahead with this one"), 409
+        notes = _apply_choice(s, g.user_id, r.request or {}, r.result or {}, how)
+        r.result = {**(r.result or {}), "applied": {"at": _now().isoformat(), "how": how, "notes": notes}}
+        s.add(r)
+        s.commit()
+    return jsonify(applied=True, notes=notes), 200
+
+
+@bp.delete("/me/scenarios/<int:sid>")
+@login_required
+def delete_scenario(sid):
+    with session() as s:
+        r = s.get(Scenario, sid)
+        if r is None or r.user_id != g.user_id:
+            return jsonify(error="no such check"), 404
+        s.delete(r)
+        s.commit()
+    return jsonify(deleted=True), 200
 
 
 @bp.delete("/me")

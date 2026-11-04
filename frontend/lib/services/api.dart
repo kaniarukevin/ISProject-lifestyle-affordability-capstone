@@ -122,6 +122,14 @@ class Api {
   Future<List<Map<String, dynamic>>> scenarios() async =>
       ((await get('/me/scenarios') as Map<String, dynamic>)['scenarios'] as List).cast<Map<String, dynamic>>();
 
+  /// "I'm doing this": turn a check into a real debt, commitment, goal or profile change.
+  /// [how] is 'instalments' or 'from_savings' for purchases. Returns what changed, in words.
+  Future<List<String>> applyScenario(int id, {String how = 'instalments'}) async =>
+      (((await post('/me/scenarios/$id/apply', {'how': how})) as Map<String, dynamic>)['notes'] as List)
+          .cast<String>();
+
+  Future<void> deleteScenario(int id) => delete('/me/scenarios/$id');
+
   // ---- commitments ----
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
 
