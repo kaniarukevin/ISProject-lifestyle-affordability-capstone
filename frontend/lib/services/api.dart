@@ -112,6 +112,12 @@ class Api {
   Future<Map<String, dynamic>> correctTransaction(int id, String category, {String scope = 'one'}) async =>
       (await _send('PATCH', '/me/transactions/$id', {'category': category, 'scope': scope})) as Map<String, dynamic>;
 
+  /// Whether this account is an admin (named in the server's ADMIN_EMAILS).
+  Future<bool> isAdmin() async => ((await get('/me/role')) as Map<String, dynamic>)['admin'] == true;
+
+  /// Service health, model register and users (admins only; no one's finances are included).
+  Future<Map<String, dynamic>> adminOverview() async => (await get('/admin/overview')) as Map<String, dynamic>;
+
   /// Everyone you pay (from statements), with their tags and suggestions.
   Future<Map<String, dynamic>> payees() async => (await get('/me/payees')) as Map<String, dynamic>;
 

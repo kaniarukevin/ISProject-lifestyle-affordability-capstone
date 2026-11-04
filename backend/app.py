@@ -50,6 +50,8 @@ def _warm_models():
 
 
 _warm_models()
+store.SERVICE_STATUS["check"] = lambda: {"forecast_data_loaded": STORE["ready"].is_set(),
+                                         "forecast_error": STORE.get("error")}
 STORE = {"ready": threading.Event(), "error": None}
 
 
