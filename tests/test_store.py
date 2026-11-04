@@ -728,3 +728,21 @@ def test_a_bank_that_mixes_pay_and_own_money_never_inflates_income(client, monke
     t = {(x["year"], x["month"]): x["income"] for x in client.get("/me/overview", headers=h).get_json()["timeline"]}
     assert t[(2026, 8)] == 30000                 # only the 30,000 salary arrived: less than the 40,000 plan
     assert t[(2026, 10)] == 40000                # salary 30,000 + bank 15,000 = 45,000, capped at the plan
+
+
+def test_admin_page_is_for_admins_only_and_shows_no_personal_finances(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "boss@example.com")
+    user = _student(client)                                  # kevin@example.com, with spending
+    assert client.get("/admin/overview", headers=user).status_code == 403
+    assert client.get("/me/role", headers=user).get_json()["admin"] is False
+    boss = signup(client, "boss@example.com")
+    assert client.get("/me/role", headers=boss).get_json()["admin"] is True
+    r = client.get("/admin/overview", headers=boss)
+    assert r.status_code == 200
+    d = r.get_json()
+    assert d["users"]["total"] == 2 and d["users"]["with_household"] == 1 and d["users"]["records"] == 9
+    assert any(m["name"].startswith("Financial state") and m["present"] for m in d["models"])
+    kevin = next(u for u in d["recent_users"] if u["records"] == 9)
+    assert kevin["email"] == "k***@example.com"
+    assert "kevin@example.com" not in r.get_data(as_text=True)
+    assert "4000" not in r.get_data(as_text=True)                # no amounts at all

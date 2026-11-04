@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import 'admin_screen.dart';
 import 'afford_screen.dart';
 import 'budget_screen.dart';
 import 'commitments_screen.dart';
@@ -19,6 +20,15 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
+  bool _admin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<AppState>().api.isAdmin().then((a) {
+      if (mounted) setState(() => _admin = a);
+    }).catchError((_) {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,6 +44,12 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Lifestyle Affordability'),
         actions: [
+          if (_admin)
+            IconButton(
+              tooltip: 'Admin',
+              icon: const Icon(Icons.admin_panel_settings_outlined),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminScreen())),
+            ),
           IconButton(
             tooltip: 'Edit household',
             icon: const Icon(Icons.person_outline),

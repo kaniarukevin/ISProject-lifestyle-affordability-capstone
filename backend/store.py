@@ -1606,6 +1606,92 @@ def payee_commitment():
     return jsonify(saved=True), 200
 
 
+# ---------------- admin (service health, model register, users) ----------------
+
+def _admin_emails():
+    """Admin accounts are named in the ADMIN_EMAILS environment variable (comma-separated), never in code."""
+    return {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+
+def _is_admin(s, user_id):
+    u = s.get(User, user_id)
+    return u is not None and u.email.lower() in _admin_emails()
+
+
+SERVICE_STATUS = {"check": lambda: {}}    # app.py fills this in (the forecast service's data status)
+
+# What each model does and how it was chosen (docs/experiments.md). Shown on the admin page.
+MODEL_REGISTER = [
+    {"name": "Financial state (main)", "file": "affordability_engine.joblib", "kind": "Random Forest classifier",
+     "metric": "held-out accuracy 0.799 (HMM: 0.531)", "data": "KIHBS-informed synthetic, 240/60 households"},
+    {"name": "Financial state (statement-safe)", "file": "affordability_engine.joblib",
+     "kind": "Random Forest on exact figures only", "metric": "accuracy 0.750; state unchanged by mis-sorting (0/60)",
+     "data": "same"},
+    {"name": "Affordability score", "file": "affordability_engine.joblib", "kind": "Monotonic gradient boosting",
+     "metric": "bigger cost never raises the score (100% of households); accuracy 0.654", "data": "same"},
+    {"name": "Budget split", "file": "budget_split.joblib", "kind": "Random Forest, half with the average split",
+     "metric": "KES 7,021 average error per category vs 7,295 one-size", "data": "974 Stable household-months"},
+    {"name": "App forecast", "file": "user_forecast.joblib", "kind": "Boosted tree with fee-month/December flags",
+     "metric": "test MAE KES 9,967 vs 10,719 median; 80% range holds 83%", "data": "KIHBS-informed synthetic"},
+    {"name": "Web Masters forecast (U-CS 37)", "file": "forecast_tree.joblib",
+     "kind": "Budget blend + boosted-tree split", "metric": "test MAE KES 7,931, WAPE 0.106",
+     "data": "Web Masters staging, 500 households"},
+]
+
+
+def _mask(email):
+    name, _, domain = email.partition("@")
+    return f"{name[:1]}***@{domain}"
+
+
+@bp.get("/me/role")
+@login_required
+def my_role():
+    with session() as s:
+        return jsonify(admin=_is_admin(s, g.user_id)), 200
+
+
+@bp.get("/admin/overview")
+@login_required
+def admin_overview():
+    """Service health, model register and users, for admin accounts only. Users appear with masked emails and
+    record counts; no one's spending, income or payees are shown."""
+    models_dir = Path(__file__).resolve().parent / "models"
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+        users = s.scalars(select(User).order_by(User.created_at.desc())).all()
+        profiles = set(s.scalars(select(Profile.user_id)))
+        counts, statement_users = defaultdict(int), set()
+        for uid, src in s.execute(select(Transaction.user_id, Transaction.source)):
+            counts[uid] += 1
+            if src == "mpesa":
+                statement_users.add(uid)
+        checks = defaultdict(int)
+        for (uid,) in s.execute(select(Scenario.user_id)):
+            checks[uid] += 1
+        n_tx = sum(counts.values())
+        n_checks = sum(checks.values())
+    now = _now()
+    joined = [u.created_at if u.created_at.tzinfo else u.created_at.replace(tzinfo=timezone.utc) for u in users]
+    register = []
+    for m in MODEL_REGISTER:
+        f = models_dir / m["file"]
+        register.append({**m, "present": f.exists(),
+                         "size_mb": round(f.stat().st_size / 1e6, 1) if f.exists() else None,
+                         "updated": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).date().isoformat()
+                         if f.exists() else None})
+    return jsonify(
+        service={"status": "ok", "database": _DB["engine"].dialect.name, **SERVICE_STATUS["check"]()},
+        users={"total": len(users), "with_household": len(profiles), "with_statement": len(statement_users),
+               "joined_7_days": sum(1 for j in joined if (now - j).days < 7),
+               "records": n_tx, "affordability_checks": n_checks},
+        models=register,
+        recent_users=[{"id": u.id, "email": _mask(u.email), "joined": u.created_at.date().isoformat(),
+                       "household": u.id in profiles, "records": counts.get(u.id, 0),
+                       "statement": u.id in statement_users, "checks": checks.get(u.id, 0)} for u in users[:50]]), 200
+
+
 @bp.delete("/me")
 @login_required
 def delete_account():
