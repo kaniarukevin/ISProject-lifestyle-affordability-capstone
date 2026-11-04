@@ -76,6 +76,10 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
         share[unused] = 0.0
         share = share / share.sum()
         notes.append("Split using your own spending pattern and households like yours.")
+        if "mobile_money_transfers" in unused and fixed.get("other_commitments", 0) > 0:
+            unused.remove("mobile_money_transfers")
+            notes.append("Money you send (chama, family support) is already set aside under your commitments, "
+                         "so it has no separate line.")
         if unused:
             notes.append(f"No budget for {', '.join(OPTIONAL[c] for c in unused)}: you have not spent on "
                          f"{'it' if len(unused) == 1 else 'them'}. Record spending there and it comes back.")

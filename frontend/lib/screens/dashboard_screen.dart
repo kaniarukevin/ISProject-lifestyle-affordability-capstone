@@ -120,6 +120,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('Expected spending in ${_months[(fc['month'] as int) - 1]}', style: theme.textTheme.titleSmall),
                 Text(kes(fc['total'] as num), style: theme.textTheme.headlineMedium),
+                if (fc['range'] is Map)
+                  Text('Probably between ${kes((fc['range'] as Map)['low'] as num)} and '
+                      '${kes((fc['range'] as Map)['high'] as num)} (8 months in 10 fall in this range).',
+                      style: theme.textTheme.bodySmall),
+                if (fc['note'] != null) Text(fc['note'] as String, style: theme.textTheme.bodySmall),
                 if (latest['partial'] == true && (fc['total'] as num) > 0)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),

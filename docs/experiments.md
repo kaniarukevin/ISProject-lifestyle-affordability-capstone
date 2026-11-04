@@ -257,3 +257,50 @@ Does following the budget help? 44 held-out households that are Strained or Crit
 - Caveat: following the budget means spending within income by construction, so this shows the budget is sound if followed, not that people will follow it. Real-user testing is the check for that. Student airtime/data limits (about KES 460) look low for students because the model learned from KIHBS households; to be checked with friends.
 
 Saved as backend/models/budget_split.joblib (1.8 MB); served by POST /budget.
+
+## 2026-11-04: Forecast for app users, model vs median (KIHBS-informed data)
+Script: scripts/kihbs_forecast_experiment.py. Data: KIHBS-informed synthetic dataset v2 (data/processed/engineered_features_raw.csv), 10 app categories, same 240 train / 60 test households. 48 train households held back as validation to choose; test scored once (one extra split method was then added and re-scored, so the test split figures are indicative).
+
+Question: the app's own forecast used a statistical rule (median of monthly totals, split by average shares). Does a learned model do better for a user with 1, 3, 6 or 11 months of history (manual records, estimates or an M-Pesa statement)? Only inputs known before the month: past months, income, household size, dependants, formal job, and the calendar month being forecast. The data has real seasonality: school fees in January, May and September (KES 8,870 vs 710 average), and a December spike (KES 54,851 vs about 43,000).
+
+| Method | Val MAE (KES) | Test MAE | Test WAPE | Test cat. WAPE | Test MAE, 1 / 3 / 6 / 11 months of history |
+|---|---|---|---|---|---|
+| Median of totals, split by shares (app until now) | 12,254 | 10,719 | 0.247 | 0.370 | 11,581 / 10,366 / 9,460 / 17,219 |
+| Last month | 13,224 | 11,676 | 0.269 | 0.400 | |
+| Mean | 12,384 | 11,004 | 0.254 | 0.370 | |
+| Per-category median | 12,316 | 10,706 | 0.247 | **0.342** | |
+| Boosted tree, history only | 11,365 | 10,571 | 0.244 | 0.369 | 11,047 / 10,501 / 9,959 / 15,032 |
+| **Boosted tree, history + calendar, fee-aware split** | **10,741** | **9,794** | **0.226** | 0.376 | **10,106 / 9,818 / 8,949 / 14,697** |
+
+The tree predicts next month's total as a multiple of the household's median (absolute-error loss, 300 iterations, min leaf 40). Fee-aware split: in a fee month, school fees get the amount paid in past fee months; other categories share the rest by the household's average shares.
+
+Decision: the app forecast now uses the boosted tree with the calendar (chosen on validation). On the test households it cuts total error by 8.6% against the median and is better at every history length. Its category split is slightly worse than the median's (0.376 vs 0.370) and the per-category median is best on categories alone (0.342) but no better on the total; the total is the headline number shown to users and used for warnings, so the trade is accepted, as in the staging forecast.
+Calendar features help only because the data has term-time fees and a December peak; those are real Kenyan patterns, but the size of the gain should be checked on real statements. Saved as backend/models/user_forecast.joblib; the median remains the fallback.
+
+## 2026-11-04: Forecast for app users, part 2 - what makes it more accurate?
+Script: scripts/forecast_improvements.py (same data and households; choices made on the 48 validation households, test scored at the end). It trains and saves the deployed backend/models/user_forecast.joblib.
+
+| Idea | Validation MAE (KES) | Test MAE | Kept? |
+|---|---|---|---|
+| Tree on the whole total, with the calendar (deployed earlier today) | 10,741 | **9,794** | yes |
+| Rent and loans as known, fees fee-aware, tree on everyday spending only | 11,819 | - | no |
+| Rent only as known (synthetic loans start and stop: 103% month-to-month variation; rent: 0%) | 12,010 | 10,671 | no |
+| Tuning (learning rate, leaf size, iterations, trend feature; 36 settings) | best 10,634 (-1%) | - | no: under the 2% bar set in advance, kept the simpler default |
+| Personal bias correction (adjust by the household's recent misses, shrink 0.25-0.75) | 11,942 to 13,452 | 11,112 | no: misses are random, not a steady personal bias, in this data |
+| 80% range: 10th/90th percentile trees, widened x1.35 on validation | 80% of months inside | **81% inside**, average width KES 30,633 around an average forecast of KES 40,702 | yes |
+
+Findings: the whole-total tree already learns rent and fee timing from history; splitting the forecast into parts lost more than it gained. The range is wide (about +/-38%) because month-to-month spending in this data is noisy; it is honest, and should narrow on real statements.
+Deployed (backend/store.py, forecast_for_user): total from the tree (median fallback), fee-aware split, 80% range, budget blend applied to the range ends too. One rule needs no model and is not testable on this data (no household changes rent): rent or loan repayments entered under Commitments that differ from history are added as known (for example after "I'm doing this" on a move).
+
+## 2026-11-04: Forecast for app users, part 3 - where does the model's gain come from?
+Same model, data and households; inputs switched on one group at a time (test MAE, KES): median rule 10,719; past spending only 10,615; + income and household 10,571; + December flag and month 9,949; + school-fee timing only (no month or December) 9,844; all inputs (deployed) 9,794.
+By month type (test MAE, median rule vs model): fee months (Jan/May/Sep) 11,791 vs 9,292 (-21%); other months 9,697 vs 9,077 (-6%); December 16,753 vs 16,529 (-1%).
+Permutation importance: household median 0.37, fee month 0.19, usual fee amount 0.16, income 0.07, average income 0.06.
+Reading: about three quarters of the gain comes from knowing when school fees fall and how much this household pays; the rest from income and household size. December is not learnt (one December per household, so few examples). Households without termly fees get only the ordinary-month gain (about 6%). December remains under-forecast for everyone.
+
+## 2026-11-04: Forecast for app users, part 4 - fixes found by walking through the app as three users
+Simulated a new user, a student (day one with estimates, then real months, then "I'm doing this" on a laptop) and a family of four (rent, termly fees, chama, SACCO loan). Every automatic check passed (budgets add up, screens agree, ranges contain forecasts), but reading the answers showed:
+- January was forecast below a normal month for the fee-paying family. Cause: the data has 12 months per household, so month 1 is never a target in training and the raw month number was untrained there. Fix: fee-month and December flags only (validation 10,912 vs 10,741 with the month number; test 9,967, still 7% better than the median's 10,719).
+- Even then, the tree gave this family a fee month 0.92 x its median (fee payers in the data average 1.25 x): a sparse region (high income, long history). Tested a no-fee tree plus fees added separately: worse (validation 11,795). Kept the tree and added a floor in fee months for fee payers (usual non-fee spending plus last term's fees): validation 10,923 vs 10,912, test 9,936 vs 9,967, active in 4% of forecasts. Neutral on accuracy, prevents implausible answers.
+- The 80% range ignored how steady a household is (a family spending the same each month got 31,000-73,000). Fix: with 3+ months, half the model's spread and half the household's own spread, widened x1.3 on validation. Test: 83% inside overall; steadiest quarter 74% inside (width 26,196); most variable quarter 92% (width 38,242).
+- Wording: a one-off payment was described as a loan; a one-month cost showed "score 54 -> 2" with no explanation (now "the score after is for the month(s) you pay"); "No budget for money sent: you have not spent on it" appeared for a family whose chama is set aside under commitments; unclear "months to keep it within reach" advice. All reworded; tests added.
