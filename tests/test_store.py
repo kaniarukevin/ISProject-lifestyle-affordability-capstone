@@ -339,3 +339,66 @@ def test_a_temporary_new_cost_is_labelled(client, monkeypatch):
     r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "school_fees",
                                                    "amount": 2000, "months": 3, "label": "Course"}).get_json()
     assert r["lasts_months"] == 3 and r["title"].endswith("for 3 month(s)")
+
+
+def _check(client, h, choice):
+    r = client.post("/me/afford", headers=h, json=choice)
+    assert r.status_code == 200, r.get_json()
+    return r.get_json()["id"]
+
+
+def test_going_ahead_with_a_purchase_adds_a_debt_and_changes_the_budget(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    before = client.get("/me/budget-plan", headers=h).get_json()["plan"]["budget"]
+    sid = _check(client, h, {"preset": "purchase", "price": 12000, "months": 6, "label": "Laptop"})
+    r = client.post(f"/me/scenarios/{sid}/apply", headers=h, json={"how": "instalments"})
+    assert r.status_code == 200 and "debt" in r.get_json()["notes"][0]
+    debts = client.get("/me/commitments", headers=h).get_json()["debts"]
+    assert debts[0]["name"] == "Laptop" and debts[0]["monthly_payment"] == 2000
+    after = client.get("/me/budget-plan", headers=h).get_json()["plan"]["budget"]
+    assert after["loan_repayment"] == before.get("loan_repayment", 0) + 2000
+    assert client.post(f"/me/scenarios/{sid}/apply", headers=h, json={}).status_code == 409   # only once
+
+
+def test_paying_from_savings_lowers_the_balance(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "savingsBalance": 20000,
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    sid = _check(client, h, {"preset": "purchase", "price": 15000, "months": 1, "label": "Phone"})
+    assert client.post(f"/me/scenarios/{sid}/apply", headers=h, json={"how": "from_savings"}).status_code == 200
+    assert client.get("/me/profile", headers=h).get_json()["savingsBalance"] == 5000
+
+
+def test_moving_house_replaces_the_rent_and_a_goal_is_added(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    for _ in range(2):                                           # moving twice keeps one rent
+        sid = _check(client, h, {"preset": "move_house", "new_rent": 5000})
+        client.post(f"/me/scenarios/{sid}/apply", headers=h, json={})
+    sid = _check(client, h, {"preset": "savings_goal", "target": 6000, "months": 3, "label": "Trip"})
+    client.post(f"/me/scenarios/{sid}/apply", headers=h, json={})
+    c = client.get("/me/commitments", headers=h).get_json()
+    assert [o["amount"] for o in c["obligations"] if o["category"] == "housing"] == [5000]
+    assert c["goals"][0]["name"] == "Trip"
+
+
+def test_income_changes_update_the_profile(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    sid = _check(client, h, {"preset": "income_change", "amount": -2000})
+    client.post(f"/me/scenarios/{sid}/apply", headers=h, json={})
+    incomes = client.get("/me/profile", headers=h).get_json()["incomes"]
+    assert sum(i["amount"] for i in incomes) == 10000
+
+
+def test_past_checks_can_be_deleted_only_by_their_owner(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    other = signup(client, "other@example.com")
+    sid = _check(client, h, {"preset": "income_change", "amount": 1000})
+    assert client.delete(f"/me/scenarios/{sid}", headers=other).status_code == 404
+    assert client.post(f"/me/scenarios/{sid}/apply", headers=other, json={}).status_code == 404
+    assert client.delete(f"/me/scenarios/{sid}", headers=h).status_code == 200
+    assert client.get("/me/scenarios", headers=h).get_json()["scenarios"] == []

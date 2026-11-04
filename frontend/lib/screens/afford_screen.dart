@@ -93,13 +93,26 @@ class _AffordScreenState extends State<AffordScreen> {
             ),
             ...history.take(10).map((h) {
               final r = (h['result'] as Map).cast<String, dynamic>();
+              final id = h['id'] as int;
               return ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: _VerdictDot(verdict: r['verdict'] as String? ?? ''),
                 title: Text((r['title'] ?? 'Check') as String),
-                subtitle: Text('${r['verdict']}${r['score_after'] != null ? ' · score ${r['score_after']}' : ''}'),
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                    builder: (_) => ResultScreen(result: r))),
+                subtitle: Text('${r['verdict']}${r['score_after'] != null ? ' · score ${r['score_after']}' : ''}'
+                    '${r['applied'] != null ? ' · going ahead' : ''}'),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Delete this check',
+                  onPressed: () async {
+                    await context.read<AppState>().api.deleteScenario(id);
+                    _loadHistory();
+                  },
+                ),
+                onTap: () async {
+                  await Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => ResultScreen(result: {...r, 'id': id})));
+                  _loadHistory();
+                },
               );
             }),
           ],
@@ -296,6 +309,7 @@ class ResultScreen extends StatelessWidget {
             _Box(title: 'What would work', children: [
               ...((result['advice'] as List).map((a) => Text('• $a'))),
             ]),
+          if (result['id'] != null) _GoAhead(result: result),
           const SizedBox(height: 8),
           Text('Based on ${result['months_used'] ?? 'your recent'} month(s) of your own records. '
               'This is guidance from a model, not financial advice.', style: theme.textTheme.bodySmall),
@@ -322,6 +336,80 @@ class _Box extends StatelessWidget {
           ]),
         ),
       );
+}
+
+/// "I'm doing this": records the decision so the budget, dashboard and later checks include it.
+/// Checks stay "just exploring" until this is pressed.
+class _GoAhead extends StatefulWidget {
+  const _GoAhead({required this.result});
+  final Map<String, dynamic> result;
+
+  @override
+  State<_GoAhead> createState() => _GoAheadState();
+}
+
+class _GoAheadState extends State<_GoAhead> {
+  bool busy = false;
+  List<String>? notes;
+
+  @override
+  void initState() {
+    super.initState();
+    final applied = widget.result['applied'];
+    if (applied is Map) notes = ((applied['notes'] as List?) ?? []).cast<String>();
+  }
+
+  Future<void> _go() async {
+    var how = 'instalments';
+    final fromSavings = widget.result['pay_from_savings'];
+    if (fromSavings is Map && fromSavings['possible'] == true) {
+      final pick = await showDialog<String>(context: context, builder: (ctx) => SimpleDialog(
+            title: const Text('How will you pay?'),
+            children: [
+              SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'instalments'),
+                  child: Text('In instalments (${kes(widget.result['instalment_per_month_KES'] as num)} a month)')),
+              SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 'from_savings'),
+                  child: const Text('All now, from my savings')),
+            ],
+          ));
+      if (pick == null) return;
+      how = pick;
+    }
+    if (!mounted) return;
+    setState(() => busy = true);
+    try {
+      final n = await context.read<AppState>().api.applyScenario(widget.result['id'] as int, how: how);
+      if (mounted) setState(() => notes = n);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (notes != null) {
+      return _Box(title: 'You are going ahead', children: [
+        ...notes!.map((n) => Text('• $n')),
+        const SizedBox(height: 4),
+        Text('Your budget and dashboard now include this.', style: Theme.of(context).textTheme.bodySmall),
+      ]);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        FilledButton.icon(
+          onPressed: busy ? null : _go,
+          icon: const Icon(Icons.check),
+          label: const Text("I'm doing this"),
+        ),
+        const SizedBox(height: 4),
+        Text('Until you press this, the check is just exploring: nothing in your budget changes.',
+            style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
+      ]),
+    );
+  }
 }
 
 /// What happens to the money each month while paying: left over, paused saving, savings balance.
