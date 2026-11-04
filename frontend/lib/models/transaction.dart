@@ -14,9 +14,67 @@ const Map<String, String> spendingCategories = {
   'savings': 'Savings',
 };
 
+/// Labels for values that are not spending categories you can pick when adding a record.
+const Map<String, String> extraCategories = {
+  'shopping': 'Shopping',
+  'health': 'Health',
+  'personal_care': 'Personal care',
+  'other': 'Other',
+  'charges': 'M-PESA charges',
+  'unsorted': 'Not sorted yet',
+  'own_account': 'My own account (not spending)',
+};
+
+/// Spending with no budget line of its own (shopping, health, personal care, other, not sorted yet).
+const List<String> outsideCategories = ['charges', 'shopping', 'health', 'personal_care', 'other', 'unsorted'];
+
+/// What money coming in can be (the statement cannot tell your own bank transfer from someone paying you).
+const Map<String, String> inTagLabels = {
+  'income': 'All my pay or allowance',
+  'mixed': 'A mix of pay and my own money',
+  'own_account': 'My own money moving',
+  'received': 'Someone paying me back or a gift',
+};
+
+/// The label for any category key, including 'unsorted' (statement payments the app was not sure about).
+String categoryLabel(String key) => spendingCategories[key] ?? extraCategories[key] ?? key;
+
+/// What a payee can be tagged as, in plain words (the app's categories, or the user's own account).
+const Map<String, String> tagLabels = {
+  'housing': 'Rent',
+  'food_groceries': 'Food',
+  'transport': 'Transport',
+  'utilities': 'Bills (power, water, internet)',
+  'airtime_data': 'Airtime & data',
+  'mobile_money_transfers': 'Family & friends',
+  'school_fees': 'School fees',
+  'loan_repayment': 'Loan',
+  'entertainment': 'Eating out & fun',
+  'shopping': 'Shopping',
+  'health': 'Health',
+  'personal_care': 'Personal care',
+  'other': 'Other',
+  'own_account': 'My own account',
+  'unsorted': 'Leave unsorted',
+};
+
+/// M-PESA's own transaction types (always right, because Safaricom writes them on the statement).
+const Map<String, String> mpesaTypes = {
+  'sent': 'Sent to people',
+  'pochi': 'Pochi la Biashara',
+  'buy_goods': 'Buy goods',
+  'pay_bill': 'Pay bill',
+  'cash': 'Cash withdrawal',
+  'airtime': 'Airtime & bundles',
+  'charges': 'M-PESA charges',
+  'loan': 'Loan repayment',
+  'savings': 'Savings',
+};
+
 class Txn {
   Txn({this.id, required this.date, required this.amount, required this.category, this.description = '',
-      this.source = 'manual', this.oneOff = false});
+      this.source = 'manual', this.oneOff = false, this.type, this.payee, this.payeeKey, this.label,
+      this.pinned = false});
 
   int? id;
   DateTime date;
@@ -25,6 +83,17 @@ class Txn {
 
   /// Big, rare payments (a plot, a car deposit, a wedding): shown, but not counted as usual spending.
   bool oneOff;
+
+  /// From an M-PESA statement: the M-PESA type, who was paid, and the label shown (e.g. "M-PESA charges").
+  String? type, payee, payeeKey, label;
+
+  /// Changed by hand for this one payment, so a payee-wide change leaves it alone.
+  bool pinned;
+
+  /// What to call this record in lists: the label or payee for statement records, else the description.
+  String get title => (label != null && label!.isNotEmpty)
+      ? label!
+      : (description.isNotEmpty ? description : categoryLabel(category));
 
   String get isoDate =>
       '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -41,6 +110,11 @@ class Txn {
         description: (j['description'] ?? '') as String,
         source: (j['source'] ?? 'manual') as String,
         oneOff: (j['one_off'] ?? false) as bool,
+        type: j['type'] as String?,
+        payee: j['payee'] as String?,
+        payeeKey: j['payee_key'] as String?,
+        label: j['label'] as String?,
+        pinned: (j['pinned'] ?? false) as bool,
       );
 }
 
@@ -68,6 +142,7 @@ class MonthGroup {
 
   void add(Txn t) {
     items.add(t);
+    if (t.category == 'own_account') return; // the user's own money moving: not spending
     if (t.oneOff) {
       oneOffTotal += t.amount;
       return;

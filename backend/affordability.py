@@ -90,8 +90,14 @@ def _score(f):
     return float(100 * (ps[0] + pok[0]) / 2)
 
 
-def _state(f):
+def _state(f, exact=False):
+    """Financial state. exact=True uses the statement-safe model, trained only on figures an M-PESA statement gives
+    exactly (totals, income, savings, loans): used when much spending is unsorted, because a wrong category split
+    changed the main model's answer for 27 of 60 held-out households and the safe model's for 0
+    (scripts/train_statement_safe_state.py)."""
     e = engine()
+    if exact and "state_model_exact" in e:
+        return str(e["state_model_exact"].predict(f[e["state_features_exact"]])[0])
     return str(e["state_model"].predict(f[e["state_features"]])[0])
 
 
@@ -121,7 +127,8 @@ def _facts(f):
             "savings_KES": round(r.savings)}
 
 
-def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0, debt_label="Loan repayments"):
+def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0, debt_label="Loan repayments",
+           state_exact=False):
     """Score now and after a monthly change, with the savings safety rule and plain-language reasons.
 
     duration: how many months the change lasts (None = for good). A 1-month cost is applied to 1 month only,
@@ -156,7 +163,7 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
         reasons.append("Your spending, before savings, would be more than you earn"
                        + (" while you pay." if duration else "."))
     return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict,
-            "state_now": _state(bf), "before": b, "after": a, "reasons": reasons,
+            "state_now": _state(bf, state_exact), "before": b, "after": a, "reasons": reasons,
             "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None,
             # A short cost scores the months you pay, not your finances for good (found walking through the app:
             # a one-month repair showed "score 54 -> 2" with no explanation).
@@ -166,6 +173,7 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
 
 def what_to_cut(m, changes=None, income_change=0.0, **kw):
     """Smallest equal % cut to flexible spending to (1) stop being short, (2) reach Affordable."""
+    kw.pop("state_exact", None)
     typical = m.sort_values("month").tail(3)[FLEXIBLE].mean()
     break_even = comfortable = None
     for pct in range(5, 55, 5):
@@ -218,7 +226,7 @@ def _cash_flow(before, per_month, months, balance):
     return rows
 
 
-def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0):
+def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0, state_exact=False):
     """A purchase paid over `months` months (1 = pay it all now). The cost lasts only those months, the savings
     balance can cover a temporary gap, and the answer says what happens month by month."""
     price, months, r = float(price), int(months), float(monthly_interest)
@@ -229,7 +237,7 @@ def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0):
     kw = {"duration": months, "savings_balance": balance,
           # a single payment is not a loan; instalments are reported together with existing loans
           "debt_label": None if months == 1 else "These instalments and your loans"}
-    result = assess(m, {"loan_repayment": per_month}, **kw)
+    result = assess(m, {"loan_repayment": per_month}, state_exact=state_exact, **kw)
     left, saving = result["before"]["left_over_KES"], result["before"]["savings_KES"]
     rate = left + saving                                   # what can be put aside each month
     still_needed = max(0.0, price - balance)
@@ -292,15 +300,16 @@ def evaluate(payload):
         raise AffordabilityInputError("savings_balance cannot be negative")
     sc = payload.get("scenario") or {"type": "none"}
     kind = sc.get("type", "none")
+    exact = bool(payload.get("statement_safe"))
     if kind == "none":
-        return assess(m)
+        return assess(m, state_exact=exact)
     if kind == "monthly_change":
         changes, inc = sc.get("changes") or {}, float(sc.get("income_change", 0) or 0)
         lasts = sc.get("months")                         # None = for good; a number = a temporary change
         if lasts is not None and (not isinstance(lasts, (int, float)) or lasts < 1):
             raise AffordabilityInputError("scenario.months must be at least 1 (leave it out for a lasting change)")
         kw = {"duration": int(lasts) if lasts else None, "savings_balance": balance}
-        result = assess(m, changes, inc, **kw)
+        result = assess(m, changes, inc, state_exact=exact, **kw)
         if result["verdict"] != "Affordable":
             result["what_to_cut"] = what_to_cut(m, changes, inc, **kw)
         if result["verdict"] == "Not affordable":
@@ -308,7 +317,7 @@ def evaluate(payload):
             result["advice"] = _advice(result["before"], extra, kw["duration"], balance)
         return result
     if kind == "purchase":
-        return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance)
+        return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance, exact)
     if kind == "savings_goal":
         return savings_goal(m, sc.get("extra_per_month", 0))
     raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase or savings_goal")

@@ -10,7 +10,7 @@ import os
 import statistics
 import threading
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from datetime import date, datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -28,6 +28,12 @@ import affordability as aff
 ROOT = Path(__file__).resolve().parent.parent
 TOKEN_DAYS = 30
 SPENDING_CATEGORIES = aff.CATS
+UNSORTED = "unsorted"          # a statement payment whose category is not certain (never guessed)
+# Spending that is known but has no place in the models' 10 categories (or is not known at all): shown by its
+# real name, spread over everyday categories for the engines like unsorted money.
+OUTSIDE = [UNSORTED, "shopping", "health", "personal_care", "other", "charges"]
+OWN_ACCOUNT = "own_account"    # tagged by the user as moving money to their own account: not spending
+EVERYDAY = ["food_groceries", "transport", "utilities", "airtime_data", "mobile_money_transfers", "entertainment"]
 URBAN_RURAL = ("urban", "peri_urban", "rural")
 FREQUENCIES = {"weekly": 52, "monthly": 12, "termly": 3, "semester": 2, "yearly": 1}
 
@@ -109,6 +115,15 @@ class Transaction(Base):
     # Big, rare payments (a plot, a car deposit, a wedding): shown, but kept out of usual spending,
     # the health score and the forecast. Their ongoing cost (a mortgage) belongs in commitments as a debt.
     one_off: Mapped[bool] = mapped_column(Boolean, default=False)
+    ref: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)   # M-PESA receipt, to skip repeats
+    # From statements: M-PESA's own type (exact), who was paid, the label shown, what the reader decided before any
+    # user tag (so a tag can be undone), and whether the user fixed this one payment by hand.
+    mpesa_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    payee: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payee_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    auto_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Commitments(Base):
@@ -140,6 +155,34 @@ class Scenario(Base):
 _DB = {}
 
 
+class MoneyIn(Base):
+    """Money coming in from a statement: the user's pay or allowance ('income'), their own money moving between
+    accounts ('own_account'), or someone paying them back or a gift ('received'). The statement cannot tell a
+    bank transfer of the user's own money from someone paying them from a bank, so the user tags the source."""
+    __tablename__ = "money_in"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date, index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    kind: Mapped[str] = mapped_column(String(20))
+    auto_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    payee: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    payee_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    description: Mapped[str] = mapped_column(String(200), default="")
+    ref: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+
+
+class StatementRule(Base):
+    """A user's answer about a payee in a statement ("Equity Acc. ••••4521 is rent"), reused on later uploads."""
+    __tablename__ = "statement_rules"
+    __table_args__ = (UniqueConstraint("user_id", "key"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(160))
+    choice: Mapped[str] = mapped_column(String(30))
+    was: Mapped[str | None] = mapped_column(String(40), nullable=True)   # the reader's category before the tag
+
 def init(url=None):
     """Create the engine and the tables (idempotent). Call once at start-up, or from tests with 'sqlite://'."""
     url = url or database_url()
@@ -168,9 +211,23 @@ def _upgrade(engine):
     if "savings_balance" not in {c["name"] for c in inspect(engine).get_columns("profiles")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE profiles ADD COLUMN savings_balance FLOAT NOT NULL DEFAULT 0"))
+    if "ref" not in {c["name"] for c in inspect(engine).get_columns("transactions")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE transactions ADD COLUMN ref VARCHAR(60)"))
     if "estimates" not in {c["name"] for c in inspect(engine).get_columns("profiles")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE profiles ADD COLUMN estimates JSON"))
+    false = "0" if engine.dialect.name == "sqlite" else "FALSE"
+    for table, cols in {"transactions": {"mpesa_type": "VARCHAR(20)", "payee": "VARCHAR(120)",
+                                         "payee_key": "VARCHAR(160)", "label": "VARCHAR(60)",
+                                         "auto_category": "VARCHAR(40)",
+                                         "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
+                        "statement_rules": {"was": "VARCHAR(40)"}}.items():
+        have = {c["name"] for c in inspect(engine).get_columns(table)}
+        for name, ddl in cols.items():
+            if name not in have:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 def session():
@@ -352,7 +409,9 @@ def put_profile():
 
 def _tx_json(t):
     return {"id": t.id, "date": t.day.isoformat(), "amount": t.amount, "category": t.category,
-            "description": t.description, "source": t.source, "one_off": bool(t.one_off)}
+            "description": t.description, "source": t.source, "one_off": bool(t.one_off),
+            "type": t.mpesa_type, "payee": t.payee, "payee_key": t.payee_key, "label": t.label,
+            "pinned": bool(t.pinned)}
 
 
 @bp.get("/me/transactions")
@@ -402,17 +461,75 @@ def _user_months(s, user_id):
     txs = s.scalars(select(Transaction).where(Transaction.user_id == user_id)).all()
     incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)).all()
     income = sum(i.amount * FREQUENCIES[i.frequency] / 12 for i in incomes)
-    by_month, one_offs = {}, {}
+    # Income actually received, when the user has tagged a source in a statement as their pay or allowance. For
+    # the months a statement covers, that replaces the profile figure (a late or short allowance then shows);
+    # other months keep the profile income.
+    ins = s.scalars(select(MoneyIn).where(MoneyIn.user_id == user_id)).all()
+    actual, mixed, covered = {}, {}, set()
+    for x in ins:
+        key = (x.day.year, x.day.month)
+        covered.add(key)
+        if x.kind == "income":
+            actual[key] = actual.get(key, 0.0) + x.amount
+        elif x.kind == "mixed":                      # pay and the user's own money together
+            mixed[key] = mixed.get(key, 0.0) + x.amount
+    # Only once the user has tagged a source as their pay or allowance: salary lines alone would ignore an
+    # allowance that arrives by bank transfer and make income look far too low.
+    tags_in = set(s.scalars(select(StatementRule.choice).where(StatementRule.user_id == user_id,
+                                                                StatementRule.key.like("in:%"))))
+    use_actual = bool(tags_in & {"income", "mixed"})
+
+    def month_income(key):
+        # "A mix": the profile income stays the plan, but a month where less arrived uses the lower amount
+        # (a late or short allowance shows; moving one's own savings never inflates income).
+        got = actual.get(key, 0.0)
+        return min(income, got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
+    by_month, outside, one_offs = {}, {}, {}
     for t in txs:
         key = (t.day.year, t.day.month)
+        if t.category == OWN_ACCOUNT:
+            continue                                 # the user's own money moving: not spending
         if t.one_off:
             one_offs[key] = one_offs.get(key, 0.0) + t.amount
             continue
         m = by_month.setdefault(key, {c: 0.0 for c in SPENDING_CATEGORIES})
-        m[t.category] += t.amount
-    months = [{"year": y, "month": mo, **cats, "income_primary": round(income, 2)}
-              for (y, mo), cats in sorted(by_month.items())]
+        if t.category in m:
+            m[t.category] += t.amount
+        else:                                        # unsorted, shopping, health, personal care, other
+            o = outside.setdefault(key, {})
+            o[t.category] = o.get(t.category, 0.0) + t.amount
+    # Unsorted money still counts in every total. For the engines' category inputs it is spread across everyday
+    # categories in the household's own sorted proportions (the average split if nothing is sorted), so a big
+    # unsorted amount neither disappears nor pushes one category up. "known" keeps what is actually known, for
+    # display and for personalising the budget.
+    known_every = {c: sum(m[c] for m in by_month.values()) for c in EVERYDAY}
+    total_every = sum(known_every.values())
+    if total_every > 0:
+        weights = {c: v / total_every for c, v in known_every.items()}
+    else:
+        import budget as bud
+        weights = dict(zip(bud.model()["variable"], [float(x) for x in bud.model()["one_size"]]))
+        weights = {c: w / (sum(weights.values()) or 1) for c, w in weights.items()}
+    months = []
+    for (y, mo), cats in sorted(by_month.items()):
+        out = outside.get((y, mo), {})
+        un = sum(out.values())
+        spread = {c: cats[c] + (un * weights.get(c, 0.0) if c in EVERYDAY else 0.0) for c in SPENDING_CATEGORIES}
+        from_statement = use_actual and (y, mo) in covered
+        months.append({"year": y, "month": mo, **spread,
+                       "income_primary": round(month_income((y, mo)) if from_statement else income, 2),
+                       "income_from": "statement" if from_statement else "profile",
+                       "unsorted": round(un, 2), "outside": {k: round(v, 2) for k, v in out.items()},
+                       "known": {c: round(v, 2) for c, v in cats.items()}})
     return months, income, one_offs
+
+
+def _known(m):
+    """What is actually known about a month: sorted categories plus 'unsorted' (estimates have no unsorted)."""
+    k = m.get("known")
+    if k is None:                                    # estimates: everything is in the 10 categories
+        return {c: m[c] for c in SPENDING_CATEGORIES}
+    return {**k, **m.get("outside", {})}
 
 
 @bp.get("/me/months")
@@ -520,7 +637,8 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
     separately, a personal bias correction, and tuning; none beat this on validation."""
     hist = months[-12:]
     totals = [sum(m[c] for c in SPENDING_CATEGORIES) for m in hist]
-    shares = {c: sum(m[c] / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in SPENDING_CATEGORIES}
+    parts = SPENDING_CATEGORIES + OUTSIDE            # unsorted and other spending shown by name, not guessed
+    shares = {c: sum(_known(m).get(c, 0.0) / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in parts}
     norm = sum(shares.values()) or 1.0
     shares = {c: v / norm for c, v in shares.items()}
     model = _model_total(hist, totals, s.get(Profile, user_id), target_month)
@@ -529,13 +647,13 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
         fees = x["fees_seen"] if x["fee_month"] else x["fees_median"]
         rest_share = (1 - shares["school_fees"]) or 1.0
         rest = max(0.0, usual_total - fees)
-        usual = {c: rest * shares[c] / rest_share for c in SPENDING_CATEGORIES if c != "school_fees"}
+        usual = {c: rest * shares[c] / rest_share for c in parts if c != "school_fees"}
         usual["school_fees"] = fees
         base = "model"
         rng = x["range"]
     else:
         usual_total = statistics.median(totals)
-        usual = {c: usual_total * shares[c] for c in SPENDING_CATEGORIES}
+        usual = {c: usual_total * shares[c] for c in parts}
         base, rng = "median", None
     changes = _commitment_changes(s, user_id, hist)
     for cat, diff in changes.items():
@@ -545,9 +663,9 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
     this_budget = _saved_budget(s, user_id, target_year, target_month)
     last_budget = _saved_budget(s, user_id, py, pm)
     if this_budget:
-        split, method = {c: 0.75 * this_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, f"blend_budget_{base}"
+        split, method = {c: 0.75 * this_budget.get(c, 0) + 0.25 * usual[c] for c in parts}, f"blend_budget_{base}"
     elif last_budget:
-        split, method = {c: 0.75 * last_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, f"blend_last_budget_{base}"
+        split, method = {c: 0.75 * last_budget.get(c, 0) + 0.25 * usual[c] for c in parts}, f"blend_last_budget_{base}"
     else:
         split, method = usual, ("forecast_model" if base == "model" else "trailing_median")
     breakdown = {c: round(v) for c, v in split.items() if round(v) > 0}
@@ -601,8 +719,13 @@ def household_picture(s, user_id):
             mo[cat] = max(mo[cat], float(fixed.get(cat, 0)))
         # chama, insurance, support to family are payments to others; max, not +, so nothing is counted twice
         mo["mobile_money_transfers"] = max(mo["mobile_money_transfers"], float(fixed.get("other_commitments", 0)))
+    spent = sum(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in scored)
+    unsorted_share = sum(mo.get("unsorted", 0.0) for mo in scored) / spent if spent else 0.0      # outside the 10
+    not_sorted = sum(mo.get("outside", {}).get(UNSORTED, 0.0) for mo in scored) / spent if spent else 0.0
     return {"profile": profile, "income": income, "months": months, "complete": complete, "current": current,
-            "estimated": estimated,
+            "estimated": estimated, "unsorted_share": unsorted_share, "not_sorted_share": not_sorted,
+            # More than 10% unsorted: use the state model that needs no category split.
+            "statement_safe": unsorted_share > 0.10,
             "one_offs": one_offs, "scored": scored, "fixed": fixed, "goal_per_month": goal, "today": today,
             "savings_balance": float(profile.savings_balance or 0) if profile else 0.0}
 
@@ -629,33 +752,73 @@ def overview():
         fc = forecast_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
     health = aff.evaluate({"household": {"household_size": profile.household_size,
                                          "num_dependants": profile.dependants},
-                           "months": pic["scored"]})
+                           "months": pic["scored"], "statement_safe": pic["statement_safe"]})
+    # Month by month: each completed month scored with only the data up to then (how things were at the time).
+    timeline = []
+    for i in range(len(pic["scored"])):
+        mo = pic["scored"][i]
+        r = aff.evaluate({"household": {"household_size": profile.household_size, "num_dependants": profile.dependants},
+                          "months": pic["scored"][:i + 1], "statement_safe": pic["statement_safe"]})
+        timeline.append({"year": mo["year"], "month": mo["month"], "state": r["state_now"], "score": r["score_before"],
+                         "spent": round(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings")),
+                         "saved": round(mo["savings"]), "income": round(mo["income_primary"]),
+                         "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"]})
+    counts = Counter(x["state"] for x in timeline)
+    summary = None
+    if len(timeline) >= 2:
+        summary = (f"Past {len(timeline)} months: " +
+                   ", ".join(f"{counts[st]} {st}" for st in ("Stable", "Strained", "Critical") if counts[st]) + ".")
+        if len(timeline) >= 4:
+            recent = statistics.mean(x["score"] for x in timeline[-2:])
+            before = statistics.mean(x["score"] for x in timeline[-4:-2])
+            summary += (" Improving lately." if recent - before >= 15 else
+                        " Getting harder lately." if before - recent >= 15 else " Steady lately.")
     shown = current or basis[-1]
-    spent = {c: round(shown[c]) for c in SPENDING_CATEGORIES if shown[c] > 0 and c != "savings"}
+    known = _known(shown)
+    # The month in progress: the allowance may not have arrived yet, so "left over" uses the profile income.
+    shown_income = income if current is not None else shown.get("income_primary", income)
+    spent = {c: round(v) for c, v in known.items() if v > 0 and c != "savings"}
     total = sum(spent.values())
-    saved = round(shown["savings"])          # saving is not spending: shown on its own line (audit 6)
+    saved = round(known["savings"])          # saving is not spending: shown on its own line (audit 6)
     notes = []
     if pic["estimated"]:
         notes.append("Based on the rough figures you gave when setting up. Record your spending or upload a "
                      "statement and your real numbers take over.")
-    elif not complete:
+    if pic["not_sorted_share"] > 0.10:
+        notes.append(f"{pic['not_sorted_share']:.0%} of your spending is not sorted yet. Your totals are exact; sort "
+                     "your top payees in Who you pay for a sharper budget.")
+    if not pic["estimated"] and not complete:
         notes.append("You have only recorded spending for this month so far. Your health score and forecast "
                      "become reliable once at least one full month is recorded.")
-    elif len(complete) < 3:
+    elif not pic["estimated"] and len(complete) < 3:
         notes.append(f"Based on {len(complete)} full month(s) of records. Add more for a more reliable picture.")
+    last = months[-1] if months else None
+    today = pic["today"]
+    if last and (today.year * 12 + today.month) - (last["year"] * 12 + last["month"]) >= 2:
+        notes.append(f"Your latest records are from {calendar.month_name[last['month']]} {last['year']}. Upload a recent "
+                     "statement or add spending for an up-to-date picture.")
+    from_statement = [m["income_primary"] for m in pic["scored"] if m.get("income_from") == "statement"]
+    if from_statement and income > 0 and statistics.median(from_statement) < 0.85 * income:
+        notes.append(f"The pay or allowance that actually arrived averaged KES {statistics.median(from_statement):,.0f} a "
+                     f"month, less than the KES {round(income):,} in your profile. Your score uses what arrived.")
     if fc["total"] > income > 0:
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
     return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
                    state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED, estimated=pic["estimated"],
+                   unsorted_share=round(pic["not_sorted_share"], 3), outside_share=round(pic["unsorted_share"], 3),
+                   statement_safe=pic["statement_safe"],
                    savings_balance=round(pic["savings_balance"]),
                    latest={"year": shown["year"], "month": shown["month"], "spent": total, "by_category": spent,
-                           "saved": saved, "left_over": round(income - total - saved), "partial": current is not None,
+                           "saved": saved, "income": round(shown_income),
+                           "income_from": "profile" if current is not None else shown.get("income_from", "profile"),
+                           "left_over": round(shown_income - total - saved),
+                           "partial": current is not None,
                            "one_off": round(one_offs.get((shown["year"], shown["month"]), 0))},
                    history=[{"year": m["year"], "month": m["month"],
                              "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings")),
                              "saved": round(m["savings"])} for m in months[-6:]],
-                   forecast=fc, notes=notes)
+                   forecast=fc, notes=notes, timeline=timeline, timeline_summary=summary)
 
 
 @bp.get("/me/budget-plan")
@@ -689,7 +852,7 @@ def budget_plan():
             fixed[cat] = round(usual)
             notes.append(f"Your usual {label} (KES {round(usual):,}) is set aside. Add it under Commitments to make it exact.")
 
-    payload = {"income": income, "fixed": fixed, "goal_per_month": goal,
+    payload = {"income": income, "fixed": fixed, "goal_per_month": goal, "statement_safe": pic["statement_safe"],
                "household": {"household_size": profile.household_size, "num_dependants": profile.dependants,
                              "urban_rural": profile.urban_rural, "formal_job": profile.formal_job}}
     if complete:
@@ -699,7 +862,7 @@ def budget_plan():
         notes.append("Your health state is assumed Stable until a full month of spending is recorded.")
     if complete:
         recent = complete[-6:]
-        own = {cat: sum(mo[cat] for mo in recent) / len(recent) for cat in SPENDING_CATEGORIES}
+        own = {cat: sum(_known(mo)[cat] for mo in recent) / len(recent) for cat in SPENDING_CATEGORIES}   # sorted only
         # Chama, family support and insurance entered under Commitments are already set aside; take them out of
         # "money sent" so they are not budgeted twice (audit 5.3).
         own["mobile_money_transfers"] = max(0.0, own["mobile_money_transfers"] - float(fixed.get("other_commitments", 0)))
@@ -708,10 +871,10 @@ def budget_plan():
     prev_month = next((mo for mo in complete if (mo["year"], mo["month"]) == (py, pm)), None)
     if isinstance(prev_limits, dict) and prev_month:
         payload["last_month"] = {"limits": prev_limits,
-                                 "spent": {cat: prev_month[cat] for cat in SPENDING_CATEGORIES if cat in prev_limits}}
+                                 "spent": {cat: _known(prev_month)[cat] for cat in SPENDING_CATEGORIES if cat in prev_limits}}
     plan = bud.evaluate(payload)
     plan["notes"] = notes + plan["notes"]
-    spent = {cat: round(current[cat]) for cat in SPENDING_CATEGORIES if current and current[cat] > 0}
+    spent = {cat: round(v) for cat, v in (_known(current) if current else {}).items() if v > 0}
     auto_saved = False
     if saved_now_data is None and complete:
         # Save the month's budget the first time it is opened, so next month's overspend rule and forecast can
@@ -723,7 +886,7 @@ def budget_plan():
     # Safe to spend per day: what is left of the everyday limits, spread over the days left (audit 5.5).
     everyday = [cat for cat in bud.model()["variable"]]
     limits = saved_now_data["budget"] if saved_now_data else plan["budget"]
-    left = sum(float(limits.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday)
+    left = sum(float(limits.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday + OUTSIDE)
     days_left = calendar.monthrange(y, m)[1] - pic["today"].day + 1
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data, auto_saved=auto_saved,
                    everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left))
@@ -809,7 +972,7 @@ def afford():
             result = aff.evaluate({"household": {"household_size": profile.household_size,
                                                  "num_dependants": profile.dependants},
                                    "months": months, "scenario": scenario,
-                                   "savings_balance": pic["savings_balance"]})
+                                   "savings_balance": pic["savings_balance"], "statement_safe": pic["statement_safe"]})
         except aff.AffordabilityInputError as exc:
             raise InputError(str(exc))
         result["title"] = title
@@ -1011,12 +1174,444 @@ def delete_scenario(sid):
     return jsonify(deleted=True), 200
 
 
+# ---------------- M-PESA statements ----------------
+
+MAX_STATEMENT_BYTES = 10 * 1024 * 1024
+
+
+def _row_ref(r):
+    """A transfer and its charge share a receipt number, so the receipt alone is not unique."""
+    return f"{r['receipt']}:{round(abs(float(r['amount'])))}:{'c' if r.get('mpesa_type') == 'charges' else 't'}"
+
+
+def _goal_matches(goals, amount, label):
+    """Open goals that look like this purchase: the name appears in the payee, or the target is within 15%."""
+    out = []
+    for gl in goals or []:
+        if gl.get("done"):
+            continue
+        target = float(gl.get("target") or 0)
+        name = str(gl.get("name", ""))
+        if (target and abs(target - amount) <= 0.15 * target) or (name and name.lower() in (label or "").lower()):
+            out.append({"name": name, "target": round(target), "saved": round(float(gl.get("saved") or 0))})
+    return out
+
+
+def _hints(payee, goals, recent_checks):
+    """Clues for a payee the user may not remember: a goal or an earlier 'Can I afford it?' check of about the
+    same amount, shortly before the payment."""
+    out = []
+    for p in payee.get("recent", [])[:3]:
+        amount, day = p["amount"], date.fromisoformat(p["date"])
+        for gl in goals or []:
+            target = float(gl.get("target") or 0)
+            if not gl.get("done") and target and abs(target - amount) <= 0.15 * target:
+                out.append(f"KES {amount:,} on {day:%d %b} is close to your goal \"{gl.get('name')}\" (KES {target:,.0f}).")
+        for when, req, title in recent_checks:
+            price = float(req.get("price") or req.get("amount") or 0)
+            if price and abs(price - amount) <= 0.15 * price and 0 <= (day - when).days <= 60:
+                out.append(f"KES {amount:,} on {day:%d %b}: you checked \"{title}\" on {when:%d %b}.")
+    return list(dict.fromkeys(out))[:3]
+
+
+def _partial_months(period, today):
+    """Months the statement only partly covers (a half month looks cheap). The current month is kept: the app
+    already treats it as 'so far'."""
+    if not period:
+        return set()
+    start, end = (datetime.strptime(p, "%d %b %Y").date() for p in period)
+    out = set()
+    if start.day != 1:
+        out.add(f"{start.year}-{start.month:02d}")
+    last = calendar.monthrange(end.year, end.month)[1]
+    if end.day != last and (end.year, end.month) != (today.year, today.month):
+        out.add(f"{end.year}-{end.month:02d}")
+    return out
+
+
+def _rules(s, user_id):
+    return {r.key: r.choice for r in s.scalars(select(StatementRule).where(StatementRule.user_id == user_id))}
+
+
+@bp.post("/me/statements/preview")
+@login_required
+def statement_preview():
+    """Read an uploaded M-PESA statement and return what would be imported. Nothing is saved; the PDF and the
+    password are only held in memory for this request."""
+    import mpesa
+    f = request.files.get("file")
+    if f is None:
+        raise InputError("choose your M-PESA statement (PDF) to upload")
+    data = f.read(MAX_STATEMENT_BYTES + 1)
+    if len(data) > MAX_STATEMENT_BYTES:
+        raise InputError("that file is too big for a statement (10 MB at most)")
+    with session() as s:
+        remembered = _rules(s, g.user_id)
+        seen = set(s.scalars(select(Transaction.ref).where(Transaction.user_id == g.user_id, Transaction.ref.is_not(None))))
+        seen |= set(s.scalars(select(MoneyIn.ref).where(MoneyIn.user_id == g.user_id, MoneyIn.ref.is_not(None))))
+        c = s.get(Commitments, g.user_id)
+        goals = (c.data or {}).get("goals", []) if c else []
+        checks = [(sc.created_at.date(), sc.request or {}, (sc.result or {}).get("title", ""))
+                  for sc in s.scalars(select(Scenario).where(Scenario.user_id == g.user_id))]
+    try:
+        info = mpesa.read_statement(data, request.form.get("password") or None, remembered)
+    except mpesa.StatementError as exc:
+        raise InputError(str(exc))
+    skip = _partial_months(info["period"], _today())
+    statement_months = {r["time"][:7] for r in info["rows"] if r["kind"] == "spend"} - skip
+    with session() as s:
+        manual = [t for t in s.scalars(select(Transaction).where(Transaction.user_id == g.user_id,
+                                                                Transaction.source == "manual"))
+                  if f"{t.day.year}-{t.day.month:02d}" in statement_months]
+    rows = []
+    for r in info["rows"]:
+        if r["kind"] == "ignore":
+            continue
+        ref = _row_ref(r)
+        rows.append({"n": r["n"], "ref": ref, "date": r["time"][:10], "amount": round(abs(r["amount"]), 2),
+                     "direction": "in" if r["amount"] > 0 else "out", "kind": r["kind"], "type": r["mpesa_type"],
+                     "category": r["category"], "auto_category": r["auto_category"], "label": r["label"],
+                     "payee": r["payee"], "payee_key": r["payee_key"], "source": r["source"],
+                     "details": r["details"][:200], "auto_kind": r.get("auto_kind"),
+                     "one_off": bool(r.get("suggest_one_off")), "duplicate": ref in seen,
+                     "goals": _goal_matches(goals, abs(r["amount"]), r["label"]) if r.get("suggest_one_off") else []})
+    for p in info["payees"]:
+        p["hints"] = _hints(p, goals, checks)
+    return jsonify(period=info["period"], checks=info["checks"], months=info["months"], flows=info["flows"],
+                   coverage=info["coverage"], payees=info["payees"], usual_monthly_spending=info["usual_monthly_spending"],
+                   transactions=rows, new=sum(1 for r in rows if r["kind"] == "spend" and not r["duplicate"]),
+                   left_out_months=sorted(skip),
+                   manual_overlap={"count": len(manual),
+                                   "months": sorted({f"{t.day.year}-{t.day.month:02d}" for t in manual})}), 200
+
+
+def _save_rule(s, user_id, key, tag, was):
+    rule = s.scalar(select(StatementRule).where(StatementRule.user_id == user_id, StatementRule.key == key))
+    if rule is None:
+        s.add(StatementRule(user_id=user_id, key=str(key)[:160], choice=tag, was=was))
+    else:
+        rule.choice = tag
+
+
+@bp.post("/me/statements/import")
+@login_required
+def statement_import():
+    """Save a reviewed statement. Body: the preview's transactions (with any one-off changes), tags for payees
+    {payee_key: category | 'own_account' | 'unsorted'}, the period, and goals a purchase completed."""
+    import mpesa
+    b = _body()
+    rows, tags = b.get("transactions"), b.get("tags") or {}
+    if not isinstance(rows, list) or not isinstance(tags, dict):
+        raise InputError("send the transactions and tags from the preview")
+    if any(v not in mpesa.ALL_TAGS for v in tags.values()):
+        raise InputError("one of your choices was not recognised; read the statement again and retry")
+    skip = _partial_months(b.get("period"), _today())
+    spend, net, was, money_in = [], defaultdict(float), {}, []
+    for r in rows:
+        if not isinstance(r, dict):
+            raise InputError("each transaction must be an object")
+        try:
+            day = date.fromisoformat(str(r.get("date")))
+            amount = float(r.get("amount"))
+        except (TypeError, ValueError):
+            raise InputError("each transaction needs a date (YYYY-MM-DD) and an amount")
+        row = {"amount": amount if r.get("direction") == "in" else -amount, "kind": r.get("kind"),
+               "category": r.get("category"), "source": r.get("source")}
+        key = r.get("payee_key")
+        if key and key in tags:
+            was.setdefault(key, r.get("auto_category"))
+            mpesa.apply_tag(row, tags[key])
+        month = f"{day.year}-{day.month:02d}"
+        if month in skip or r.get("duplicate"):
+            continue
+        if row["kind"] == "spend":
+            cat = row["category"]
+            if cat not in SPENDING_CATEGORIES + OUTSIDE:
+                raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES + OUTSIDE)}")
+            spend.append(dict(day=day, amount=amount, category=cat, label=str(r.get("label") or "")[:60],
+                              details=str(r.get("details") or r.get("label") or "")[:200],
+                              one_off=bool(r.get("one_off")), ref=str(r.get("ref") or "")[:60] or None,
+                              mpesa_type=str(r.get("type") or "")[:20] or None, payee=(r.get("payee") or None),
+                              payee_key=key, auto=r.get("auto_category")))
+        elif row["kind"] == "own_out":
+            net[month] += amount
+        elif row["kind"] == "own_in":
+            net[month] -= amount
+        if r.get("direction") == "in" and r.get("type") == "money_in":
+            money_in.append(dict(day=day, amount=amount, kind="own_account" if row["kind"] == "own_in" else row["kind"],
+                                 auto=r.get("auto_kind"), payee=(r.get("payee") or "")[:120] or None, payee_key=key,
+                                 label=str(r.get("label") or "")[:60], details=str(r.get("details") or "")[:200],
+                                 ref=str(r.get("ref") or "")[:60] or None))
+    done = [str(n) for n in (b.get("completed_goals") or [])]
+    months_in = {f"{x['day'].year}-{x['day'].month:02d}" for x in spend}
+    notes = []
+    with session() as s:
+        replaced = 0
+        if b.get("replace_manual", True) and months_in:
+            # Hand-entered records in the statement's months would be counted twice (found 4 Nov).
+            for t in s.scalars(select(Transaction).where(Transaction.user_id == g.user_id, Transaction.source == "manual")):
+                if f"{t.day.year}-{t.day.month:02d}" in months_in:
+                    s.delete(t)
+                    replaced += 1
+        seen = set(s.scalars(select(Transaction.ref).where(Transaction.user_id == g.user_id, Transaction.ref.is_not(None))))
+        added = 0
+        for x in spend:
+            if x["ref"] and x["ref"] in seen:
+                continue
+            s.add(Transaction(user_id=g.user_id, day=x["day"], amount=x["amount"], category=x["category"],
+                              description=x["details"], source="mpesa", one_off=x["one_off"], ref=x["ref"],
+                              mpesa_type=x["mpesa_type"], payee=(x["payee"] or "")[:120] or None,
+                              payee_key=(x["payee_key"] or "")[:160] or None, label=x["label"],
+                              auto_category=x["auto"]))
+            seen.add(x["ref"])
+            added += 1
+        seen_in = set(s.scalars(select(MoneyIn.ref).where(MoneyIn.user_id == g.user_id, MoneyIn.ref.is_not(None))))
+        for x in money_in:
+            if x["ref"] and x["ref"] in seen_in:
+                continue
+            s.add(MoneyIn(user_id=g.user_id, day=x["day"], amount=x["amount"], kind=x["kind"],
+                          auto_kind="own_account" if x["auto"] == "own_in" else x["auto"], payee=x["payee"],
+                          payee_key=(x["payee_key"] or "")[:160] or None, label=x["label"], description=x["details"],
+                          ref=x["ref"]))
+            seen_in.add(x["ref"])
+        for month, kes in net.items():          # saving = more moved into your own accounts than taken out
+            ref = f"net-savings:{month}"
+            if kes > 0 and ref not in seen:
+                y, m = map(int, month.split("-"))
+                s.add(Transaction(user_id=g.user_id, day=date(y, m, calendar.monthrange(y, m)[1]), amount=round(kes, 2),
+                                  category="savings", description="Saved to your bank or fund (from statement)",
+                                  source="mpesa", ref=ref, mpesa_type="savings", label="Savings & investments"))
+                added += 1
+        if b.get("remember", True):
+            for key, tag in tags.items():
+                _save_rule(s, g.user_id, key, tag, was.get(key))
+        if done:
+            notes += _complete_goals(s, g.user_id, done)
+        s.commit()
+    if replaced:
+        notes.append(f"Replaced {replaced} hand-entered record(s) in the same months, so nothing is counted twice.")
+    if skip:
+        notes.append("Left out part-months at the edge of the statement (" + ", ".join(sorted(skip)) +
+                     "): a half month would make your usual spending look too low.")
+    return jsonify(imported=added, notes=notes), 200
+
+
+@bp.delete("/me/statements")
+@login_required
+def statement_undo():
+    """Remove everything imported from statements (to re-import cleanly). Payee tags are kept."""
+    with session() as s:
+        n = s.execute(delete(Transaction).where(Transaction.user_id == g.user_id, Transaction.source == "mpesa")).rowcount
+        n += s.execute(delete(MoneyIn).where(MoneyIn.user_id == g.user_id)).rowcount
+        s.commit()
+    return jsonify(removed=n), 200
+
+
+def _complete_goals(s, user_id, names):
+    """Tick off goals a purchase completed: mark them done (the budget stops setting money aside) and take what
+    was saved for them out of the savings balance (it has been spent)."""
+    c = s.get(Commitments, user_id)
+    if not (c and c.data):
+        return []
+    data = copy.deepcopy(c.data)
+    profile = s.get(Profile, user_id)
+    notes = []
+    for goal in data.get("goals", []):
+        if goal.get("name") in names and not goal.get("done"):
+            goal["done"], goal["done_on"] = True, _today().isoformat()
+            saved = float(goal.get("saved") or 0)
+            if profile is not None and saved:
+                profile.savings_balance = max(0.0, (profile.savings_balance or 0) - saved)
+                s.add(profile)
+            notes.append(f"Goal reached: {goal['name']}. The budget stops setting money aside for it.")
+    c.data = data
+    s.add(c)
+    return notes
+
+
+# ---------------- who you pay, and corrections ----------------
+
+def _retag(s, user_id, key, tag):
+    """Apply a tag to every payment to this payee that the user has not corrected one by one."""
+    n = 0
+    for t in s.scalars(select(Transaction).where(Transaction.user_id == user_id, Transaction.payee_key == key)):
+        if t.pinned or t.mpesa_type == "charges":
+            continue
+        t.category = (t.auto_category or t.category) if tag is None else tag
+        n += 1
+    return n
+
+
+def _commitment_offer(s, user_id, key, tag):
+    """Tagging a payee as rent or school fees: offer to add it to commitments, so the budget sets it aside."""
+    if tag not in ("housing", "school_fees") or not key:
+        return None
+    txs = s.scalars(select(Transaction).where(Transaction.user_id == user_id, Transaction.payee_key == key,
+                                              Transaction.one_off.is_(False))).all()
+    if not txs:
+        return None
+    by_month = defaultdict(float)
+    for t in txs:
+        by_month[(t.day.year, t.day.month)] += t.amount
+    per_month = statistics.median(by_month.values())
+    termly = tag == "school_fees" and len(by_month) <= 4
+    amount = round(statistics.median([t.amount for t in txs]) if termly else per_month)
+    name = txs[0].payee or ("Rent" if tag == "housing" else "School fees")
+    what = "rent" if tag == "housing" else "school fees"
+    return {"category": tag, "name": name, "amount": amount, "frequency": "termly" if termly else "monthly",
+            "text": f"Add {what} of KES {amount:,} {'a term' if termly else 'a month'} ({name}) to your commitments? "
+                    "Your budget will set it aside first."}
+
+
+@bp.patch("/me/transactions/<int:tx_id>")
+@login_required
+def correct_transaction(tx_id):
+    """Change a payment's category: just this one (scope 'one'), or always for this payee (scope 'payee')."""
+    b = _body()
+    tag, scope = b.get("category"), b.get("scope", "one")
+    if tag not in SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT]:
+        raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT])}")
+    if scope not in ("one", "payee"):
+        raise InputError("scope must be one or payee")
+    with session() as s:
+        t = s.get(Transaction, tx_id)
+        if t is None or t.user_id != g.user_id:
+            return jsonify(error="no such payment"), 404
+        if scope == "payee":
+            if not t.payee_key:
+                raise InputError("this payment has no payee to remember; change just this one")
+            _save_rule(s, g.user_id, t.payee_key, tag, t.auto_category or t.category)
+            n = _retag(s, g.user_id, t.payee_key, tag)
+        else:
+            t.category, t.pinned, n = tag, True, 1
+        s.flush()
+        offer = _commitment_offer(s, g.user_id, t.payee_key, tag) if scope == "payee" else None
+        s.commit()
+    return jsonify(updated=n, offer=offer), 200
+
+
+@bp.get("/me/payees")
+@login_required
+def list_payees():
+    """Everyone the user pays, from imported statements: payments, total, current category, their tag, and a
+    suggestion from Kenyan payment patterns (never applied without the user)."""
+    import mpesa
+    with session() as s:
+        rules = _rules(s, g.user_id)
+        txs = s.scalars(select(Transaction).where(Transaction.user_id == g.user_id, Transaction.payee_key.is_not(None))).all()
+    groups = defaultdict(list)
+    for t in txs:
+        groups[t.payee_key].append(t)
+    out = []
+    for key, ts in groups.items():
+        cats = defaultdict(float)
+        for t in ts:
+            cats[t.category] += t.amount
+        pays = [(t.day.isoformat(), t.amount) for t in ts if not t.one_off]
+        out.append({"key": key, "payee": ts[0].payee, "type": ts[0].mpesa_type,
+                    "type_label": mpesa.TYPES.get(ts[0].mpesa_type or "other", ""), "label": ts[0].label,
+                    "count": len(ts), "total": round(sum(t.amount for t in ts)),
+                    "last": max(t.day for t in ts).isoformat(), "category": max(cats, key=cats.get),
+                    "tag": rules.get(key), "auto_category": ts[0].auto_category,
+                    "suggestion": None if key in rules else mpesa.suggest(pays, ts[0].mpesa_type)})
+    for p in out:
+        p["direction"] = "out"
+    spend_total = sum(p["total"] for p in out) or 1
+    sorted_money = sum(p["total"] for p in out if p["category"] != UNSORTED)
+    with session() as s:
+        ins = s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key.is_not(None))).all()
+    groups_in = defaultdict(list)
+    for x in ins:
+        groups_in[x.payee_key].append(x)
+    for key, xs in groups_in.items():
+        out.append({"key": key, "payee": xs[0].payee, "type": "money_in", "direction": "in", "type_label": "Money in",
+                    "label": xs[0].label, "count": len(xs), "total": round(sum(x.amount for x in xs)),
+                    "last": max(x.day for x in xs).isoformat(), "category": xs[0].kind, "tag": rules.get(key),
+                    "auto_category": xs[0].auto_kind, "suggestion": None})
+    out.sort(key=lambda p: (p["direction"] == "in", -p["total"]))      # who you pay first, then who pays you
+    return jsonify(payees=out[:250], sorted_share=round(sorted_money / spend_total, 3)), 200
+
+
+@bp.put("/me/payees")
+@login_required
+def tag_payee():
+    """Always treat this payee as a category (or the user's own account). Updates past payments too."""
+    import mpesa
+    b = _body()
+    key, tag = b.get("key"), b.get("tag")
+    if not key or tag not in mpesa.ALL_TAGS:
+        raise InputError("choose what this payee is")
+    if key.startswith("in:"):                         # money coming in: pay or allowance, own account, received
+        if tag not in mpesa.IN_TAGS:
+            raise InputError("money coming in can be your pay or allowance, a mix, your own money, or someone paying you")
+        with session() as s:
+            xs = s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key == key)).all()
+            _save_rule(s, g.user_id, key, tag, xs[0].auto_kind if xs else None)
+            for x in xs:
+                x.kind = tag
+            s.commit()
+        return jsonify(updated=len(xs), offer=None), 200
+    with session() as s:
+        first = s.scalar(select(Transaction).where(Transaction.user_id == g.user_id, Transaction.payee_key == key))
+        _save_rule(s, g.user_id, key, tag, first.auto_category if first else None)
+        n = _retag(s, g.user_id, key, tag)
+        s.flush()
+        offer = _commitment_offer(s, g.user_id, key, tag)
+        s.commit()
+    return jsonify(updated=n, offer=offer), 200
+
+
+@bp.delete("/me/payees")
+@login_required
+def untag_payee():
+    """Undo a payee tag: payments go back to how the statement reader sorted them (except one-by-one fixes)."""
+    key = request.args.get("key")
+    if not key:
+        raise InputError("send the payee key")
+    with session() as s:
+        s.execute(delete(StatementRule).where(StatementRule.user_id == g.user_id, StatementRule.key == key))
+        n = _retag(s, g.user_id, key, None)
+        for x in s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key == key)):
+            x.kind = x.auto_kind or x.kind
+            n += 1
+        s.commit()
+    return jsonify(updated=n), 200
+
+
+@bp.post("/me/payees/commitment")
+@login_required
+def payee_commitment():
+    """Accept the offer: add rent or school fees for this payee to commitments (rent replaces the old rent)."""
+    import commitments as cm
+    b = _body()
+    cat, name = b.get("category"), str(b.get("name") or "")[:60]
+    if cat not in ("housing", "school_fees"):
+        raise InputError("category must be housing or school_fees")
+    amount = _num(b.get("amount"), "amount", 1)
+    freq = b.get("frequency", "monthly")
+    with session() as s:
+        c = s.get(Commitments, g.user_id) or Commitments(user_id=g.user_id, data={})
+        data = copy.deepcopy({"obligations": [], "debts": [], "goals": [], **(c.data or {})})
+        if cat == "housing":
+            data["obligations"] = [o for o in data["obligations"] if o.get("category") != "housing"]
+        data["obligations"].append({"name": name or ("Rent" if cat == "housing" else "School fees"), "category": cat,
+                                    "amount": round(amount), "frequency": freq})
+        try:
+            cm.evaluate(data)
+        except cm.CommitmentsInputError as exc:
+            raise InputError(str(exc))
+        c.data = data
+        s.add(c)
+        s.commit()
+    return jsonify(saved=True), 200
+
+
 @bp.delete("/me")
 @login_required
 def delete_account():
     """Privacy: a user (or a tester after the study) can remove everything about them."""
     with session() as s:
-        for table in (Scenario, Budget, Commitments, Transaction, IncomeSource, Profile):
+        for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile):
             s.execute(delete(table).where(table.user_id == g.user_id))
         s.execute(delete(User).where(User.id == g.user_id))
         s.commit()

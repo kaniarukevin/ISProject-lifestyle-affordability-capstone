@@ -139,7 +139,7 @@ def evaluate(payload):
             frame = aff.months_frame(payload["months"], size, deps)
         except aff.AffordabilityInputError as exc:
             raise BudgetInputError(str(exc))
-        state = aff._state(aff.build_features(frame).iloc[[-1]])
+        state = aff._state(aff.build_features(frame).iloc[[-1]], bool(payload.get("statement_safe")))
     else:
         state = payload.get("state", "Stable")
         if state not in STATES:

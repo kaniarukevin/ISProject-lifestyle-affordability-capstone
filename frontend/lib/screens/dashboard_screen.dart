@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/transaction.dart' show spendingCategories;
+import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
@@ -93,6 +93,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(n as String, style: theme.textTheme.bodySmall),
               )),
+          if (((d['timeline'] as List?) ?? []).length >= 2)
+            _Timeline(months: (d['timeline'] as List).cast<Map<String, dynamic>>(),
+                summary: d['timeline_summary'] as String?),
           const SizedBox(height: 12),
           Card(
             child: Padding(
@@ -144,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ...((fc['breakdown'] as Map).cast<String, num>().entries.toList()
                       ..sort((a, b) => b.value.compareTo(a.value)))
                     .take(5)
-                    .map((e) => _Line(spendingCategories[e.key] ?? e.key, kes(e.value))),
+                    .map((e) => _Line(categoryLabel(e.key), kes(e.value))),
               ]),
             ),
           ),
@@ -156,7 +159,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Text('Where your money went', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
                 ...byCat.map((e) => _Bar(
-                      label: spendingCategories[e.key] ?? e.key,
+                      label: categoryLabel(e.key),
                       value: e.value.toDouble(),
                       max: byCat.first.value.toDouble(),
                     )),
@@ -267,4 +270,53 @@ class _Bar extends StatelessWidget {
           LinearProgressIndicator(value: max > 0 ? value / max : 0, minHeight: 6),
         ]),
       );
+}
+
+
+/// Your financial state month by month: each month scored with only the data up to then, newest first.
+class _Timeline extends StatelessWidget {
+  const _Timeline({required this.months, this.summary});
+  final List<Map<String, dynamic>> months;
+  final String? summary;
+
+  Color _color(BuildContext context, String state) => switch (state) {
+        'Stable' => Colors.green.shade700,
+        'Strained' => Colors.orange.shade800,
+        _ => Theme.of(context).colorScheme.error,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final rows = months.reversed.toList();
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      child: ExpansionTile(
+        title: const Text('Month by month'),
+        subtitle: summary == null ? null : Text(summary!),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        children: [
+          // A strip of coloured dots, oldest to newest, for the trend at a glance.
+          Row(children: months.map((m) => Expanded(
+                child: Container(height: 10, margin: const EdgeInsets.symmetric(horizontal: 1),
+                    color: _color(context, m['state'] as String)),
+              )).toList()),
+          const SizedBox(height: 8),
+          ...rows.map((m) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(children: [
+                  CircleAvatar(radius: 6, backgroundColor: _color(context, m['state'] as String)),
+                  const SizedBox(width: 8),
+                  SizedBox(width: 72, child: Text('${_months[(m['month'] as int) - 1]} ${m['year']}')),
+                  Expanded(child: Text('${m['state']} · score ${m['score']}')),
+                  Text('spent ${kes(m['spent'] as num)} of ${kes(m['income'] as num)}'
+                      '${m['income_from'] == 'statement' ? '*' : ''}', style: theme.textTheme.bodySmall),
+                ]),
+              )),
+          if (months.any((m) => m['income_from'] == 'statement'))
+            Text('* money that actually arrived, from your statement', style: theme.textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
 }

@@ -46,6 +46,10 @@ class Api {
     } catch (_) {
       throw ApiException('Could not reach the server. Check your internet connection and try again.');
     }
+    return _decode(r);
+  }
+
+  dynamic _decode(http.Response r) {
     dynamic data;
     try {
       data = r.body.isEmpty ? null : jsonDecode(r.body);
@@ -103,6 +107,25 @@ class Api {
 
   Future<void> deleteTransaction(int id) => delete('/me/transactions/$id');
 
+  /// Change a payment's category: just this one ('one') or always for its payee ('payee'). Returns
+  /// {updated, offer}; offer is set when tagging rent or school fees could become a commitment.
+  Future<Map<String, dynamic>> correctTransaction(int id, String category, {String scope = 'one'}) async =>
+      (await _send('PATCH', '/me/transactions/$id', {'category': category, 'scope': scope})) as Map<String, dynamic>;
+
+  /// Everyone you pay (from statements), with their tags and suggestions.
+  Future<Map<String, dynamic>> payees() async => (await get('/me/payees')) as Map<String, dynamic>;
+
+  Future<Map<String, dynamic>> tagPayee(String key, String tag) async =>
+      (await put('/me/payees', {'key': key, 'tag': tag})) as Map<String, dynamic>;
+
+  Future<void> untagPayee(String key) => delete('/me/payees?key=${Uri.encodeQueryComponent(key)}');
+
+  /// Accept an offer to add rent or school fees to commitments.
+  Future<void> acceptCommitmentOffer(Map<String, dynamic> offer) => post('/me/payees/commitment', offer);
+
+  /// Remove everything imported from statements (to re-import cleanly).
+  Future<int> undoStatements() async => ((await delete('/me/statements')) as Map<String, dynamic>)['removed'] as int;
+
   /// Monthly totals per category plus income: the 'months' list the engines take.
   Future<List<Map<String, dynamic>>> months() async =>
       ((await get('/me/months') as Map<String, dynamic>)['months'] as List).cast<Map<String, dynamic>>();
@@ -118,6 +141,26 @@ class Api {
   /// 'Can I afford this?' on the user's own data. [choice] is a preset with its inputs.
   Future<Map<String, dynamic>> afford(Map<String, dynamic> choice) async =>
       (await post('/me/afford', choice)) as Map<String, dynamic>;
+
+  /// Read an M-PESA statement (PDF) on the server and return what would be imported. Nothing is saved yet;
+  /// the file and password are only used for this request.
+  Future<Map<String, dynamic>> previewStatement(List<int> bytes, String filename, String? password) async {
+    final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/me/statements/preview'));
+    if (token != null) req.headers['Authorization'] = 'Bearer $token';
+    req.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    if (password != null && password.isNotEmpty) req.fields['password'] = password;
+    late http.Response r;
+    try {
+      r = await http.Response.fromStream(await _client.send(req).timeout(_timeout));
+    } catch (_) {
+      throw ApiException('Could not reach the server. Check your internet connection and try again.');
+    }
+    return _decode(r) as Map<String, dynamic>;
+  }
+
+  /// Save a reviewed statement: the preview's transactions, the answers to its questions, finished goals.
+  Future<Map<String, dynamic>> importStatement(Map<String, dynamic> body) async =>
+      (await post('/me/statements/import', body)) as Map<String, dynamic>;
 
   Future<List<Map<String, dynamic>>> scenarios() async =>
       ((await get('/me/scenarios') as Map<String, dynamic>)['scenarios'] as List).cast<Map<String, dynamic>>();

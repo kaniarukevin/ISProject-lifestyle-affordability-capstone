@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/transaction.dart' show spendingCategories;
+import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
@@ -139,6 +139,18 @@ class _BudgetScreenState extends State<BudgetScreen> {
               .map((k) => _Limit(label: spendingCategories[k]!, limit: limits[k]!.toDouble(),
                   spent: (spent[k] ?? 0).toDouble()))
               .toList()),
+          if (outsideCategories.any((k) => (spent[k] ?? 0) > 0))
+            _Group(title: 'Other spending this month', children: [
+              Text('No budget line of its own; it comes out of your everyday money and the daily amount above.',
+                  style: theme.textTheme.bodySmall),
+              ...outsideCategories.where((k) => (spent[k] ?? 0) > 0).map((k) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(children: [
+                      Expanded(child: Text(categoryLabel(k))),
+                      Text(kes(spent[k]!), style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ]),
+                  )),
+            ]),
           const SizedBox(height: 16),
           if (saved == null)
             FilledButton.icon(

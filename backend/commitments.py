@@ -123,8 +123,11 @@ def evaluate(payload):
                       "annual_rate": _num(d.get("annual_rate", 0), "annual_rate"),
                       "monthly_payment": _num(d.get("monthly_payment"), "monthly_payment")})
 
-    goals = []
+    goals, completed = [], []
     for g in _validate_list(payload, "goals"):
+        if g.get("done"):                     # reached: listed, but nothing more is set aside for it
+            completed.append({"name": str(g.get("name", "goal")), "done_on": g.get("done_on")})
+            continue
         target = _num(g.get("target"), "goal target")
         saved = _num(g.get("saved", 0), "goal saved")
         months = _num(g.get("months_left"), "months_left", 1)
@@ -137,7 +140,7 @@ def evaluate(payload):
     if strategy not in STRATEGIES:
         raise CommitmentsInputError("strategy must be avalanche or snowball")
 
-    result = {"obligations": obligations, "goals": goals, "warnings": []}
+    result = {"obligations": obligations, "goals": goals, "completed_goals": completed, "warnings": []}
 
     if debts:
         plan = _debt_plan(debts, 0.0, strategy)
