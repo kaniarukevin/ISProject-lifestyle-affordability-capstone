@@ -112,6 +112,20 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   Expanded(child: Text(n as String, style: theme.textTheme.bodySmall)),
                 ]),
               )),
+          if (r!['safe_per_day'] != null && (r!['days_left'] as num) > 0)
+            Card(
+              margin: const EdgeInsets.only(top: 12),
+              color: theme.colorScheme.primaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Safe to spend each day', style: theme.textTheme.titleSmall),
+                  Text(kes(r!['safe_per_day'] as num), style: theme.textTheme.headlineMedium),
+                  Text('${kes(r!['everyday_left'] as num)} left for everyday spending over the next '
+                      '${r!['days_left']} day(s).', style: theme.textTheme.bodySmall),
+                ]),
+              ),
+            ),
           const SizedBox(height: 12),
           if (fixedKeys.isNotEmpty)
             _Group(title: 'Set aside first', children: fixedKeys
@@ -136,7 +150,9 @@ class _BudgetScreenState extends State<BudgetScreen> {
             Row(children: [
               Icon(Icons.verified, color: theme.colorScheme.primary),
               const SizedBox(width: 6),
-              const Text('This is your saved budget for this month.'),
+              Expanded(child: Text(r!['auto_saved'] == true
+                  ? 'This is now your budget for this month. It updates when you press the button below.'
+                  : 'This is your budget for this month.')),
             ]),
             if (changed)
               TextButton(

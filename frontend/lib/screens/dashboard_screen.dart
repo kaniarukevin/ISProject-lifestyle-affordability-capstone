@@ -103,7 +103,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 const SizedBox(height: 8),
                 _Line('Money in', kes(d['income_monthly'] as num)),
                 _Line('Spent', kes(latest['spent'] as num)),
-                if (((d['savings_balance'] ?? 0) as num) > 0) _Line('Savings', kes(d['savings_balance'] as num)),
+                if (((latest['saved'] ?? 0) as num) > 0) _Line('Saved this month', kes(latest['saved'] as num)),
+                if (((d['savings_balance'] ?? 0) as num) > 0) _Line('Total savings', kes(d['savings_balance'] as num)),
                 if (((latest['one_off'] ?? 0) as num) > 0)
                   _Line('One-off purchases (not counted)', kes(latest['one_off'] as num)),
                 const Divider(),

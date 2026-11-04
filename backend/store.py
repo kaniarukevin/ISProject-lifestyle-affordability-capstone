@@ -4,6 +4,7 @@ The engines (forecast, affordability, budget, commitments) stay stateless calcul
 what each user enters and what they decide, behind sign-up/log-in, so the app works across devices and the
 dynamic budget can see last month. Connection string comes from DATABASE_URL (never from code).
 """
+import calendar
 import copy
 import os
 import statistics
@@ -508,8 +509,9 @@ def overview():
                                          "num_dependants": profile.dependants},
                            "months": pic["scored"]})
     shown = current or basis[-1]
-    spent = {c: round(shown[c]) for c in SPENDING_CATEGORIES if shown[c] > 0}
+    spent = {c: round(shown[c]) for c in SPENDING_CATEGORIES if shown[c] > 0 and c != "savings"}
     total = sum(spent.values())
+    saved = round(shown["savings"])          # saving is not spending: shown on its own line (audit 6)
     notes = []
     if not complete:
         notes.append("You have only recorded spending for this month so far. Your health score and forecast "
@@ -523,10 +525,11 @@ def overview():
                    state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED,
                    savings_balance=round(pic["savings_balance"]),
                    latest={"year": shown["year"], "month": shown["month"], "spent": total, "by_category": spent,
-                           "left_over": round(income - total), "partial": current is not None,
+                           "saved": saved, "left_over": round(income - total - saved), "partial": current is not None,
                            "one_off": round(one_offs.get((shown["year"], shown["month"]), 0))},
                    history=[{"year": m["year"], "month": m["month"],
-                             "spent": round(sum(m[c] for c in SPENDING_CATEGORIES))} for m in months[-6:]],
+                             "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings")),
+                             "saved": round(m["savings"])} for m in months[-6:]],
                    forecast=fc, notes=notes)
 
 
@@ -569,6 +572,14 @@ def budget_plan():
     else:
         payload["state"] = "Stable"
         notes.append("Your health state is assumed Stable until a full month of spending is recorded.")
+    if complete:
+        recent = complete[-6:]
+        own = {cat: sum(mo[cat] for mo in recent) / len(recent) for cat in SPENDING_CATEGORIES}
+        # Chama, family support and insurance entered under Commitments are already set aside; take them out of
+        # "money sent" so they are not budgeted twice (audit 5.3).
+        own["mobile_money_transfers"] = max(0.0, own["mobile_money_transfers"] - float(fixed.get("other_commitments", 0)))
+        payload["own_spending"] = {cat: round(v, 2) for cat, v in own.items()
+                                   if cat not in ("housing", "school_fees", "loan_repayment", "savings")}
     prev_month = next((mo for mo in complete if (mo["year"], mo["month"]) == (py, pm)), None)
     if isinstance(prev_limits, dict) and prev_month:
         payload["last_month"] = {"limits": prev_limits,
@@ -576,7 +587,21 @@ def budget_plan():
     plan = bud.evaluate(payload)
     plan["notes"] = notes + plan["notes"]
     spent = {cat: round(current[cat]) for cat in SPENDING_CATEGORIES if current and current[cat] > 0}
-    return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data)
+    auto_saved = False
+    if saved_now_data is None and complete:
+        # Save the month's budget the first time it is opened, so next month's overspend rule and forecast can
+        # use it even if the user never presses Save (audit 5.4). They can still update it later.
+        with session() as s:
+            s.add(Budget(user_id=g.user_id, year=y, month=m, data=plan))
+            s.commit()
+        saved_now_data, auto_saved = plan, True
+    # Safe to spend per day: what is left of the everyday limits, spread over the days left (audit 5.5).
+    everyday = [cat for cat in bud.model()["variable"]]
+    limits = saved_now_data["budget"] if saved_now_data else plan["budget"]
+    left = sum(float(limits.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday)
+    days_left = calendar.monthrange(y, m)[1] - pic["today"].day + 1
+    return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data, auto_saved=auto_saved,
+                   everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left))
 
 
 PRESETS = ("move_house", "new_expense", "new_baby", "purchase", "loan", "savings_goal", "income_change")
