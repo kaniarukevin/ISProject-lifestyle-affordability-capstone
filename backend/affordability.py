@@ -121,7 +121,7 @@ def _facts(f):
             "savings_KES": round(r.savings)}
 
 
-def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0):
+def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0, debt_label="Loan repayments"):
     """Score now and after a monthly change, with the savings safety rule and plain-language reasons.
 
     duration: how many months the change lasts (None = for good). A 1-month cost is applied to 1 month only,
@@ -150,13 +150,18 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
         reasons.append(f"You would be short KES {shortfall:,} a month; you could cover it only by pausing savings.")
     else:
         reasons.append(f"You would still have KES {a['left_over_KES']:,} left each month.")
-    if a["debt_share_of_income"] >= 0.3:
-        reasons.append(f"Loan repayments would take {a['debt_share_of_income']:.0%} of your income.")
+    if debt_label and a["debt_share_of_income"] >= 0.3:
+        reasons.append(f"{debt_label} would take {a['debt_share_of_income']:.0%} of your income.")
     if a["spending_KES"] - a["savings_KES"] > a["income_KES"]:
-        reasons.append("Your spending, before savings, would be more than you earn.")
+        reasons.append("Your spending, before savings, would be more than you earn"
+                       + (" while you pay." if duration else "."))
     return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict,
             "state_now": _state(bf), "before": b, "after": a, "reasons": reasons,
-            "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None}
+            "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None,
+            # A short cost scores the months you pay, not your finances for good (found walking through the app:
+            # a one-month repair showed "score 54 -> 2" with no explanation).
+            "score_note": (f"The score after is for the {int(duration)} month(s) you pay; it recovers once paid."
+                           if duration else None)}
 
 
 def what_to_cut(m, changes=None, income_change=0.0, **kw):
@@ -194,7 +199,8 @@ def _advice(before, per_month, months=None, balance=0):
     if months:
         tips.append(f"Over {months} months that is a price of up to about KES {max(0, room) * months:,}.")
         if room > 0:
-            tips.append(f"At this price you would need about {math.ceil(per_month * months / room)} months to keep it within reach.")
+            tips.append(f"To pay KES {round(per_month * months):,} this way, spread it over about "
+                        f"{math.ceil(per_month * months / room)} months instead.")
     return tips
 
 
@@ -220,7 +226,9 @@ def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0):
         raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
     balance = max(0.0, float(savings_balance or 0))
     per_month = price * r / (1 - (1 + r) ** -months) if r > 0 else price / months
-    kw = {"duration": months, "savings_balance": balance}
+    kw = {"duration": months, "savings_balance": balance,
+          # a single payment is not a loan; instalments are reported together with existing loans
+          "debt_label": None if months == 1 else "These instalments and your loans"}
     result = assess(m, {"loan_repayment": per_month}, **kw)
     left, saving = result["before"]["left_over_KES"], result["before"]["savings_KES"]
     rate = left + saving                                   # what can be put aside each month

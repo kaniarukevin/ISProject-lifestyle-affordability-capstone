@@ -264,6 +264,8 @@ class ResultScreen extends StatelessWidget {
                 if (before != null && after != null) ...[
                   const SizedBox(height: 8),
                   Text('Affordability score: $before → $after out of 100'),
+                  if (result['score_note'] != null)
+                    Text(result['score_note'] as String, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
                   const SizedBox(height: 8),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(6),

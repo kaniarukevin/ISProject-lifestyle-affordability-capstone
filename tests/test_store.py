@@ -133,12 +133,13 @@ def _student(client):
 
 
 def test_overview_gives_state_score_and_this_months_forecast(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
     monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
     h = _student(client)
     o = client.get("/me/overview", headers=h).get_json()
     assert o["has_data"] and o["state"] in ("Stable", "Strained", "Critical") and 0 <= o["score"] <= 100
     assert (o["forecast"]["year"], o["forecast"]["month"]) == (2026, 11)
-    assert o["forecast"]["method"] == "trailing_median"
+    assert o["forecast"]["method"] == "trailing_median"               # model switched off: the fallback
     assert abs(o["forecast"]["total"] - 8490) <= 3                    # median of 8480, 8490, 8500
     assert abs(o["forecast"]["breakdown"]["food_groceries"] - 3590) <= 3
     assert o["latest"]["left_over"] == 12000 - (4000 + 3600 + 900) and not o["latest"]["partial"]
@@ -146,6 +147,7 @@ def test_overview_gives_state_score_and_this_months_forecast(client, monkeypatch
 
 def test_sparse_categories_do_not_collapse_the_forecast(client, monkeypatch):
     """Found in testing: one big month and categories used only now and then gave a forecast of KES 0."""
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)   # checks the median/blend logic
     monkeypatch.setattr(store, "_today", lambda: store.date(2026, 12, 2))
     h = signup(client)
     client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 50000}]})
@@ -168,12 +170,13 @@ def test_the_month_in_progress_is_shown_but_not_used_for_the_forecast(client, mo
 
 
 def test_saved_budget_steers_the_forecast(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)   # checks the median/blend logic
     monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
     h = _student(client)
     budget = {"housing": 4000, "food_groceries": 3000, "transport": 800}
     client.put("/me/budgets/2026/11", headers=h, json={"budget": budget})
     fc = client.get("/me/overview", headers=h).get_json()["forecast"]
-    assert fc["method"] == "blend_budget_median"
+    assert fc["method"] in ("blend_budget_model", "blend_budget_median")
     assert abs(fc["breakdown"]["food_groceries"] - (0.75 * 3000 + 0.25 * 3590)) <= 3
 
 
@@ -471,3 +474,53 @@ def test_estimates_must_be_known_categories(client):
     r = client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": {"pets": 500},
                                                    "incomes": [{"name": "Pay", "amount": 1000}]})
     assert r.status_code == 400
+
+
+def test_the_forecast_model_is_used_and_knows_fee_months(client, monkeypatch):
+    if store.user_forecast_model() is None:
+        pytest.skip("backend/models/user_forecast.joblib not trained")
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "dependants": 1,
+                                               "incomes": [{"name": "Pay", "amount": 40000}]})
+    for m in range(1, 11):                       # fees of 15,000 in January, May and September
+        rows = [{"date": f"2026-{m:02d}-02", "amount": 9000, "category": "housing"},
+                {"date": f"2026-{m:02d}-05", "amount": 12000, "category": "food_groceries"},
+                {"date": f"2026-{m:02d}-09", "amount": 3000, "category": "transport"}]
+        if m in (1, 5, 9):
+            rows.append({"date": f"2026-{m:02d}-10", "amount": 15000, "category": "school_fees"})
+        client.post("/me/transactions", headers=h, json=rows)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    nov = client.get("/me/overview", headers=h).get_json()["forecast"]
+    assert nov["method"] == "forecast_model" and nov["total"] > 0
+    assert nov["breakdown"].get("school_fees", 0) == 0           # November is not a fee month
+    with store.session() as s:
+        months, _, _ = store._user_months(s, 1)
+        jan = store.forecast_for_user(s, 1, months[:10], 2027, 1)
+    assert jan["breakdown"]["school_fees"] == 15000 and jan["total"] > nov["total"]
+
+
+def test_forecast_gives_a_range_and_follows_a_new_rent(client, monkeypatch):
+    if store.user_forecast_model() is None:
+        pytest.skip("backend/models/user_forecast.joblib not trained")
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                                        # rent 4,000 in every month
+    fc = client.get("/me/overview", headers=h).get_json()["forecast"]
+    assert fc["range"]["low"] <= fc["total"] <= fc["range"]["high"]
+    client.put("/me/commitments", headers=h, json={"obligations": [{"name": "New place", "amount": 7000,
+                                                                   "category": "housing"}]})
+    moved = client.get("/me/overview", headers=h).get_json()["forecast"]
+    assert moved["breakdown"]["housing"] >= 7000 - 1 and moved["total"] > fc["total"]
+    assert "rent" in moved["note"]
+
+
+def test_chama_set_aside_is_explained_not_called_unused(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    for m in (8, 9, 10):
+        client.post("/me/transactions", headers=h, json={"date": f"2026-{m:02d}-20", "amount": 1000,
+                                                         "category": "mobile_money_transfers"})
+    client.put("/me/commitments", headers=h, json={"obligations": [{"name": "Chama", "amount": 1000,
+                                                                   "category": "other_commitments"}]})
+    notes = client.get("/me/budget-plan", headers=h).get_json()["plan"]["notes"]
+    assert any("already set aside" in n for n in notes)
+    assert not any("money sent to others: you have not spent" in n for n in notes)

@@ -434,31 +434,135 @@ def _today():
     return date.today()
 
 
+_USER_FORECAST = {}
+USER_FORECAST_PATH = Path(__file__).resolve().parent / "models" / "user_forecast.joblib"
+
+
+def user_forecast_model():
+    """The boosted tree chosen in scripts/kihbs_forecast_experiment.py (docs/experiments.md, 4 Nov), or None."""
+    if "m" not in _USER_FORECAST:
+        import joblib
+        _USER_FORECAST["m"] = joblib.load(USER_FORECAST_PATH) if USER_FORECAST_PATH.exists() else None
+    return _USER_FORECAST["m"]
+
+
+def _model_total(hist, totals, profile, target_month):
+    """Next month's total from the model: a multiple of the household's median, using only what is known
+    before the month starts (past months, income, household, and which calendar month it is)."""
+    eng = user_forecast_model()
+    median = statistics.median(totals)
+    if eng is None or profile is None or median <= 0:
+        return None
+    fee_months = eng["fee_months"]
+    incomes = [m.get("income_primary", 0) for m in hist]
+    fees_seen = [m["school_fees"] for m in hist if m["month"] in fee_months]
+    x = {"h": len(hist), "median": median, "mean": statistics.mean(totals), "last": totals[-1],
+         "min": min(totals), "max": max(totals), "std": statistics.stdev(totals) if len(totals) > 1 else 0.0,
+         "income": incomes[-1], "income_mean": statistics.mean(incomes),
+         "household_size": profile.household_size, "num_dependants": profile.dependants,
+         "formal": int(bool(profile.formal_job)), "month": target_month,
+         "fee_month": int(target_month in fee_months), "december": int(target_month == 12),
+         "fees_seen": max(fees_seen) if fees_seen else 0.0,
+         "fees_median": statistics.median([m["school_fees"] for m in hist])}
+    import pandas as pd
+    row = pd.DataFrame([x])[eng["features"]]
+    mid = median * max(float(eng["model"].predict(row)[0]), 0.0)
+    if x["fee_month"] and x["fees_seen"] > 0:
+        # Safety floor: in a fee month, a fee-paying household spends at least its usual non-fee spending plus
+        # last term's fees. Neutral on accuracy (validation 10,923 vs 10,912; test 9,936 vs 9,967) and active in
+        # 4% of forecasts, but stops implausible answers (found walking through the app: a family's January,
+        # a fee month, came out below a normal month).
+        mid = max(mid, statistics.median([tt - m["school_fees"] for tt, m in zip(totals, hist)]) + x["fees_seen"])
+    x["range"] = None
+    if "low" in eng:            # 80% range: two quantile trees, widened on validation (docs/experiments.md, 4 Nov)
+        lo, hi = median * float(eng["low"].predict(row)[0]), median * float(eng["high"].predict(row)[0])
+        w = eng.get("widen", 1.0)
+        down, up = max(0.0, mid - lo), max(0.0, hi - mid)
+        if "own_z" in eng and len(hist) >= eng.get("personal_range_min_months", 3):
+            # Personal range: half the model's spread, half this household's own month-to-month spread, so a
+            # steady household gets a narrower range (found walking through the app: a family spending the
+            # same every month was told 31,000-73,000).
+            own = eng["own_z"] * x["std"]
+            down, up = 0.5 * down + 0.5 * own, 0.5 * up + 0.5 * own
+        x["range"] = (max(0.0, mid - w * down), mid + w * up)
+    return mid, x
+
+
+def _commitment_changes(s, user_id, hist):
+    """Rent or loan repayments entered under Commitments that differ from what history shows (a move, a new
+    loan after "I'm doing this"). Known exactly, so added as they are rather than waiting for history."""
+    import commitments as cm
+    c = s.get(Commitments, user_id)
+    if not (c and c.data):
+        return {}
+    fixed = cm.evaluate(c.data)["for_budget"]["fixed"]
+    out = {}
+    for cat in ("housing", "loan_repayment"):
+        if cat in fixed and float(fixed[cat]) > 0:
+            diff = float(fixed[cat]) - statistics.median([m[cat] for m in hist])
+            if abs(diff) >= 1:
+                out[cat] = diff
+    return out
+
+
 def forecast_for_user(s, user_id, months, target_year, target_month):
-    """The user's own forecast. The total is the median of monthly totals (robust to one wild month, the
-    method that won the experiments, docs/experiments.md); it is split by the household's average share per
-    category. A per-category median is NOT used: most people skip some categories in some months, so the
-    median of each category is often 0 and the forecast collapsed to KES 0 (found in testing, 1 Nov).
-    With a saved budget for the month: 0.75 x budget + 0.25 x usual; with only last month's budget: the same
-    with that. The boosted-tree split is not used: it was trained on the 17 staging categories, not these 10."""
+    """The user's own forecast.
+    Total: a boosted tree trained on the KIHBS-informed households (history + calendar month), which beat the
+    median of monthly totals on held-out households at every history length (test MAE KES 9,794 vs 10,719,
+    docs/experiments.md, 4 Nov). It knows that school fees fall in January, May and September and that
+    December is costly. Falls back to the median if the model is missing.
+    Split: the household's average share per category; in a fee month school fees get the amount paid in past
+    fee months (fee-aware split). A per-category median is NOT used for the split: most people skip some
+    categories in some months, so it often collapsed to KES 0 (found in testing, 1 Nov).
+    With a saved budget for the month: 0.75 x budget + 0.25 x usual; with only last month's budget: the same.
+    Also returns an 80% range (8 months in 10 fall inside on held-out households) and adds rent or loan changes
+    entered under Commitments. Tested and rejected (docs/experiments.md, 4 Nov): forecasting commitments
+    separately, a personal bias correction, and tuning; none beat this on validation."""
     hist = months[-12:]
     totals = [sum(m[c] for c in SPENDING_CATEGORIES) for m in hist]
-    usual_total = statistics.median(totals)
     shares = {c: sum(m[c] / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in SPENDING_CATEGORIES}
     norm = sum(shares.values()) or 1.0
-    usual = {c: usual_total * shares[c] / norm for c in SPENDING_CATEGORIES}
+    shares = {c: v / norm for c, v in shares.items()}
+    model = _model_total(hist, totals, s.get(Profile, user_id), target_month)
+    if model:
+        usual_total, x = model
+        fees = x["fees_seen"] if x["fee_month"] else x["fees_median"]
+        rest_share = (1 - shares["school_fees"]) or 1.0
+        rest = max(0.0, usual_total - fees)
+        usual = {c: rest * shares[c] / rest_share for c in SPENDING_CATEGORIES if c != "school_fees"}
+        usual["school_fees"] = fees
+        base = "model"
+        rng = x["range"]
+    else:
+        usual_total = statistics.median(totals)
+        usual = {c: usual_total * shares[c] for c in SPENDING_CATEGORIES}
+        base, rng = "median", None
+    changes = _commitment_changes(s, user_id, hist)
+    for cat, diff in changes.items():
+        usual[cat] = max(0.0, usual[cat] + diff)
+    shift = sum(changes.values())
     py, pm = (target_year, target_month - 1) if target_month > 1 else (target_year - 1, 12)
     this_budget = _saved_budget(s, user_id, target_year, target_month)
     last_budget = _saved_budget(s, user_id, py, pm)
     if this_budget:
-        split, method = {c: 0.75 * this_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, "blend_budget_median"
+        split, method = {c: 0.75 * this_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, f"blend_budget_{base}"
     elif last_budget:
-        split, method = {c: 0.75 * last_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, "blend_last_budget_median"
+        split, method = {c: 0.75 * last_budget[c] + 0.25 * usual[c] for c in SPENDING_CATEGORIES}, f"blend_last_budget_{base}"
     else:
-        split, method = usual, "trailing_median"
+        split, method = usual, ("forecast_model" if base == "model" else "trailing_median")
     breakdown = {c: round(v) for c, v in split.items() if round(v) > 0}
-    return {"year": target_year, "month": target_month, "total": sum(breakdown.values()),
-            "breakdown": breakdown, "method": method, "months_used": len(hist)}
+    total = sum(breakdown.values())
+    out = {"year": target_year, "month": target_month, "total": total,
+           "breakdown": breakdown, "method": method, "months_used": len(hist)}
+    if rng:
+        # The same blend applied to the ends of the range (a budget makes the forecast surer, so the range narrows).
+        w = 0.25 if (this_budget or last_budget) else 1.0
+        lo, hi = (w * (v + shift) + (total - w * (sum(usual.values()))) for v in rng)
+        out["range"] = {"low": round(max(0.0, min(lo, total))), "high": round(max(hi, total))}
+    if changes:
+        out["note"] = "Includes your new " + " and ".join(
+            {"housing": "rent", "loan_repayment": "loan repayments"}[c] for c in changes) + " from Commitments."
+    return out
 
 
 def household_picture(s, user_id):
@@ -698,7 +802,8 @@ def afford():
         if profile is None:
             return jsonify(error="set up your household first"), 400
         if not months:
-            return jsonify(error="record your spending for a few weeks first, so the answer is about your real money"), 400
+            return jsonify(error="record your spending for a few weeks first, or add your usual month under "
+                                 "Your household, so the answer is about your real money"), 400
         scenario, title = _scenario_from_preset(b, months)
         try:
             result = aff.evaluate({"household": {"household_size": profile.household_size,
