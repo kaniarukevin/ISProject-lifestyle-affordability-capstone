@@ -234,9 +234,11 @@ def test_budget_plan_shows_spending_so_far_and_saved_budget(client, monkeypatch)
     h = _student(client)
     client.post("/me/transactions", headers=h, json={"date": "2026-11-03", "amount": 700, "category": "transport"})
     r = client.get("/me/budget-plan", headers=h).get_json()
-    assert r["spent_so_far"] == {"transport": 700} and r["saved"] is None
-    client.put("/me/budgets/2026/11", headers=h, json=r["plan"])
-    assert client.get("/me/budget-plan", headers=h).get_json()["saved"]["total"] == 12000
+    assert r["spent_so_far"] == {"transport": 700}
+    assert r["auto_saved"] and r["saved"]["total"] == 12000          # saved the first time it is opened
+    again = client.get("/me/budget-plan", headers=h).get_json()
+    assert not again["auto_saved"] and again["saved"] == r["saved"]
+    assert again["days_left"] == 16 and again["safe_per_day"] == round(again["everyday_left"] / 16)
 
 
 def test_afford_needs_some_spending_first(client):
@@ -402,3 +404,36 @@ def test_past_checks_can_be_deleted_only_by_their_owner(client, monkeypatch):
     assert client.post(f"/me/scenarios/{sid}/apply", headers=other, json={}).status_code == 404
     assert client.delete(f"/me/scenarios/{sid}", headers=h).status_code == 200
     assert client.get("/me/scenarios", headers=h).get_json()["scenarios"] == []
+
+
+def test_budget_leaves_out_lines_the_user_never_uses(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                       # spends on rent, food and transport only
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]
+    for unused in ("mobile_money_transfers", "entertainment", "airtime_data"):
+        assert plan["budget"].get(unused, 0) == 0
+    assert plan["budget"]["food_groceries"] > 0 and plan["total"] == 12000
+    assert any("No budget for" in n for n in plan["notes"])
+
+
+def test_chama_in_commitments_is_not_budgeted_twice(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    for m in (8, 9, 10):                       # the 1,000 sent each month is the chama
+        client.post("/me/transactions", headers=h, json={"date": f"2026-{m:02d}-20", "amount": 1000,
+                                                         "category": "mobile_money_transfers"})
+    sent = client.get("/me/budget-plan", headers=h).get_json()["plan"]["budget"]["mobile_money_transfers"]
+    assert sent > 0
+    client.put("/me/commitments", headers=h, json={"obligations": [{"name": "Chama", "amount": 1000,
+                                                                   "category": "other_commitments"}]})
+    plan = client.get("/me/budget-plan", headers=h).get_json()["plan"]["budget"]
+    assert plan["other_commitments"] == 1000 and plan.get("mobile_money_transfers", 0) == 0
+
+
+def test_saving_is_shown_apart_from_spending(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    client.post("/me/transactions", headers=h, json={"date": "2026-10-28", "amount": 1500, "category": "savings"})
+    latest = client.get("/me/overview", headers=h).get_json()["latest"]
+    assert latest["saved"] == 1500 and latest["spent"] == 4000 + 3600 + 900
+    assert latest["left_over"] == 12000 - (4000 + 3600 + 900) - 1500

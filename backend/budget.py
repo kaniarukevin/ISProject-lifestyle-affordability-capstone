@@ -16,6 +16,10 @@ MODEL_PATH = Path(__file__).resolve().parent / "models" / "budget_split.joblib"
 FIXED = ["housing", "loan_repayment", "school_fees", "other_commitments"]
 STATES = ("Stable", "Strained", "Critical")
 TRIM_FUN = {"Stable": 0.0, "Strained": 0.25, "Critical": 0.50}
+# Everyday lines a household may simply not have. With history, one the user never spends on gets no budget
+# (found in testing, 1 Nov: every budget had "money sent" even for people who never send money).
+OPTIONAL = {"airtime_data": "airtime and data", "mobile_money_transfers": "money sent to others",
+            "entertainment": "entertainment"}
 _MODEL = {}
 
 
@@ -40,7 +44,10 @@ def _num(value, name, minimum=0.0):
 
 
 def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_job=False,
-                     urban_rural="urban", state="Stable", goal_per_month=0, last_month=None):
+                     urban_rural="urban", state="Stable", goal_per_month=0, last_month=None, own_spending=None):
+    """own_spending: the household's usual monthly spending per everyday category (from its own records).
+    When given, the split is half the model's (households like this one) and half the household's own
+    pattern, and optional lines it never uses get nothing."""
     m = model()
     variable = m["variable"]
     notes = []
@@ -61,8 +68,18 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
                        "is_formal": int(bool(formal_job)), "urban": int(urban_rural == "urban"),
                        "peri_urban": int(urban_rural == "peri_urban")}])
     share = 0.5 * m["split_model"].predict(x[m["x_cols"]])[0] + 0.5 * m["one_size"]
-    share = share / share.sum()
-    limits = {c: everyday * s for c, s in zip(variable, share)}
+    share = pd.Series(share / share.sum(), index=variable)
+    own = pd.Series({c: float((own_spending or {}).get(c, 0)) for c in variable})
+    if own.sum() > 0:
+        share = 0.5 * share + 0.5 * own / own.sum()
+        unused = [c for c in OPTIONAL if c in variable and own[c] == 0]
+        share[unused] = 0.0
+        share = share / share.sum()
+        notes.append("Split using your own spending pattern and households like yours.")
+        if unused:
+            notes.append(f"No budget for {', '.join(OPTIONAL[c] for c in unused)}: you have not spent on "
+                         f"{'it' if len(unused) == 1 else 'them'}. Record spending there and it comes back.")
+    limits = {c: everyday * float(share[c]) for c in variable}
 
     if TRIM_FUN[state] > 0 and limits.get("entertainment", 0) > 0:
         trim = limits["entertainment"] * TRIM_FUN[state]
@@ -108,6 +125,10 @@ def evaluate(payload):
         raise BudgetInputError("fixed may only contain housing, loan_repayment, school_fees and other_commitments")
     fixed = {k: _num(v, k) for k, v in fixed.items()}
     goal = _num(payload.get("goal_per_month", 0), "goal_per_month")
+    own = payload.get("own_spending") or {}
+    if not isinstance(own, dict):
+        raise BudgetInputError("own_spending must be an object of category amounts")
+    own = {k: _num(v, f"own_spending.{k}") for k, v in own.items()}
 
     if payload.get("months"):
         try:
@@ -120,4 +141,4 @@ def evaluate(payload):
         if state not in STATES:
             raise BudgetInputError("state must be Stable, Strained or Critical")
     return recommend_budget(income, fixed, size, deps, hh.get("formal_job", False), urban_rural, state,
-                            goal, payload.get("last_month"))
+                            goal, payload.get("last_month"), own)

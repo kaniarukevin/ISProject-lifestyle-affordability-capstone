@@ -52,3 +52,13 @@ def test_state_can_come_from_months():
 def test_bad_input_is_rejected(bad):
     with pytest.raises(budget.BudgetInputError):
         budget.evaluate(bad)
+
+
+def test_own_spending_pattern_shapes_the_split():
+    own = {"food_groceries": 6000, "transport": 3000, "utilities": 1000, "airtime_data": 500,
+           "mobile_money_transfers": 0, "entertainment": 0}
+    plain = budget.evaluate({**FAMILY})
+    mine = budget.evaluate({**FAMILY, "own_spending": own})
+    assert mine["budget"]["mobile_money_transfers"] == 0 and mine["budget"]["entertainment"] == 0
+    assert mine["budget"]["food_groceries"] > plain["budget"]["food_groceries"]
+    assert mine["total"] == plain["total"]                       # still every shilling has a job
