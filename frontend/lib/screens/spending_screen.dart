@@ -66,6 +66,19 @@ class _SpendingScreenState extends State<SpendingScreen> {
     }
   }
 
+  /// A record typed in by hand: change anything about it (statement records keep the statement's figures).
+  Future<void> _edit(Txn t) async {
+    final changed = await showDialog<Txn>(context: context, builder: (_) => _AddTxnDialog(initial: t));
+    if (changed == null) return;
+    try {
+      await api.editTransaction(t.id!, {'amount': changed.amount, 'date': changed.isoDate,
+          'description': changed.description, 'category': changed.category, 'one_off': changed.oneOff});
+      await _load();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   Future<void> _delete(Txn t) async {
     try {
       await api.deleteTransaction(t.id!);
@@ -137,6 +150,7 @@ class _SpendingScreenState extends State<SpendingScreen> {
                   load: _month,
                   onDelete: _delete,
                   onTap: (t) async {
+                    if (t.source != 'mpesa') return _edit(t);
                     if (await showCorrectSheet(context, t)) _load();
                   },
                 )),
@@ -215,19 +229,21 @@ class _MonthCard extends StatelessWidget {
   }
 }
 
+/// Add spending, or change a typed-in record ([initial]).
 class _AddTxnDialog extends StatefulWidget {
-  const _AddTxnDialog();
+  const _AddTxnDialog({this.initial});
+  final Txn? initial;
 
   @override
   State<_AddTxnDialog> createState() => _AddTxnDialogState();
 }
 
 class _AddTxnDialogState extends State<_AddTxnDialog> {
-  final amount = TextEditingController();
-  final note = TextEditingController();
-  String category = 'food_groceries';
-  DateTime date = DateTime.now();
-  bool oneOff = false;
+  late final amount = TextEditingController(text: widget.initial == null ? '' : widget.initial!.amount.round().toString());
+  late final note = TextEditingController(text: widget.initial?.description ?? '');
+  late String category = widget.initial?.category ?? 'food_groceries';
+  late DateTime date = widget.initial?.date ?? DateTime.now();
+  late bool oneOff = widget.initial?.oneOff ?? false;
   String? error;
 
   @override
@@ -255,7 +271,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Add spending'),
+        title: Text(widget.initial == null ? 'Add spending' : 'Change this record'),
         content: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             TextField(controller: amount, autofocus: true, keyboardType: TextInputType.number,
@@ -264,9 +280,11 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
               initialValue: category,
               isExpanded: true,
               decoration: const InputDecoration(labelText: 'What was it for?'),
-              items: spendingCategories.entries
-                  .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
-                  .toList(),
+              items: {
+                ...spendingCategories,
+                // A record sorted into a category outside the list (e.g. Shopping) keeps it as a choice.
+                if (!spendingCategories.containsKey(category)) category: categoryLabel(category),
+              }.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
               onChanged: (v) => setState(() => category = v!),
             ),
             TextField(controller: note, decoration: const InputDecoration(labelText: 'Note (optional)',
@@ -290,7 +308,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(onPressed: _submit, child: const Text('Add')),
+          FilledButton(onPressed: _submit, child: Text(widget.initial == null ? 'Add' : 'Save')),
         ],
       );
 }

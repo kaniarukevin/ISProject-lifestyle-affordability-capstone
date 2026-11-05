@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'password_field.dart';
 import 'privacy_screen.dart';
 
 /// First screen for a new user: create an account or log in.
@@ -88,11 +89,10 @@ class _AuthScreenState extends State<AuthScreen> {
                 autofillHints: const [AutofillHints.email],
                 decoration: const InputDecoration(labelText: 'Email'),
               ),
-              TextField(
+              PasswordField(
                 controller: _password,
-                obscureText: true,
-                decoration: InputDecoration(
-                    labelText: 'Password', helperText: _newAccount ? 'At least 8 characters' : null),
+                helper: _newAccount ? 'At least 8 characters' : null,
+                autofillHints: [_newAccount ? AutofillHints.newPassword : AutofillHints.password],
                 onSubmitted: (_) => _submit(),
               ),
               if (_newAccount)

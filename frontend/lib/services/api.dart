@@ -129,6 +129,15 @@ class Api {
   Future<Map<String, dynamic>> correctTransaction(int id, String category, {String scope = 'one'}) async =>
       (await _send('PATCH', '/me/transactions/$id', {'category': category, 'scope': scope})) as Map<String, dynamic>;
 
+  /// Change fields of one record: amount, date, description (typed-in records only), category, one_off.
+  Future<void> editTransaction(int id, Map<String, dynamic> fields) => _send('PATCH', '/me/transactions/$id', fields);
+
+  /// Change the password; returns the new token (other devices are logged out).
+  Future<String> changePassword(String current, String newPassword) async {
+    final d = await post('/me/password', {'current': current, 'new': newPassword});
+    return token = d['token'] as String;
+  }
+
   /// Whether this account is an admin (named in the server's ADMIN_EMAILS).
   Future<bool> isAdmin() async => ((await get('/me/role')) as Map<String, dynamic>)['admin'] == true;
 

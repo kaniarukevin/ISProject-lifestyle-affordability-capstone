@@ -6,6 +6,7 @@ dynamic budget can see last month. Connection string comes from DATABASE_URL (ne
 """
 import calendar
 import copy
+import hashlib
 import os
 import statistics
 import threading
@@ -291,17 +292,34 @@ def _serializer():
     return URLSafeTimedSerializer(secret_key(), salt="auth")
 
 
+def _stamp(user):
+    """A short fingerprint of the password hash, carried in the token: changing the password changes it, so every
+    token issued before (a lost phone, a shared laptop) stops working."""
+    return hashlib.sha256(user.password_hash.encode()).hexdigest()[:16]
+
+
+def _token(user):
+    return _serializer().dumps({"u": user.id, "p": _stamp(user)})
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
         header = request.headers.get("Authorization", "")
         token = header[7:] if header.startswith("Bearer ") else ""
         try:
-            g.user_id = _serializer().loads(token, max_age=TOKEN_DAYS * 86400)
+            data = _serializer().loads(token, max_age=TOKEN_DAYS * 86400)
         except SignatureExpired:
             return jsonify(error="your session has expired, log in again"), 401
         except BadSignature:
             return jsonify(error="log in first"), 401
+        if not isinstance(data, dict):                 # a token from before 5 Nov: log in once more
+            return jsonify(error="please log in again"), 401
+        with session() as s:
+            user = s.get(User, data.get("u"))
+            if user is None or _stamp(user) != data.get("p"):
+                return jsonify(error="your password was changed or the account was removed, log in again"), 401
+        g.user_id = user.id
         return fn(*args, **kwargs)
     return wrapper
 
@@ -356,7 +374,7 @@ def register():
             user.consent_version, user.consent_at = PRIVACY["version"], _now()
         s.add(user)
         s.commit()
-        return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 201
+        return jsonify(token=_token(user), user_id=user.id), 201
 
 
 # ---------------- privacy notice and consent (Kenya Data Protection Act 2019) ----------------
@@ -451,7 +469,31 @@ def login():
         if not user or not check_password_hash(user.password_hash, str(b.get("password", ""))):
             _record(("login-fail", email))
             return jsonify(error="wrong email or password"), 401
-        return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 200
+        return jsonify(token=_token(user), user_id=user.id), 200
+
+
+@bp.post("/me/password")
+@login_required
+def change_password():
+    """Change the password. The current one is required (someone holding an unlocked phone cannot take over the
+    account), and the answer carries a new token: this device stays logged in, every other one is logged out."""
+    b = _body()
+    current, new = str(b.get("current", "")), str(b.get("new", ""))
+    key = ("password-fail", g.user_id)
+    if _recent(key, 900) >= 5:
+        return jsonify(error="too many wrong passwords, wait 15 minutes"), 429
+    if len(new) < 8:
+        raise InputError("the new password must be at least 8 characters")
+    with session() as s:
+        user = s.get(User, g.user_id)
+        if not check_password_hash(user.password_hash, current):
+            _record(key)
+            return jsonify(error="your current password is not right"), 403
+        if check_password_hash(user.password_hash, new):
+            raise InputError("the new password must be different from the current one")
+        user.password_hash = generate_password_hash(new)
+        s.commit()
+        return jsonify(token=_token(user), changed=True), 200
 
 
 # ---------------- profile ----------------
@@ -1646,10 +1688,15 @@ def _commitment_offer(s, user_id, key, tag):
 @bp.patch("/me/transactions/<int:tx_id>")
 @login_required
 def correct_transaction(tx_id):
-    """Change a payment's category: just this one (scope 'one'), or always for this payee (scope 'payee')."""
+    """Change a payment. category: just this one (scope 'one'), or always for this payee (scope 'payee').
+    one_off: for any payment. amount, date, description: only for entries typed in by hand; a statement's
+    payments keep the statement's exact figures and text (they were checked against its totals)."""
     b = _body()
     tag, scope = b.get("category"), b.get("scope", "one")
-    if tag not in SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT]:
+    edits = {k: b[k] for k in ("amount", "date", "description", "one_off") if k in b}
+    if tag is None and not edits:
+        raise InputError("nothing to change")
+    if tag is not None and tag not in SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT]:
         raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT])}")
     if scope not in ("one", "payee"):
         raise InputError("scope must be one or payee")
@@ -1657,6 +1704,29 @@ def correct_transaction(tx_id):
         t = s.get(Transaction, tx_id)
         if t is None or t.user_id != g.user_id:
             return jsonify(error="no such payment"), 404
+        if t.source == "mpesa" and set(edits) - {"one_off"}:
+            raise InputError("a payment from a statement keeps the statement's amount, date and text; you can "
+                             "change what it is, or mark it as a one-off")
+        if "amount" in edits:
+            amount = _num(edits["amount"], "amount")
+            if amount <= 0:
+                raise InputError("amount must be more than 0")
+            t.amount = amount
+        if "date" in edits:
+            try:
+                day = date.fromisoformat(str(edits["date"]))
+            except ValueError:
+                raise InputError("date must look like 2026-10-29")
+            if day > _today():
+                raise InputError("the date cannot be in the future")
+            t.day = day
+        if "description" in edits:
+            t.description = str(edits["description"] or "")[:200]
+        if "one_off" in edits:
+            t.one_off = bool(edits["one_off"])
+        if tag is None:
+            s.commit()
+            return jsonify(updated=1, offer=None, transaction=_tx_json(t)), 200
         if scope == "payee":
             if not t.payee_key:
                 raise InputError("this payment has no payee to remember; change just this one")

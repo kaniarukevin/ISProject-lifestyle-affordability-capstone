@@ -841,3 +841,45 @@ def test_spending_comes_as_a_month_summary_and_one_month_at_a_time(client):
     assert client.get("/me/transactions?month=2026-12", headers=h).get_json()["transactions"] == []
     assert client.get("/me/transactions?month=oct", headers=h).status_code == 400
     assert len(client.get("/me/transactions", headers=h).get_json()["transactions"]) == 4
+
+
+def test_changing_the_password_needs_the_current_one_and_logs_out_other_devices(client):
+    phone = signup(client)
+    laptop = {"Authorization": f"Bearer {client.post('/auth/login', json={'email': 'kevin@example.com', 'password': 'strong-pass-1'}).get_json()['token']}"}
+    assert client.post("/me/password", headers=phone, json={"current": "wrong-one", "new": "another-pass-2"}).status_code == 403
+    assert client.post("/me/password", headers=phone, json={"current": "strong-pass-1", "new": "short"}).status_code == 400
+    assert client.post("/me/password", headers=phone, json={"current": "strong-pass-1", "new": "strong-pass-1"}).status_code == 400
+    r = client.post("/me/password", headers=phone, json={"current": "strong-pass-1", "new": "another-pass-2"})
+    assert r.status_code == 200
+    phone = {"Authorization": f"Bearer {r.get_json()['token']}"}
+    assert client.get("/me/consent", headers=phone).status_code == 200            # this device carries on
+    assert client.get("/me/consent", headers=laptop).status_code == 401            # the other one is logged out
+    assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "strong-pass-1"}).status_code == 401
+    assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "another-pass-2"}).status_code == 200
+
+
+def test_a_deleted_accounts_token_stops_working(client):
+    h = signup(client)
+    assert client.delete("/me", headers=h).status_code == 200
+    assert client.get("/me/transactions", headers=h).status_code == 401
+
+
+def test_typed_in_payments_can_be_edited_but_statement_figures_cannot(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    mine, stmt = client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-10-03", "amount": 500, "category": "transport", "description": "matatu"},
+        {"date": "2026-10-04", "amount": 179000, "category": "entertainment", "source": "mpesa"}]).get_json()["transactions"]
+    r = client.patch(f"/me/transactions/{mine['id']}", headers=h,
+                     json={"amount": 650, "date": "2026-10-05", "description": "matatu to town", "category": "transport"})
+    assert r.status_code == 200
+    got = client.get("/me/transactions?month=2026-10", headers=h).get_json()["transactions"]
+    edited = next(t for t in got if t["id"] == mine["id"])
+    assert (edited["amount"], edited["date"], edited["description"]) == (650, "2026-10-05", "matatu to town")
+    assert client.patch(f"/me/transactions/{mine['id']}", headers=h, json={"date": "2026-12-01"}).status_code == 400
+    assert client.patch(f"/me/transactions/{mine['id']}", headers=h, json={"amount": 0}).status_code == 400
+    assert client.patch(f"/me/transactions/{stmt['id']}", headers=h, json={"amount": 1}).status_code == 400
+    assert client.patch(f"/me/transactions/{stmt['id']}", headers=h, json={"one_off": True}).status_code == 200
+    s = client.get("/me/transactions/summary", headers=h).get_json()["months"][0]
+    assert s["one_off"] == 179000 and s["total"] == 650
+    assert client.patch(f"/me/transactions/{mine['id']}", headers=h, json={}).status_code == 400

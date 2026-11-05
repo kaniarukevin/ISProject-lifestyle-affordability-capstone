@@ -60,6 +60,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Change the password and keep this device logged in with the new token.
+  Future<void> changePassword(String current, String newPassword) async {
+    await api.changePassword(current, newPassword);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, api.token!);
+  }
+
   Future<void> acceptPrivacy(String version) async {
     await api.giveConsent(version);
     consented = true;
