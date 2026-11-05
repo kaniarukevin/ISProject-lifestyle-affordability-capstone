@@ -5,6 +5,7 @@ import '../models/profile.dart';
 import '../models/transaction.dart' show spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'privacy_screen.dart';
 
 String kes(num v) => 'KES ${v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
 
@@ -156,6 +157,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton(onPressed: _save, child: const Text('Save')),
+          // Only for an existing account: the first-time setup screen has nothing to delete yet.
+          if (context.read<AppState>().profile != null) ...[
+            const Divider(height: 40),
+            Text('Your data', style: theme.textTheme.titleMedium),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('How this app uses your data'),
+              onTap: () => showPrivacy(context, context.read<AppState>().api),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.delete_forever_outlined, color: theme.colorScheme.error),
+              title: Text('Delete my account', style: TextStyle(color: theme.colorScheme.error)),
+              subtitle: const Text('Removes everything, permanently'),
+              onTap: () => confirmDeleteAccount(context),
+            ),
+          ],
         ],
       ),
     );

@@ -1,11 +1,11 @@
 {
-    "name": "lifestyle_affordability",
-    "short_name": "lifestyle_affordability",
+    "name": "Lifestyle Affordability",
+    "short_name": "Affordability",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#1B7F5B",
+    "description": "Know what you can afford before you commit.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -29,6 +29,7 @@ API_BASE = os.environ.get("WASAA_API_BASE", "https://api-wasaa-lifestyle.webmast
 WINDOW = 12  # months of history used by the trailing median
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 11 * 1024 * 1024    # refuse oversized uploads before reading them (statements: 10 MB)
 # Only these websites may call the API from a browser: the app while developing on this machine, plus the
 # deployed app's address(es) listed in ALLOWED_ORIGINS on Render (comma-separated). Server-to-server callers
 # such as Web Masters are not affected by CORS.
@@ -36,6 +37,19 @@ CORS(app, origins=[r"^https?://localhost(:\d+)?$", r"^https?://127\.0\.0\.1(:\d+
                    *[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]])
 store.init()
 app.register_blueprint(store.bp)
+
+
+@app.errorhandler(Exception)
+def _any_error(exc):
+    """Every error is answered in JSON the app can show. Known HTTP errors keep their code and a plain message;
+    anything unexpected is logged in full for the developer and the user sees a calm message, never a trace."""
+    from werkzeug.exceptions import HTTPException
+    if isinstance(exc, HTTPException):
+        plain = {404: "that page does not exist", 405: "that action is not allowed here",
+                 413: "that file is too large (the limit is 10 MB)"}
+        return jsonify(error=plain.get(exc.code, exc.description)), exc.code
+    app.logger.exception("unexpected error on %s %s", request.method, request.path)
+    return jsonify(error="Something went wrong on our side. Please try again in a minute."), 500
 
 
 def _warm_models():

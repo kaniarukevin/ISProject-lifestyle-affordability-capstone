@@ -19,7 +19,7 @@ def client():
 
 
 def signup(client, email="kevin@example.com"):
-    r = client.post("/auth/register", json={"email": email, "password": "strong-pass-1"})
+    r = client.post("/auth/register", json={"email": email, "password": "strong-pass-1", "consent": True})
     assert r.status_code == 201
     return {"Authorization": f"Bearer {r.get_json()['token']}"}
 
@@ -773,3 +773,71 @@ def test_dashboard_warns_when_a_good_score_follows_a_fragile_year(client, monkey
     o = client.get("/me/overview", headers=h).get_json()
     assert o["track_record"]["overspent_months"] == 7 and o["track_record"]["fragile"]
     assert o["score"] >= 56 and any("7 of the last 10 months" in n for n in o["notes"])
+
+
+def test_the_hosted_server_refuses_to_start_without_a_real_secret_key(monkeypatch):
+    monkeypatch.setenv("RENDER", "true")
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        store.init("sqlite://")
+    monkeypatch.setenv("SECRET_KEY", "dev-only-change-me")
+    with pytest.raises(RuntimeError):
+        store.init("sqlite://")
+    monkeypatch.setenv("SECRET_KEY", "x" * 64)
+    store.init("sqlite://")                                  # a real key: starts
+
+
+def test_unexpected_errors_are_plain_json_and_unknown_pages_too(client, monkeypatch):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 20000}]})
+    monkeypatch.setattr(store, "household_picture", lambda *a: 1 / 0)
+    r = client.get("/me/overview", headers=h)
+    assert r.status_code == 500 and "went wrong on our side" in r.get_json()["error"]
+    assert "Traceback" not in r.get_data(as_text=True)
+    assert client.get("/no-such-page").get_json()["error"] == "that page does not exist"
+
+
+def test_statements_need_consent_to_the_current_privacy_notice(client):
+    r = client.post("/auth/register", json={"email": "new@example.com", "password": "strong-pass-1"})
+    h = {"Authorization": f"Bearer {r.get_json()['token']}"}
+    notice = client.get("/privacy").get_json()                         # public: shown before signing up
+    assert notice["version"] and len(notice["sections"]) >= 6
+    assert client.get("/me/consent", headers=h).get_json()["accepted"] is False
+    blocked = client.post("/me/statements/preview", headers=h, data={})
+    assert blocked.status_code == 403 and blocked.get_json()["consent_required"]
+    assert client.post("/me/consent", headers=h, json={"accept": True, "version": "old"}).status_code == 400
+    assert client.post("/me/consent", headers=h, json={"accept": True, "version": notice["version"]}).status_code == 200
+    assert client.get("/me/consent", headers=h).get_json()["accepted"] is True
+    assert client.post("/me/statements/preview", headers=h, data={}).status_code == 400   # past consent: no file
+
+
+def test_old_users_table_gets_the_consent_columns(tmp_path):
+    from sqlalchemy import create_engine, text
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    with create_engine(url).begin() as conn:
+        conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR(254), "
+                          "password_hash VARCHAR(255), created_at TIMESTAMP)"))
+        conn.execute(text("INSERT INTO users (email, password_hash) VALUES ('a@b.co', 'x')"))
+    store.init(url)
+    with store.session() as s:
+        u = s.scalar(store.select(store.User))
+        assert u.email == "a@b.co" and u.consent_version is None
+
+
+def test_spending_comes_as_a_month_summary_and_one_month_at_a_time(client):
+    h = signup(client)
+    client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-09-03", "amount": 1000, "category": "food_groceries"},
+        {"date": "2026-10-01", "amount": 500, "category": "transport"},
+        {"date": "2026-10-31", "amount": 300, "category": "transport"},
+        {"date": "2026-10-15", "amount": 9000, "category": "entertainment", "one_off": True}])
+    s = client.get("/me/transactions/summary", headers=h).get_json()
+    assert [(m["year"], m["month"]) for m in s["months"]] == [(2026, 10), (2026, 9)] and not s["has_statement"]
+    oct_ = s["months"][0]
+    assert oct_["count"] == 3 and oct_["total"] == 800 and oct_["one_off"] == 9000
+    assert oct_["by_category"] == {"transport": 800}
+    got = client.get("/me/transactions?month=2026-10", headers=h).get_json()["transactions"]
+    assert len(got) == 3 and {t["date"][:7] for t in got} == {"2026-10"}
+    assert client.get("/me/transactions?month=2026-12", headers=h).get_json()["transactions"] == []
+    assert client.get("/me/transactions?month=oct", headers=h).status_code == 400
+    assert len(client.get("/me/transactions", headers=h).get_json()["transactions"]) == 4

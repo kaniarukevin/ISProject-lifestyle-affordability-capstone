@@ -2,7 +2,7 @@
     <!-- Release builds need this to reach the backend (debug builds get it automatically). -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="lifestyle_affordability"
+        android:label="Affordability"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

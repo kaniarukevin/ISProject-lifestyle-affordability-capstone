@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'privacy_screen.dart';
 
 /// First screen for a new user: create an account or log in.
 class AuthScreen extends StatefulWidget {
@@ -16,6 +17,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _newAccount = true;
+  bool _agreed = false;
   bool _busy = false;
   String? _error;
 
@@ -33,12 +35,16 @@ class _AuthScreenState extends State<AuthScreen> {
       setState(() => _error = 'Enter your email and a password of at least 8 characters.');
       return;
     }
+    if (_newAccount && !_agreed) {
+      setState(() => _error = 'Please read and agree to the privacy notice to create an account.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      await context.read<AppState>().signIn(email, password, newAccount: _newAccount);
+      await context.read<AppState>().signIn(email, password, newAccount: _newAccount, consent: _agreed);
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -89,6 +95,18 @@ class _AuthScreenState extends State<AuthScreen> {
                     labelText: 'Password', helperText: _newAccount ? 'At least 8 characters' : null),
                 onSubmitted: (_) => _submit(),
               ),
+              if (_newAccount)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(children: [
+                    Checkbox(value: _agreed, onChanged: (v) => setState(() => _agreed = v ?? false)),
+                    const Expanded(child: Text('I have read and agree to how my data is used.')),
+                    TextButton(
+                      onPressed: () => showPrivacy(context, context.read<AppState>().api),
+                      child: const Text('Read'),
+                    ),
+                  ]),
+                ),
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
@@ -102,7 +120,8 @@ class _AuthScreenState extends State<AuthScreen> {
                     : Text(_newAccount ? 'Create account' : 'Log in'),
               ),
               const SizedBox(height: 12),
-              Text('Your data is stored securely and only you can see it. You can delete it at any time.',
+              Text('Only you can see your data, statement files are never kept, and you can delete '
+                  'everything at any time.',
                   textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
             ],
           ),

@@ -79,6 +79,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Which privacy notice the user agreed to, and when (Data Protection Act 2019: consent must be recorded).
+    consent_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Profile(Base):
@@ -186,6 +189,7 @@ class StatementRule(Base):
 def init(url=None):
     """Create the engine and the tables (idempotent). Call once at start-up, or from tests with 'sqlite://'."""
     url = url or database_url()
+    secret_key()                       # fail at start-up, not on the first log-in
     if url.startswith("sqlite"):
         kw = {"connect_args": {"check_same_thread": False}}
         if url in ("sqlite://", "sqlite:///:memory:"):
@@ -222,7 +226,8 @@ def _upgrade(engine):
                                          "payee_key": "VARCHAR(160)", "label": "VARCHAR(60)",
                                          "auto_category": "VARCHAR(40)",
                                          "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
-                        "statement_rules": {"was": "VARCHAR(40)"}}.items():
+                        "statement_rules": {"was": "VARCHAR(40)"},
+                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
         for name, ddl in cols.items():
             if name not in have:
@@ -264,8 +269,26 @@ def _record(key):
         _ATTEMPTS[key].append(time.monotonic())
 
 
+DEV_SECRET = "dev-only-change-me"
+
+
+def production():
+    """True on the hosted server. Render sets RENDER=true for every service; APP_ENV=production works anywhere."""
+    return bool(os.environ.get("RENDER")) or os.environ.get("APP_ENV") == "production"
+
+
+def secret_key():
+    """The key that signs log-in tokens. The development fallback is public (it is in this repository), so anyone
+    could forge a token with it and read any user's finances: the hosted server refuses to start without a real
+    key of at least 32 characters (generate one with: python -c "import secrets; print(secrets.token_hex(32))")."""
+    key = os.environ.get("SECRET_KEY", "")
+    if production() and (len(key) < 32 or key == DEV_SECRET):
+        raise RuntimeError("SECRET_KEY must be set to a random value of at least 32 characters in production")
+    return key or DEV_SECRET
+
+
 def _serializer():
-    return URLSafeTimedSerializer(os.environ.get("SECRET_KEY", "dev-only-change-me"), salt="auth")
+    return URLSafeTimedSerializer(secret_key(), salt="auth")
 
 
 def login_required(fn):
@@ -329,9 +352,88 @@ def register():
         if s.scalar(select(User).where(User.email == email)):
             return jsonify(error="an account with this email already exists"), 409
         user = User(email=email, password_hash=generate_password_hash(password))
+        if b.get("consent") is True:             # the sign-up screen shows the notice with a tick box
+            user.consent_version, user.consent_at = PRIVACY["version"], _now()
         s.add(user)
         s.commit()
         return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 201
+
+
+# ---------------- privacy notice and consent (Kenya Data Protection Act 2019) ----------------
+
+PRIVACY = {
+    "version": "2026-11-05",
+    "title": "How this app uses your data",
+    "sections": [
+        {"title": "Who runs this app",
+         "text": "This app is a final-year project by Kevin Kaniaru, a Computer Science student at Strathmore "
+                 "University, Nairobi. It is a study prototype, not a bank or a licensed financial adviser, and its "
+                 "answers are guidance, not financial advice."},
+        {"title": "What we keep",
+         "text": "Your email address and a scrambled form of your password (never the password itself); your "
+                 "household details and income; the spending you enter; and from M-PESA statements you upload, "
+                 "each transaction's date, amount, type and the name of the person or business as the statement "
+                 "shows it, so the app can remember how you sorted them."},
+        {"title": "What we never keep",
+         "text": "Uploaded statement files and their passwords. A statement is read in memory, you review what was "
+                 "found, and only the transactions you confirm are saved. The file and password are discarded."},
+        {"title": "Why",
+         "text": "Only to work out your budget, your financial health score, your spending forecast and whether a "
+                 "choice is affordable, for you. Your data is not sold, not shared with anyone and not used for "
+                 "advertising. The app's models were trained on made-up data, not on users' data."},
+        {"title": "Where it is stored",
+         "text": "In a cloud database (Neon) and on a cloud server (Render), which may be outside Kenya. Connections "
+                 "are encrypted, and the database host encrypts stored data."},
+        {"title": "Who can see it",
+         "text": "Only you, through your account. The administrator sees counts and partly hidden email addresses, "
+                 "not your transactions."},
+        {"title": "Your rights",
+         "text": "You can see everything the app keeps about you in the app, correct any entry, and delete your "
+                 "account at any time under Your household. Deleting removes all your data immediately and "
+                 "permanently, which also withdraws this consent. For any question, contact the developer through "
+                 "Strathmore University."},
+        {"title": "How long",
+         "text": "Until you delete your account. All accounts will be deleted when the project ends."},
+    ],
+}
+
+
+def _consented(user):
+    return user is not None and user.consent_version == PRIVACY["version"]
+
+
+@bp.get("/privacy")
+def privacy_notice():
+    return jsonify(PRIVACY), 200
+
+
+@bp.get("/me/consent")
+@login_required
+def get_consent():
+    with session() as s:
+        user = s.get(User, g.user_id)
+        return jsonify(version=PRIVACY["version"], accepted=_consented(user),
+                       accepted_at=user.consent_at.isoformat() if user and user.consent_at else None), 200
+
+
+@bp.post("/me/consent")
+@login_required
+def give_consent():
+    b = _body()
+    if b.get("accept") is not True or b.get("version") != PRIVACY["version"]:
+        raise InputError("to continue, agree to the current privacy notice")
+    with session() as s:
+        user = s.get(User, g.user_id)
+        user.consent_version, user.consent_at = PRIVACY["version"], _now()
+        s.commit()
+    return jsonify(accepted=True), 200
+
+
+def _needs_consent(s):
+    """Reading statements handles other people's names: only after the user has agreed to the notice."""
+    if not _consented(s.get(User, g.user_id)):
+        return jsonify(error="please read and agree to the privacy notice first", consent_required=True), 403
+    return None
 
 
 @bp.post("/auth/login")
@@ -417,9 +519,45 @@ def _tx_json(t):
 @bp.get("/me/transactions")
 @login_required
 def list_transactions():
-    q = select(Transaction).where(Transaction.user_id == g.user_id).order_by(Transaction.day.desc())
+    """All records, or one month's with ?month=YYYY-MM (the spending screen loads a month when it is opened:
+    a year of M-PESA statements is well over a thousand records, too many to send to a phone at once)."""
+    q = select(Transaction).where(Transaction.user_id == g.user_id).order_by(Transaction.day.desc(),
+                                                                             Transaction.id.desc())
+    month = request.args.get("month")
+    if month:
+        try:
+            first = date(int(month[:4]), int(month[5:7]), 1)
+        except (ValueError, IndexError):
+            raise InputError("month must look like 2026-10")
+        after = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+        q = q.where(Transaction.day >= first, Transaction.day < after)
     with session() as s:
         return jsonify(transactions=[_tx_json(t) for t in s.scalars(q).all()])
+
+
+@bp.get("/me/transactions/summary")
+@login_required
+def transaction_summary():
+    """One line per month, newest first: usual spending by category, one-offs apart, the user's own money moving
+    left out (same rules as the app's month cards), and how many records the month holds."""
+    q = select(Transaction.day, Transaction.amount, Transaction.category, Transaction.one_off, Transaction.source) \
+        .where(Transaction.user_id == g.user_id)
+    months, statement = {}, False
+    with session() as s:
+        for day, amount, category, one_off, source in s.execute(q):
+            m = months.setdefault((day.year, day.month), {"year": day.year, "month": day.month, "count": 0,
+                                                          "total": 0.0, "one_off": 0.0, "by_category": {}})
+            m["count"] += 1
+            statement = statement or source == "mpesa"
+            if category == "own_account":
+                continue
+            if one_off:
+                m["one_off"] += amount
+                continue
+            m["total"] += amount
+            m["by_category"][category] = m["by_category"].get(category, 0.0) + amount
+    rows = [months[k] for k in sorted(months, reverse=True)]
+    return jsonify(months=rows, has_statement=statement), 200
 
 
 @bp.post("/me/transactions")
@@ -1273,6 +1411,10 @@ def statement_preview():
     """Read an uploaded M-PESA statement and return what would be imported. Nothing is saved; the PDF and the
     password are only held in memory for this request."""
     import mpesa
+    with session() as s:
+        blocked = _needs_consent(s)
+    if blocked:
+        return blocked
     f = request.files.get("file")
     if f is None:
         raise InputError("choose your M-PESA statement (PDF) to upload")
@@ -1333,6 +1475,10 @@ def statement_import():
     """Save a reviewed statement. Body: the preview's transactions (with any one-off changes), tags for payees
     {payee_key: category | 'own_account' | 'unsorted'}, the period, and goals a purchase completed."""
     import mpesa
+    with session() as s:
+        blocked = _needs_consent(s)
+    if blocked:
+        return blocked
     b = _body()
     rows, tags = b.get("transactions"), b.get("tags") or {}
     if not isinstance(rows, list) or not isinstance(tags, dict):

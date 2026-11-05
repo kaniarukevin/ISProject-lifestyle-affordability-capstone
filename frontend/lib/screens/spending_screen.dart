@@ -20,7 +20,10 @@ class SpendingScreen extends StatefulWidget {
 }
 
 class _SpendingScreenState extends State<SpendingScreen> {
-  List<Txn>? txns;
+  List<Map<String, dynamic>>? months;    // one summary line per month, newest first
+  bool hasStatement = false;
+  // A month's records are fetched when its card is opened, once (a year of statements is 1,000+ records).
+  final Map<String, Future<List<Txn>>> _items = {};
   String? error;
 
   Api get api => context.read<AppState>().api;
@@ -33,25 +36,31 @@ class _SpendingScreenState extends State<SpendingScreen> {
 
   Future<void> _load() async {
     try {
-      final t = await api.getTransactions();
+      final s = await api.spendingSummary();
+      if (!mounted) return;
       setState(() {
-        txns = t;
+        months = ((s['months'] as List?) ?? []).cast<Map<String, dynamic>>();
+        hasStatement = s['has_statement'] == true;
+        _items.clear();
         error = null;
       });
     } on ApiException catch (e) {
+      if (!mounted) return;
       setState(() {
-        txns ??= [];
+        months ??= [];
         error = e.message;
       });
     }
   }
 
+  Future<List<Txn>> _month(String key) => _items.putIfAbsent(key, () => api.getTransactions(month: key));
+
   Future<void> _add() async {
     final t = await showDialog<Txn>(context: context, builder: (_) => const _AddTxnDialog());
     if (t == null) return;
     try {
-      final saved = await api.addTransactions([t]);
-      setState(() => txns!.addAll(saved));
+      await api.addTransactions([t]);
+      await _load();
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }
@@ -60,7 +69,7 @@ class _SpendingScreenState extends State<SpendingScreen> {
   Future<void> _delete(Txn t) async {
     try {
       await api.deleteTransaction(t.id!);
-      setState(() => txns!.removeWhere((x) => x.id == t.id));
+      await _load();
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }
@@ -69,8 +78,8 @@ class _SpendingScreenState extends State<SpendingScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (txns == null) return const Center(child: CircularProgressIndicator());
-    final groups = groupByMonth(txns!);
+    if (months == null) return const Center(child: CircularProgressIndicator());
+    final groups = months!;
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _add,
@@ -97,7 +106,7 @@ class _SpendingScreenState extends State<SpendingScreen> {
                   if (done == true) _load();
                 },
               ),
-              if (txns!.any((t) => t.source == 'mpesa'))
+              if (hasStatement)
                 OutlinedButton.icon(
                   icon: const Icon(Icons.people_outline),
                   label: const Text('Who you pay'),
@@ -107,7 +116,7 @@ class _SpendingScreenState extends State<SpendingScreen> {
                   },
                 ),
             ]),
-            if (txns!.isNotEmpty)
+            if (groups.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text('Tap any payment to change what it is.', style: theme.textTheme.bodySmall),
@@ -122,9 +131,15 @@ class _SpendingScreenState extends State<SpendingScreen> {
                 padding: EdgeInsets.only(top: 48),
                 child: Center(child: Text('Nothing yet. Tap "Add spending" to record your first expense.')),
               ),
-            ...groups.map((g) => _MonthCard(group: g, expanded: g == groups.first, onDelete: _delete, onTap: (t) async {
-                  if (await showCorrectSheet(context, t)) _load();
-                })),
+            ...groups.map((g) => _MonthCard(
+                  summary: g,
+                  expanded: g == groups.first,
+                  load: _month,
+                  onDelete: _delete,
+                  onTap: (t) async {
+                    if (await showCorrectSheet(context, t)) _load();
+                  },
+                )),
           ],
         ),
       ),
@@ -133,8 +148,10 @@ class _SpendingScreenState extends State<SpendingScreen> {
 }
 
 class _MonthCard extends StatelessWidget {
-  const _MonthCard({required this.group, required this.onDelete, required this.onTap, this.expanded = false});
-  final MonthGroup group;
+  const _MonthCard({required this.summary, required this.load, required this.onDelete, required this.onTap,
+      this.expanded = false});
+  final Map<String, dynamic> summary;
+  final Future<List<Txn>> Function(String month) load;
   final bool expanded;
   final void Function(Txn) onDelete;
   final void Function(Txn) onTap;
@@ -142,14 +159,19 @@ class _MonthCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final cats = group.byCategory.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+    final year = summary['year'] as int, month = summary['month'] as int;
+    final key = '$year-${month.toString().padLeft(2, '0')}';
+    final total = summary['total'] as num, oneOff = summary['one_off'] as num;
+    final cats = (summary['by_category'] as Map).cast<String, num>().entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
     return Card(
       margin: const EdgeInsets.only(top: 16),
       child: ExpansionTile(
         initiallyExpanded: expanded, // only the latest month: a statement can bring in over a thousand records
-        title: Text('${_monthNames[group.month - 1]} ${group.year}'),
-        subtitle: Text('${kes(group.total)} · ${group.items.length} records'
-            '${group.oneOffTotal > 0 ? ' · one-off ${kes(group.oneOffTotal)}' : ''}'),
+        title: Text('${_monthNames[month - 1]} $year'),
+        subtitle: Text('${kes(total)} · ${summary['count']} records'
+            '${oneOff > 0 ? ' · one-off ${kes(oneOff)}' : ''}'),
+        // Collapsed cards build no children, so a month's records are only fetched once it is opened.
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -162,7 +184,16 @@ class _MonthCard extends StatelessWidget {
                   .toList(),
             ),
           ),
-          ...group.items.map((t) => ListTile(
+          FutureBuilder<List<Txn>>(
+            future: load(key),
+            builder: (context, snap) {
+              if (snap.hasError) {
+                return const Padding(padding: EdgeInsets.all(16), child: Text('Could not load this month. Pull down to retry.'));
+              }
+              if (!snap.hasData) {
+                return const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()));
+              }
+              return Column(children: snap.data!.map((t) => ListTile(
                 dense: true,
                 onTap: () => onTap(t),
                 title: Text(t.title),
@@ -175,7 +206,9 @@ class _MonthCard extends StatelessWidget {
                   Text(kes(t.amount)),
                   IconButton(icon: const Icon(Icons.delete_outline), onPressed: () => onDelete(t)),
                 ]),
-              )),
+              )).toList());
+            },
+          ),
         ],
       ),
     );
