@@ -5,7 +5,6 @@ import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
-import 'why_score_sheet.dart';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -152,6 +151,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ]),
             ),
           ),
+          if (((d['outlook'] as List?) ?? []).length > 1) ...[
+            const SizedBox(height: 12),
+            _Outlook(months: (d['outlook'] as List).cast<Map<String, dynamic>>(),
+                income: (d['income_monthly'] as num?) ?? 0),
+          ],
           const SizedBox(height: 12),
           Card(
             child: Padding(
@@ -235,8 +239,6 @@ class _StateCard extends StatelessWidget {
                       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
                     )),
               ),
-            const Spacer(),
-            TextButton(onPressed: () => showWhyScore(context), child: const Text('Why this score?')),
           ]),
         ]),
       ),
@@ -319,6 +321,58 @@ class _Timeline extends StatelessWidget {
           if (months.any((m) => m['income_from'] == 'statement'))
             Text('* money that actually arrived, from your statement', style: theme.textTheme.bodySmall),
         ],
+      ),
+    );
+  }
+}
+
+
+/// The next three months: expected spending with its likely range, against income. Further ahead is less sure,
+/// so the ranges widen (checked on held-out households: 8 months in 10 fall inside at every step).
+class _Outlook extends StatelessWidget {
+  const _Outlook({required this.months, required this.income});
+  final List<Map<String, dynamic>> months;
+  final num income;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final top = months.map((m) => ((m['range'] as Map?)?['high'] ?? m['total']) as num)
+        .fold<num>(income, (a, b) => a > b ? a : b);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('The next 3 months', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 8),
+          ...months.map((m) {
+            final total = m['total'] as num;
+            final over = income > 0 && total > income;
+            final range = m['range'] as Map?;
+            final fees = (m['school_fees'] ?? 0) as num;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Expanded(child: Text('${_months[(m['month'] as int) - 1]} ${m['year']}')),
+                  Text(kes(total), style: TextStyle(fontWeight: FontWeight.w600,
+                      color: over ? theme.colorScheme.error : null)),
+                ]),
+                const SizedBox(height: 4),
+                LinearProgressIndicator(value: top > 0 ? (total / top).clamp(0, 1).toDouble() : 0, minHeight: 6,
+                    color: over ? theme.colorScheme.error : null),
+                Text([
+                  if (range != null) 'Probably ${kes(range['low'] as num)} to ${kes(range['high'] as num)}',
+                  if (fees > 0) 'includes about ${kes(fees)} school fees',
+                  if (over) 'more than your income',
+                ].join(' · '), style: theme.textTheme.bodySmall),
+              ]),
+            );
+          }),
+          if (income > 0)
+            Text('Your income: ${kes(income)} a month. Further ahead is less certain, so the ranges get wider.',
+                style: theme.textTheme.bodySmall),
+        ]),
       ),
     );
   }
