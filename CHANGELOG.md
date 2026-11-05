@@ -18,6 +18,8 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - ML forecast for app users (boosted tree with fee-month and December flags, personal 80% range, fee-month floor) (#83).
 - M-PESA statement upload: verified reading, M-PESA types, Kenyan business directory, nothing guessed, Who you pay tags and corrections, money-in tags, statement-safe state model, dashboard timeline (#84).
 - Admin dashboard: service health, model register, masked user list; admins named in `ADMIN_EMAILS` (#85).
+- Why this score (SHAP): exact Shapley values over six plain-language parts, on the dashboard and in "Can I afford it?"; 12-month track record note and a cautious Stretch rule for a fragile year.
+- Deviations from the proposal and requirements traceability (`docs/deviations.md`).
 
 ### Changed
 - M-PESA charges are now their own category ("M-PESA charges"), no longer folded into `mobile_money_transfers` (#84).

@@ -148,6 +148,10 @@ class Api {
   Future<Map<String, dynamic>> afford(Map<String, dynamic> choice) async =>
       (await post('/me/afford', choice)) as Map<String, dynamic>;
 
+  /// 'Why this score?': the dashboard score explained, or with a [choice] the score after it and what moved.
+  Future<Map<String, dynamic>> explain([Map<String, dynamic>? choice]) async =>
+      (await post('/me/explain', choice ?? <String, dynamic>{})) as Map<String, dynamic>;
+
   /// Read an M-PESA statement (PDF) on the server and return what would be imported. Nothing is saved yet;
   /// the file and password are only used for this request.
   Future<Map<String, dynamic>> previewStatement(List<int> bytes, String filename, String? password) async {

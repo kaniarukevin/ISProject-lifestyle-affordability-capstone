@@ -116,3 +116,59 @@ def test_a_single_payment_is_not_called_a_loan_and_the_score_is_explained():
     assert "month(s) you pay" in r["score_note"]
     lasting = aff.evaluate(body(EARNER, {"type": "monthly_change", "changes": {"housing": 2000}}))
     assert lasting["score_note"] is None
+
+
+# ---------- why this score (SHAP) and the 12-month track record (5 Nov) ----------
+
+def _frame(months, size=1, deps=0):
+    return aff.build_features(aff.months_frame(months, size, deps)).iloc[[-1]]
+
+
+def test_explanation_parts_add_up_to_the_score():
+    for month in (STUDENT, EARNER):
+        f = _frame([month] * 12)
+        ex = aff.explain(f)
+        assert {p["key"] for p in ex["parts"]} == {k for k, _, _ in aff.SCORE_GROUPS}
+        assert abs(ex["typical_score"] + sum(p["points"] for p in ex["parts"]) - aff._score(f)) < 1.0
+
+
+def test_shapley_matches_brute_force_on_a_known_function():
+    # value = 2*a + b*c on a background of zeros: exact Shapley gives a: 2, and b, c share the product equally.
+    import numpy as np
+    base, phi = aff.shapley(np.array([1.0, 2.0, 3.0]), np.zeros((1, 3)), [[0], [1], [2]],
+                            value=lambda r: 2 * r[:, 0] + r[:, 1] * r[:, 2])
+    assert base == 0 and np.allclose(phi, [2.0, 3.0, 3.0])
+
+
+def test_overspending_shows_up_as_negative_points():
+    over = dict(STUDENT, entertainment=STUDENT["entertainment"] + 6000)
+    parts = {p["key"]: p["points"] for p in aff.explain(_frame([over] * 12))["parts"]}
+    assert parts["latest_month"] < 0 and parts["recent_months"] < 0
+
+
+def test_a_fragile_year_is_seen_even_when_the_last_months_look_fine():
+    calm = dict(STUDENT, entertainment=200)               # STUDENT itself spends 12,300 of 12,000 before saving
+    over = dict(STUDENT, entertainment=5800)
+    steady, fragile = body(calm), {**body(calm), "months": [over] * 9 + [calm] * 3}
+    assert aff.evaluate(fragile)["score_before"] == aff.evaluate(steady)["score_before"]   # the score cannot tell
+    rec = aff.evaluate(fragile)["track_record"]
+    assert rec == {"months": 12, "overspent_months": 9, "fragile": True, "lowered_verdict": False}
+    assert not aff.evaluate(steady)["track_record"]["fragile"]
+
+
+def test_a_fragile_year_turns_affordable_into_stretch_without_cut_advice():
+    calm = dict(EARNER)
+    over = dict(EARNER, entertainment=EARNER["entertainment"] + 8000)
+    small = {"type": "monthly_change", "changes": {"entertainment": 300}}
+    assert aff.evaluate(body(calm, small))["verdict"] == "Affordable"
+    r = aff.evaluate({**body(calm, small), "months": [over] * 4 + [calm] * 8})
+    assert r["verdict"] == "Stretch" and r["track_record"]["lowered_verdict"]
+    assert "what_to_cut" not in r and any("4 of the last 12" in x for x in r["reasons"])
+
+
+def test_explain_request_shows_what_a_new_loan_moves():
+    out = aff.explain_request(body(EARNER, {"type": "monthly_change", "changes": {"loan_repayment": 6000}}))
+    moved = {p["key"]: p["points"] for p in out["moved"]}
+    assert out["after"]["score"] < out["now"]["score"]
+    assert sum(moved.values()) == pytest.approx(out["after"]["score"] - out["now"]["score"], abs=1.5)
+    assert min(moved, key=moved.get) in ("latest_month", "recent_months", "debt")

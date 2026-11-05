@@ -6,6 +6,7 @@ import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
+import 'why_score_sheet.dart';
 
 /// The heart of the project: test a lifestyle change on your own numbers before committing to it.
 class AffordScreen extends StatefulWidget {
@@ -110,7 +111,8 @@ class _AffordScreenState extends State<AffordScreen> {
                 ),
                 onTap: () async {
                   await Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => ResultScreen(result: {...r, 'id': id})));
+                      builder: (_) => ResultScreen(result: {...r, 'id': id},
+                          choice: (h['request'] as Map?)?.cast<String, dynamic>())));
                   _loadHistory();
                 },
               );
@@ -161,9 +163,10 @@ class _AskScreenState extends State<_AskScreen> {
       error = null;
     });
     try {
-      final r = await context.read<AppState>().api.afford(buildChoice(widget.preset, values));
+      final choice = buildChoice(widget.preset, values);
+      final r = await context.read<AppState>().api.afford(choice);
       if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResultScreen(result: r)));
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResultScreen(result: r, choice: choice)));
       if (mounted) Navigator.of(context).pop(r);
     } on ApiException catch (e) {
       setState(() => error = e.message);
@@ -222,8 +225,9 @@ class _VerdictDot extends StatelessWidget {
 
 /// The answer, in the order a person needs it: verdict, why, what would make it work.
 class ResultScreen extends StatelessWidget {
-  const ResultScreen({super.key, required this.result});
+  const ResultScreen({super.key, required this.result, this.choice});
   final Map<String, dynamic> result;
+  final Map<String, dynamic>? choice;     // what was asked, so "Why?" can explain the score after it
 
   String _cat(String k) => categoryLabel(k);
 
@@ -272,6 +276,9 @@ class ResultScreen extends StatelessWidget {
                     child: LinearProgressIndicator(value: after / 100, minHeight: 10, color: color,
                         backgroundColor: color.withValues(alpha: 0.15)),
                   ),
+                  if (choice != null)
+                    TextButton(onPressed: () => showWhyScore(context, choice: choice),
+                        child: const Text('Why this score?')),
                 ],
               ]),
             ),

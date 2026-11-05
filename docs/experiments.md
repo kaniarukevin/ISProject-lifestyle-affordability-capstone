@@ -336,3 +336,32 @@ Imported 12 months (Nov 2025 - Oct 2026) through the app, one-offs kept out (KES
 - Standard Chartered tagged "a mix" (allowance and own money): income per month is what arrived, capped at the profile figure (August KES 7,050, September 11,300). Result: 2 Stable, 2 Strained, 8 Critical, "improving lately"; still Stable 100 now.
 - Finding: the headline score is generous. It reflects the last few months (Sept and Oct well under the allowance) and barely reacts to having almost no savings, while the year was fragile. The timeline now shows the year; the score itself is to be reviewed (planned with SHAP).
 - Price level: the synthetic dataset's incomes are in 2025 KES (KNBS CPI, see CHANGELOG v0.1-data), so amounts are close to current prices.
+
+## 2026-11-05: Why this score (SHAP) and the score review
+
+Script: scripts/add_score_explainer.py. Code: backend/affordability.py (`shapley`, `explain`, `track_record`).
+
+Method. Exact interventional Shapley values of the score the user sees, 100 x (P(Stable) + max(P(not Critical), P(Stable))) / 2, not of each model separately. The 14 score features are grouped into six parts a user can read: income; spending against income in the latest month; the last 3 to 6 months; saving rate; loan repayments; household size and dependants. With six groups there are 2^6 = 64 coalitions, so the values are exact (no sampling) and need no extra library on the server. Reference: 200 training household-months (random, seed 0), stored in affordability_engine.joblib.
+
+Checks:
+- Correctness: with each of the 14 features on its own, the values match the shap library's ExactExplainer (v0.54.1, same background) to 2.8e-13 score points on 5 held-out households.
+- Additivity: typical score (47.9) + the six parts = the score, within 2.8e-14 points, for all 60 held-out households.
+- Background size: against 200 rows, 100 rows move a part by up to 4.0 points (mean 3.1) and 50 rows by up to 10.3 (mean 7.5). Kept 200 rows; about 0.4 s per explanation (two 300-tree models score 12,800 rows), so explanations are computed on request (POST /me/explain), not on every dashboard load.
+
+What drives the score on held-out households (mean absolute points): latest month's spending against income 14.4, saving rate 10.1, last 3 to 6 months 9.2, household size and dependants 8.4, income 3.4, loan repayments 1.1. Critical households lose most from the latest month (-16.5) and saving (-10.5); Stable households gain from the latest month (+9.7) and recent months (+8.4).
+
+Score review: why the developer's statement scored Stable 100 in a year with 5 Critical months. Student-like households (one person, KES 30,000 a month, nothing saved):
+
+| Pattern | Score | Largest parts |
+|---|---|---|
+| spends 15k every month | 100 | latest month +39, recent months +22, saving -6 |
+| spends 31k for 9 months, then 15k for 3 | 100 | identical to the line above |
+| spends 25k every month | 83 | latest month +32, recent months +19, saving -12 |
+| spends 29k every month | 50 | recent months +15, saving -14 |
+| spends 31k every month | 15 | saving -20, latest month -5 |
+
+- The score has no memory beyond 6 months. Retraining cannot add it: the generator's states do not depend on longer history. Adding 12-month features (overspend share, average ratio) changed held-out 3-state accuracy from 0.728 to 0.735, and households whose last 3 months were calm are labelled Stable 90% of the time after a fragile year (21 cases) and 86% after a steady one (134 cases). The model learned the labels correctly; the labels only describe recent months.
+- Saving nothing costs only 6 points when half the income is left over. That is defensible: the left-over money is in effect saved.
+- For the developer's own case a third cause is coverage: the M-PESA statement does not see card spending from the bank account, so "left over" can be money spent elsewhere. The "mix" tag (income = what arrived on M-PESA) is the fix already in the app.
+
+Decision: keep the score as "how your recent months look" and make the year visible next to it. Track record = months in the last 12 where spending before savings was more than the money that came in; three or more is a fragile year. The dashboard adds a note when the score is 56 or more and the year was fragile. "Can I afford it?" turns Affordable into Stretch for a fragile year and says why (a stated, cautious rule, like the savings safety rule; the what-to-cut plan is not shown for this case, because cutting now cannot change the past months). Not validated against labels, because the labels do not contain history: to be checked with volunteers.

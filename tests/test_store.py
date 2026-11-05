@@ -746,3 +746,30 @@ def test_admin_page_is_for_admins_only_and_shows_no_personal_finances(client, mo
     assert kevin["email"] == "k***@example.com"
     assert "kevin@example.com" not in r.get_data(as_text=True)
     assert "4000" not in r.get_data(as_text=True)                # no amounts at all
+
+
+def test_why_this_score_explains_the_dashboard_and_a_scenario(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    score = client.get("/me/overview", headers=h).get_json()["score"]
+    now = client.post("/me/explain", headers=h, json={}).get_json()
+    assert abs(now["now"]["score"] - score) <= 1 and len(now["now"]["parts"]) == 6 and "after" not in now
+    loan = client.post("/me/explain", headers=h, json={"preset": "loan", "amount": 50000, "months": 12,
+                                                        "annual_rate": 14}).get_json()
+    assert loan["after"]["score"] <= loan["now"]["score"] and loan["moved"] and loan["title"]
+    assert client.post("/me/explain", headers=h, json={"preset": "savings_goal", "target": 3000,
+                                                        "months": 3}).status_code == 400
+
+
+def test_dashboard_warns_when_a_good_score_follows_a_fragile_year(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Allowance", "amount": 30000}]})
+    for m in range(1, 11):                                    # Jan-Jul over the allowance, Aug-Oct calm
+        client.post("/me/transactions", headers=h, json=[
+            {"date": f"2026-{m:02d}-03", "amount": 33000 if m <= 7 else 15000, "category": "food_groceries"}])
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["track_record"]["overspent_months"] == 7 and o["track_record"]["fragile"]
+    assert o["score"] >= 56 and any("7 of the last 10 months" in n for n in o["notes"])
