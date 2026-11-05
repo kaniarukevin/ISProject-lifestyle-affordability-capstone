@@ -102,14 +102,17 @@ class _PartBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final up = points >= 0;
-    final color = up ? Colors.green.shade700 : theme.colorScheme.error;
-    final share = (points.abs() / max).clamp(0.0, 1.0);
+    // Under half a point rounds to 0: show it as neutral, with no bar (a red "0" read as a problem).
+    final zero = points.round() == 0;
+    final color = zero ? theme.disabledColor : (up ? Colors.green.shade700 : theme.colorScheme.error);
+    final share = zero ? 0.0 : (points.abs() / max).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Expanded(child: Text(label)),
-          Text('${up ? '+' : ''}${points.round()}', style: TextStyle(fontWeight: FontWeight.w600, color: color)),
+          Text(zero ? '0' : '${up ? '+' : ''}${points.round()}',
+              style: TextStyle(fontWeight: FontWeight.w600, color: color)),
         ]),
         const SizedBox(height: 4),
         // Bars grow from the centre: left for points taken away, right for points added.
