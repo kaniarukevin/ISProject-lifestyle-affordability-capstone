@@ -201,8 +201,8 @@ Status key used below:
 | Debt payoff timeline, cost to the score | Built, and extended: an avalanche or snowball plan, the debt-free date, total interest, savings from extra payments, and a warning when a payment does not cover the interest |
 | Goals with a required monthly amount | Built |
 | Goal progress tracked automatically from transactions | **Partly built.** The user enters the amount saved. A statement purchase that matches a goal marks the goal done and takes the money out of savings |
-| Alerts when a goal is at risk | **Not built** |
-| Payment status per month, reminders before due dates | **Not built**. These need push notifications, which were cut for time |
+| Alerts when a goal is at risk | **Built (5 Nov), in the app.** A goal is flagged when the money usually left over (last 3 months) cannot cover it and the goals due before it, with how long it would really take. Goals now store a deadline month, so the months left count down |
+| Payment status per month, reminders before due dates | **Partly built (5 Nov).** Bills can have a next due date; the dashboard lists bills overdue or due within 7 days, and "Paid" records the day and moves the date on by the bill's frequency. Reminders are in the app only: push notifications were cut for time |
 
 ### D11. Administrator
 
@@ -323,9 +323,9 @@ increments.
 | R17 | Obligations with frequency (3.4.5) | Built | `commitments.py`, `commitments_screen.dart` | `tests/test_commitments.py` |
 | R18 | Debts with a payoff timeline (3.4.5) | Built, extended | `commitments.simulate_debts` | `tests/test_commitments.py` |
 | R19 | Goals with the monthly amount needed (3.4.5) | Built | `commitments.evaluate` | `tests/test_commitments.py` |
-| R20 | Automatic goal progress and at-risk alerts (3.4.5) | Partly built (D10) | `_complete_goals` | `tests/test_store.py` |
-| R21 | Obligation payment status and reminders (3.4.5) | Not built (D10) | — | — |
-| R22 | Lifestyle tracking over time (3.4.6) | Partly built | Month-by-month state timeline, spending by month, debt share of income in reasons | `tests/test_store.py` |
+| R20 | Automatic goal progress and at-risk alerts (3.4.5) | Partly built (D10): at-risk alerts built; progress entered by the user | `_complete_goals`, `_goals_at_risk` | `tests/test_store.py` |
+| R21 | Obligation payment status and reminders (3.4.5) | Partly built (D10): due dates, paid status, in-app "Coming up"; no push | `commitments.due_status`, `/me/commitments/paid`, dashboard | `tests/test_commitments.py`, `tests/test_store.py` |
+| R22 | Lifestyle tracking over time (3.4.6) | Built | Month-by-month state timeline; "Your lifestyle" card: rent, loans and saving against stated rules of thumb, food, transport, money sent and betting as shares of income | `tests/test_store.py` |
 | R23 | Dashboard (3.4.3) | Built | `/me/overview`, `dashboard_screen.dart` | — |
 | R24 | Profile and household settings (3.4.3) | Built; notification settings not built | `/me/profile`, `profile_screen.dart` | `tests/test_store.py` |
 | R25 | Admin: monitor performance (3.4.2) | Built | `/admin/overview`, `admin_screen.dart` | `tests/test_store.py` |
@@ -340,10 +340,10 @@ increments.
 
 Counts, for the report's summary table: 33 requirements, of which:
 
-- **Built:** 16 (including R18, built and extended).
+- **Built:** 17 (including R18, built and extended).
 - **Changed:** 9.
 - **Partly built:** 4.
-- **Not built:** 2.
+- **Not built:** 1.
 - **Planned:** 2.
 
 R15 (labels changed) carries a note in its status.

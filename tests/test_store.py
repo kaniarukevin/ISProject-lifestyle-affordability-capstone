@@ -919,3 +919,51 @@ def test_a_costly_month_ahead_gets_a_note(client, monkeypatch):
     jan = o["outlook"][2]
     assert (jan["year"], jan["month"]) == (2027, 1) and jan["school_fees"] >= 20000 and jan["total"] > 30000
     assert any(n.startswith("January is expected to cost") and "school fees" in n for n in o["notes"])
+
+
+def test_paying_a_bill_moves_its_due_date_and_the_dashboard_lists_what_is_due(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 5))
+    h = _student(client)
+    client.put("/me/commitments", headers=h, json={"obligations": [
+        {"name": "Rent", "amount": 4000, "category": "housing", "next_due": "2026-11-03"},
+        {"name": "Fees", "amount": 15000, "frequency": "termly", "category": "school_fees", "next_due": "2027-01-06"},
+        {"name": "Chama", "amount": 500, "next_due": "2026-11-09"}], "debts": [], "goals": []})
+    o = client.get("/me/overview", headers=h).get_json()
+    assert [(b["name"], b["status"], b["index"]) for b in o["bills_due"]] == [("Rent", "overdue", 0),
+                                                                          ("Chama", "due_soon", 2)]
+    r = client.post("/me/commitments/paid", headers=h, json={"index": 0}).get_json()
+    assert r["next_due"] == "2026-12-03"
+    saved = client.get("/me/commitments", headers=h).get_json()["obligations"][0]
+    assert saved["last_paid"] == "2026-11-05" and saved["next_due"] == "2026-12-03"
+    assert [b["name"] for b in client.get("/me/overview", headers=h).get_json()["bills_due"]] == ["Chama"]
+    assert client.post("/me/commitments/paid", headers=h, json={"index": 9}).status_code == 400
+
+
+def test_a_goal_that_cannot_be_reached_in_time_is_flagged(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 5))
+    h = _student(client)                                     # income 12,000, spends about 8,500: 3,500 to put aside
+    client.put("/me/commitments", headers=h, json={"obligations": [], "debts": [], "goals": [
+        {"name": "Trip", "target": 6000, "deadline": "2026-12"},              # 6,000 a month: too much
+        {"name": "Shoes", "target": 1000, "deadline": "2027-05"}]})
+    o = client.get("/me/overview", headers=h).get_json()
+    trip = o["goals_at_risk"][0]
+    assert trip["name"] == "Trip" and trip["monthly_needed_KES"] == 6000 and trip["realistic_months"] == 2
+    assert any(n.startswith("To reach Trip in 1 month(s)") for n in o["notes"])
+
+
+def test_lifestyle_shows_shares_of_income_with_simple_guides_and_betting(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 5))
+    h = _student(client)                                     # rent 4,000 of 12,000; nothing saved
+    with store.session() as s:
+        uid = s.scalar(store.select(store.User)).id
+        for m in (8, 9, 10):
+            s.add(store.Transaction(user_id=uid, day=store.date(2026, m, 20), amount=300, category="entertainment",
+                                    source="mpesa", label="Betting", payee="SportPesa"))
+        s.commit()
+    rows = {r["key"]: r for r in client.get("/me/overview", headers=h).get_json()["lifestyle"]}
+    assert rows["housing"]["share"] == pytest.approx(4000 / 12000, abs=0.001) and rows["housing"]["status"] == "high"
+    assert rows["savings"]["status"] == "low" and rows["savings"]["KES"] == 0
+    assert rows["betting"]["KES"] == 300 and "loan_repayment" not in rows

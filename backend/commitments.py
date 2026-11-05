@@ -10,6 +10,8 @@ Plain arithmetic, no model: every number can be checked by hand.
 from datetime import date
 
 FREQ_PER_YEAR = {"weekly": 52, "monthly": 12, "quarterly": 4, "termly": 3, "semester": 2, "yearly": 1}
+STEP_MONTHS = {"monthly": 1, "quarterly": 3, "termly": 4, "semester": 6, "yearly": 12}   # termly: Jan, May, Sep
+DUE_SOON_DAYS = 7
 OBLIGATION_CATEGORIES = ("housing", "school_fees", "other_commitments")
 STRATEGIES = ("avalanche", "snowball")
 MAX_MONTHS = 600
@@ -90,6 +92,40 @@ def _debt_plan(debts, extra, strategy):
             "total_interest_KES": round(sum(interest))}
 
 
+def _date(value, name):
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        raise CommitmentsInputError(f"{name} must look like 2026-12-05")
+
+
+def next_due_after(due, frequency):
+    """The following due date after a payment: a week, or 1, 3, 4, 6 or 12 months later (same day of the month,
+    or the month's last day when it is shorter)."""
+    import calendar
+    from datetime import timedelta
+    if frequency == "weekly":
+        return due + timedelta(days=7)
+    n = due.month - 1 + STEP_MONTHS[frequency]
+    y, m = due.year + n // 12, n % 12 + 1
+    return date(y, m, min(due.day, calendar.monthrange(y, m)[1]))
+
+
+def due_status(due, today):
+    """('overdue' | 'due_soon' | 'later', days until due; negative when late)."""
+    days = (due - today).days
+    return ("overdue" if days < 0 else "due_soon" if days <= DUE_SOON_DAYS else "later"), days
+
+
+def months_until(deadline, today):
+    """Months left to save for a goal due in month 'YYYY-MM' (at least 1: this month still counts)."""
+    try:
+        y, m = int(str(deadline)[:4]), int(str(deadline)[5:7])
+    except ValueError:
+        raise CommitmentsInputError("goal deadline must look like 2027-03")
+    return max(1, (y * 12 + m) - (today.year * 12 + today.month))
+
+
 def _validate_list(payload, key):
     items = payload.get(key) or []
     if not isinstance(items, list):
@@ -100,10 +136,11 @@ def _validate_list(payload, key):
     return items
 
 
-def evaluate(payload):
-    """Entry point for POST /commitments."""
+def evaluate(payload, today=None):
+    """Entry point for POST /commitments. today: for due dates and goal deadlines (tests pass a fixed date)."""
     if not isinstance(payload, dict):
         raise CommitmentsInputError("request body must be a JSON object")
+    today = today or date.today()
 
     obligations = []
     for o in _validate_list(payload, "obligations"):
@@ -112,9 +149,15 @@ def evaluate(payload):
             raise CommitmentsInputError(f"obligation category must be one of {', '.join(OBLIGATION_CATEGORIES)}")
         amount = _num(o.get("amount"), "obligation amount")
         freq = o.get("frequency", "monthly")
-        obligations.append({"name": str(o.get("name", cat)), "category": cat, "frequency": freq,
-                            "amount_KES": round(amount),
-                            "monthly_equivalent_KES": round(monthly_equivalent(amount, freq))})
+        row = {"name": str(o.get("name", cat)), "category": cat, "frequency": freq, "amount_KES": round(amount),
+               "monthly_equivalent_KES": round(monthly_equivalent(amount, freq))}
+        if o.get("next_due"):               # optional: the date the next payment is due
+            due = _date(o["next_due"], "next_due")
+            row["next_due"] = due.isoformat()
+            row["status"], row["due_in_days"] = due_status(due, today)
+        if o.get("last_paid"):
+            row["last_paid"] = str(o["last_paid"])
+        obligations.append(row)
 
     debts = []
     for d in _validate_list(payload, "debts"):
@@ -130,10 +173,12 @@ def evaluate(payload):
             continue
         target = _num(g.get("target"), "goal target")
         saved = _num(g.get("saved", 0), "goal saved")
-        months = _num(g.get("months_left"), "months_left", 1)
+        # A deadline month counts down by itself; months_left alone (goals saved before 5 Nov) does not.
+        months = months_until(g["deadline"], today) if g.get("deadline") else _num(g.get("months_left"), "months_left", 1)
         remaining = max(0.0, target - saved)
         goals.append({"name": str(g.get("name", "goal")), "remaining_KES": round(remaining),
-                      "months_left": int(months), "monthly_needed_KES": round(remaining / months)})
+                      "months_left": int(months), "monthly_needed_KES": round(remaining / months),
+                      **({"deadline": str(g["deadline"])[:7]} if g.get("deadline") else {})})
 
     extra = _num(payload.get("extra_per_month", 0), "extra_per_month")
     strategy = payload.get("strategy", "avalanche")

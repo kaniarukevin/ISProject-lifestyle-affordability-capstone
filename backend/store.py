@@ -7,6 +7,7 @@ dynamic budget can see last month. Connection string comes from DATABASE_URL (ne
 import calendar
 import copy
 import hashlib
+import math
 import os
 import statistics
 import threading
@@ -19,7 +20,7 @@ from pathlib import Path
 from flask import Blueprint, g, jsonify, request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import (JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint,
-                        create_engine, delete, inspect, select, text)
+                        create_engine, delete, func, inspect, select, text)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -795,7 +796,7 @@ def _commitment_changes(s, user_id, hist):
     c = s.get(Commitments, user_id)
     if not (c and c.data):
         return {}
-    fixed = cm.evaluate(c.data)["for_budget"]["fixed"]
+    fixed = cm.evaluate(c.data, _today())["for_budget"]["fixed"]
     out = {}
     for cat in ("housing", "loan_repayment"):
         if cat in fixed and float(fixed[cat]) > 0:
@@ -909,10 +910,10 @@ def household_picture(s, user_id):
         complete = [{"year": py, "month": pm, **{c: float(profile.estimates.get(c, 0)) for c in SPENDING_CATEGORIES},
                      "income_primary": round(income, 2)}]
         estimated = True
-    fixed, goal = {}, 0
+    fixed, goal, summary = {}, 0, None
     c = s.get(Commitments, user_id)
     if c and c.data:
-        summary = cm.evaluate(c.data)
+        summary = cm.evaluate(c.data, _today())
         fixed, goal = dict(summary["for_budget"]["fixed"]), summary["for_budget"]["goal_per_month"]
     scored = [dict(mo) for mo in (complete or months)[-12:]]
     for mo in scored:
@@ -928,7 +929,96 @@ def household_picture(s, user_id):
             # More than 10% unsorted: use the state model that needs no category split.
             "statement_safe": unsorted_share > 0.10,
             "one_offs": one_offs, "scored": scored, "fixed": fixed, "goal_per_month": goal, "today": today,
+            "commitments": summary,
             "savings_balance": float(profile.savings_balance or 0) if profile else 0.0}
+
+
+def _bills_due(pic):
+    """Bills with a due date that are late or due within a week, soonest first, with their place in the list
+    (for the Paid button)."""
+    rows = [dict(o, index=i) for i, o in enumerate((pic["commitments"] or {}).get("obligations", []))
+            if o.get("status") in ("overdue", "due_soon")]
+    return sorted(rows, key=lambda o: o["due_in_days"])
+
+
+def _put_aside(scored):
+    """What the household can usually put aside a month: income minus spending other than saving, averaged over
+    the last 3 months (one month alone swings too much)."""
+    recent = scored[-3:]
+    if not recent:
+        return 0.0
+    return statistics.mean(m["income_primary"] - sum(m[c] for c in SPENDING_CATEGORIES if c != "savings")
+                           for m in recent)
+
+
+def _goals_at_risk(pic):
+    """Goals the usual put-aside money cannot reach in time. Earlier deadlines are served first; a goal is at
+    risk when it and the goals before it need more a month than is usually left. 'realistic_months' is how long
+    it would take with what is left after the earlier goals."""
+    goals = sorted((pic["commitments"] or {}).get("goals", []), key=lambda g: g["months_left"])
+    room = max(0.0, _put_aside(pic["scored"]))
+    out, used = [], 0.0
+    for gl in goals:
+        need = gl["monthly_needed_KES"]
+        if need <= 0:
+            continue
+        if used + need > room:
+            free = room - used
+            out.append({"name": gl["name"], "monthly_needed_KES": need, "months_left": gl["months_left"],
+                        "put_aside_KES": round(room),
+                        "realistic_months": math.ceil(gl["remaining_KES"] / free) if free > 0 else None})
+        used += need
+    return out
+
+
+# Simple, stated rules of thumb, each one already used elsewhere in the app or common Kenyan budgeting advice.
+LIFESTYLE = [
+    ("housing", "Rent and housing", "high", 0.30, "Keeping rent to about 30% of income is a common rule of thumb."),
+    ("loan_repayment", "Loan repayments", "high", 0.30, "Above 30% of income, debt makes every month tight."),
+    ("savings", "Saving", "low", 0.10, "Your budget aims to save 10% of income."),
+    ("food_groceries", "Food and groceries", None, None, None),
+    ("transport", "Transport", None, None, None),
+    ("mobile_money_transfers", "Money sent to family and others", None, None, None),
+]
+
+
+def _lifestyle(pic, betting):
+    """How the last 3 months look as shares of income (proposal 3.4.6: rent relative to income and similar)."""
+    recent = pic["scored"][-3:]
+    income = statistics.mean(m["income_primary"] for m in recent) if recent else 0.0
+    if income <= 0:
+        return []
+    out = []
+    for cat, label, bad, line, guide in LIFESTYLE:
+        kes = statistics.mean(m[cat] for m in recent)
+        if kes <= 0 and bad != "low":
+            continue
+        share = kes / income
+        status = None
+        if bad == "high":
+            status = "high" if share > line else "ok"
+        elif bad == "low":
+            status = "low" if share < line else "ok"
+        out.append({"key": cat, "label": label, "KES": round(kes), "share": round(share, 3), "status": status,
+                    "guide": guide})
+    if betting > 0:
+        out.append({"key": "betting", "label": "Betting", "KES": round(betting), "share": round(betting / income, 3),
+                    "status": None, "guide": "Counted under Fun. Shown on its own because it adds up quietly."})
+    return out
+
+
+def _betting(s, user_id, scored):
+    """Average a month paid to betting companies (from statement labels) over the last 3 scored months."""
+    recent = scored[-3:]
+    if not recent:
+        return 0.0
+    first = date(recent[0]["year"], recent[0]["month"], 1)
+    last = recent[-1]
+    after = date(last["year"] + last["month"] // 12, last["month"] % 12 + 1, 1)
+    total = s.scalar(select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
+        Transaction.user_id == user_id, Transaction.label == "Betting", Transaction.one_off.is_(False),
+        Transaction.day >= first, Transaction.day < after)) or 0.0
+    return float(total) / len(recent)
 
 
 SCORE_EXPLAINED = ("Your score (0-100) is how closely your recent months match households that stay on top of "
@@ -952,6 +1042,7 @@ def overview():
         basis = complete or months
         outlook = outlook_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
         fc = outlook[0]
+        betting = _betting(s, g.user_id, pic["scored"])
     health = aff.evaluate({"household": {"household_size": profile.household_size,
                                          "num_dependants": profile.dependants},
                            "months": pic["scored"], "statement_safe": pic["statement_safe"]})
@@ -1013,6 +1104,15 @@ def overview():
         notes.append(f"{calendar.month_name[f['month']]} is expected to cost about KES {f['total']:,}, more than your "
                      f"income" + (f", including about KES {fees:,} in school fees" if fees else "") +
                      ". Setting a little aside now will help.")
+    due = _bills_due(pic)
+    at_risk = _goals_at_risk(pic)
+    if at_risk:
+        r = at_risk[0]
+        notes.append(f"To reach {r['name']} in {r['months_left']} month(s) you need KES {r['monthly_needed_KES']:,} a "
+                     f"month, but you usually have about KES {r['put_aside_KES']:,} to put aside"
+                     + (f", so it would take about {r['realistic_months']} months." if r["realistic_months"]
+                        else ", and nothing is left after your other goals.")
+                     + " Move the date or lower the target under Commitments.")
     record = health["track_record"]
     if record["fragile"] and health["score_before"] >= aff.engine()["cutoffs"]["affordable"]:
         notes.append(f"Your score looks at your recent months, which went well. But you spent more than came in during "
@@ -1035,7 +1135,8 @@ def overview():
                    forecast=fc, outlook=[{k: f[k] for k in ("year", "month", "total", "range", "ahead")
                                           if k in f} | {"school_fees": f["breakdown"].get("school_fees", 0)}
                                          for f in outlook],
-                   notes=notes, timeline=timeline, timeline_summary=summary, track_record=record)
+                   notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk,
+                   lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record)
 
 
 @bp.get("/me/budget-plan")
@@ -1246,7 +1347,7 @@ def put_commitments():
     import commitments as cm
     b = _body()
     try:
-        result = cm.evaluate(b)          # validate with the same rules as /commitments before saving
+        result = cm.evaluate(b, _today())          # validate with the same rules as /commitments before saving
     except cm.CommitmentsInputError as exc:
         raise InputError(str(exc))
     with session() as s:
@@ -1255,6 +1356,32 @@ def put_commitments():
         s.add(c)
         s.commit()
     return jsonify(saved=True, summary=result), 200
+
+
+@bp.post("/me/commitments/paid")
+@login_required
+def mark_paid():
+    """A bill was paid: record the day and move its due date to the next one (a week, month, term... later).
+    Body: {"index": position in the obligations list}. Paying early moves from the due date, not from today."""
+    import commitments as cm
+    b = _body()
+    with session() as s:
+        c = s.get(Commitments, g.user_id)
+        data = copy.deepcopy(c.data) if c and c.data else {}
+        items = data.get("obligations") or []
+        i = b.get("index")
+        if not isinstance(i, int) or not 0 <= i < len(items):
+            raise InputError("no such bill")
+        o = items[i]
+        if not o.get("next_due"):
+            raise InputError("add a due date to this bill first")
+        due = cm._date(o["next_due"], "next_due")
+        o["last_paid"], o["next_due"] = _today().isoformat(), cm.next_due_after(due, o.get("frequency", "monthly")).isoformat()
+        c.data = data
+        s.add(c)
+        s.commit()
+        summary = cm.evaluate(data, _today())
+    return jsonify(saved=True, next_due=o["next_due"], summary=summary), 200
 
 
 @bp.get("/me/budgets/<int:year>/<int:month>")
@@ -1382,7 +1509,7 @@ def _apply_choice(s, user_id, req, result, how):
     else:
         raise InputError("this check cannot be applied")
     try:
-        cm.evaluate(data)
+        cm.evaluate(data, _today())
     except cm.CommitmentsInputError as exc:
         raise InputError(str(exc))
     c.data = data
@@ -1879,7 +2006,7 @@ def payee_commitment():
         data["obligations"].append({"name": name or ("Rent" if cat == "housing" else "School fees"), "category": cat,
                                     "amount": round(amount), "frequency": freq})
         try:
-            cm.evaluate(data)
+            cm.evaluate(data, _today())
         except cm.CommitmentsInputError as exc:
             raise InputError(str(exc))
         c.data = data
