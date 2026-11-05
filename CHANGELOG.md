@@ -18,7 +18,7 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - ML forecast for app users (boosted tree with fee-month and December flags, personal 80% range, fee-month floor) (#83).
 - M-PESA statement upload: verified reading, M-PESA types, Kenyan business directory, nothing guessed, Who you pay tags and corrections, money-in tags, statement-safe state model, dashboard timeline (#84).
 - Admin dashboard: service health, model register, masked user list; admins named in `ADMIN_EMAILS` (#85).
-- Why this score (SHAP): exact Shapley values over six plain-language parts, on the dashboard and in "Can I afford it?"; 12-month track record note and a cautious Stretch rule for a fragile year.
+- Why this score (SHAP): exact Shapley values over six plain-language parts, on the dashboard and in "Can I afford it?"; 12-month track record note; in a fragile year, "Can I afford it?" lowers Affordable to Stretch only when the cost does not fit the year's average month with a 10% margin (otherwise it adds a caution), and the answer card says when the verdict was lowered.
 - Deviations from the proposal and requirements traceability (`docs/deviations.md`).
 - Privacy notice and recorded consent (Data Protection Act 2019): shown at sign-up, asked once of older accounts, required before reading statements; "Delete my account" in Your household.
 - Spending screen loads a month summary and fetches a month's records only when opened (`/me/transactions/summary`, `?month=`).

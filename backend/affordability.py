@@ -192,6 +192,7 @@ def _facts(f):
 
 
 FRAGILE_MONTHS = 3      # months in the last 12 with spending above income that make a year "fragile"
+YEAR_MARGIN = 0.10      # the safe margin: the budget's 10% saving rate
 
 
 def track_record(m):
@@ -201,8 +202,11 @@ def track_record(m):
     year of overspending followed by three calm months scored 100. This makes that history visible."""
     last = m.sort_values("month").tail(12)
     spent = last[[c for c in CATS if c != "savings"]].sum(axis=1)
-    over = int((spent > last[INCOME].sum(axis=1)).sum())
-    return {"months": int(len(last)), "overspent_months": over, "fragile": over >= FRAGILE_MONTHS}
+    income = last[INCOME].sum(axis=1)
+    over = int((spent > income).sum())
+    return {"months": int(len(last)), "overspent_months": over, "fragile": over >= FRAGILE_MONTHS,
+            # The average month over the whole year (calm and bad months together): income and what was left.
+            "year_income_KES": round(float(income.mean())), "year_left_KES": round(float((income - spent).mean()))}
 
 
 def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0, debt_label="Loan repayments",
@@ -243,12 +247,23 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
     record = track_record(m)
     record["lowered_verdict"] = False
     if track and record["fragile"] and verdict == "Affordable":
-        # A cautious rule, like the savings rule above: the score says yes on recent months, the year says careful.
-        verdict = "Stretch"
-        record["lowered_verdict"] = True
-        reasons.append(f"Your recent months make this look affordable, but you spent more than came in during "
-                       f"{record['overspent_months']} of the last {record['months']} months, so treat it as a stretch "
-                       "until the calmer months last.")
+        # The score judges recent months; a fragile year asks whether the cost still fits the AVERAGE month of the
+        # year (calm and bad months together) with the budget's 10% margin left. A first version lowered every
+        # Affordable answer in a fragile year, whatever the amount (found on the developer's data, 5 Nov: KES 2,500
+        # of family support, with KES 16,000 left a month, came back Stretch), so the amount now matters.
+        cost = sum(float(v) for v in (changes or {}).values()) - float(income_change or 0)
+        left_after = record["year_left_KES"] - cost
+        record["year_left_after_KES"] = round(left_after)
+        bad = f"you spent more than came in during {record['overspent_months']} of the last {record['months']} months"
+        if left_after < YEAR_MARGIN * record["year_income_KES"]:
+            verdict = "Stretch"
+            record["lowered_verdict"] = True
+            reasons.append(f"Your recent months make this look affordable, but {bad}. Across the whole year your "
+                           f"average month would leave only KES {max(0, round(left_after)):,} after this, less than "
+                           f"the 10% of income the budget keeps as a margin, so treat it as a stretch.")
+        else:
+            reasons.append(f"A caution: {bad}. Even so, across the whole year your average month would still leave "
+                           f"about KES {round(left_after):,} after this.")
     return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict, "track_record": record,
             "state_now": _state(bf, state_exact), "before": b, "after": a, "reasons": reasons,
             "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None,

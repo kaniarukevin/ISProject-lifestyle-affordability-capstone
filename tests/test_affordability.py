@@ -152,7 +152,7 @@ def test_a_fragile_year_is_seen_even_when_the_last_months_look_fine():
     steady, fragile = body(calm), {**body(calm), "months": [over] * 9 + [calm] * 3}
     assert aff.evaluate(fragile)["score_before"] == aff.evaluate(steady)["score_before"]   # the score cannot tell
     rec = aff.evaluate(fragile)["track_record"]
-    assert rec == {"months": 12, "overspent_months": 9, "fragile": True, "lowered_verdict": False}
+    assert (rec["months"], rec["overspent_months"], rec["fragile"], rec["lowered_verdict"]) == (12, 9, True, False)
     assert not aff.evaluate(steady)["track_record"]["fragile"]
 
 
@@ -172,3 +172,20 @@ def test_explain_request_shows_what_a_new_loan_moves():
     assert out["after"]["score"] < out["now"]["score"]
     assert sum(moved.values()) == pytest.approx(out["after"]["score"] - out["now"]["score"], abs=1.5)
     assert min(moved, key=moved.get) in ("latest_month", "recent_months", "debt")
+
+
+
+def test_a_small_cost_in_a_fragile_year_stays_affordable_when_the_average_month_has_room():
+    # Like the developer: a 30,000 allowance, 5 months over it, 7 calm months at about 14,000.
+    calm = {"food_groceries": 8000, "transport": 3000, "entertainment": 3000, "income_primary": 30000}
+    over = {"food_groceries": 20000, "transport": 6000, "entertainment": 6000, "income_primary": 30000}
+    months = [over, calm, calm, over, over, calm, over, over, calm, calm, calm, calm]
+    small = aff.evaluate({**body(calm), "months": months,
+                          "scenario": {"type": "monthly_change", "changes": {"mobile_money_transfers": 2500}}})
+    assert small["verdict"] == "Affordable" and not small["track_record"]["lowered_verdict"]
+    assert any(r.startswith("A caution: you spent more than came in during 5 of the last 12") for r in small["reasons"])
+    big = aff.evaluate({**body(calm), "months": months,
+                        "scenario": {"type": "monthly_change", "changes": {"housing": 12000}}})
+    assert big["verdict"] in ("Stretch", "Not affordable")
+    if big["verdict"] == "Stretch":
+        assert big["track_record"]["lowered_verdict"]
