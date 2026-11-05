@@ -267,7 +267,16 @@ class ResultScreen extends StatelessWidget {
                 Text(verdict, style: theme.textTheme.headlineMedium?.copyWith(color: color, fontWeight: FontWeight.bold)),
                 if (before != null && after != null) ...[
                   const SizedBox(height: 8),
-                  Text('Affordability score: $before → $after out of 100'),
+                  Text(before == after ? 'Affordability score: stays at $after out of 100'
+                      : 'Affordability score: $before → $after out of 100'),
+                  // The score looks at recent months; when the whole year lowered the verdict, say so right here
+                  // (found on real data, 5 Nov: "100 → 100" next to "Stretch" read like a mistake).
+                  if ((result['track_record'] as Map?)?['lowered_verdict'] == true)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text('Lowered from Affordable because of your track record over the year (see why below).',
+                          style: theme.textTheme.bodySmall?.copyWith(color: color), textAlign: TextAlign.center),
+                    ),
                   if (result['score_note'] != null)
                     Text(result['score_note'] as String, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
                   const SizedBox(height: 8),

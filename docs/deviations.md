@@ -247,8 +247,9 @@ Status key used below:
     as a calm year.
   - The synthetic labels have the same blind spot, so retraining cannot fix it (accuracy 0.728 → 0.735 with
     12-month features).
-  - The app now shows a 12-month track record next to the score. A fragile year (3 or more months spending above
-    income) turns "Affordable" into "Stretch".
+  - The app now shows a 12-month track record next to the score. In a fragile year (3 or more months spending
+    above income), "Can I afford it?" lowers Affordable to Stretch when the cost does not fit the year's average
+    month with a 10% margin left; otherwise it stays Affordable with a caution.
 
 ### D14. Platforms
 
