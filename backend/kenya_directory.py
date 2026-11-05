@@ -101,7 +101,7 @@ WORDS = [
                       r"pub", r"bar", r"nyama choma", r"food house", r"fast ?foods?", r"hotels?", r"kitchen",
                       r"pizza", r"chips", r"burgers?", r"wines?", r"spirits", r"liquor", r"club")),
     ("Fuel", _w(r"petrol(?:eum)?", r"fuel", r"service station", r"filling station", r"petrol station")),
-    ("Parking", _w(r"parking", r"mall", r"car park")),
+    ("Parking", _w(r"parking", r"mall", r"car park", r"EVOPAY")),
     ("Transport", _w(r"travel(?:l?ers)?", r"shuttles?", r"bus service", r"coach", r"auto ?spares", r"garage",
                      r"car wash", r"tyres?", r"motors")),
     ("Health", _w(r"pharmac(?:y|ies)", r"chemists?", r"pharma", r"hospitals?", r"clinics?", r"medical", r"health",
