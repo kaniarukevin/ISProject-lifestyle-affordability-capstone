@@ -17,16 +17,24 @@ const Map<String, String> obligationFrequencies = {
 };
 
 class Obligation {
-  Obligation({required this.name, required this.amount, this.frequency = 'monthly', this.category = 'other_commitments'});
+  Obligation({required this.name, required this.amount, this.frequency = 'monthly', this.category = 'other_commitments',
+      this.nextDue, this.lastPaid});
   String name, frequency, category;
   double amount;
 
-  Map<String, dynamic> toJson() => {'name': name, 'amount': amount, 'frequency': frequency, 'category': category};
+  /// Optional: when the next payment is due ('2026-12-05'), and when it was last marked paid. Marking it paid
+  /// moves nextDue on by the frequency (on the server).
+  String? nextDue, lastPaid;
+
+  Map<String, dynamic> toJson() => {'name': name, 'amount': amount, 'frequency': frequency, 'category': category,
+        if (nextDue != null) 'next_due': nextDue, if (lastPaid != null) 'last_paid': lastPaid};
   factory Obligation.fromJson(Map<String, dynamic> j) => Obligation(
       name: j['name'] as String,
       amount: (j['amount'] as num).toDouble(),
       frequency: (j['frequency'] ?? 'monthly') as String,
-      category: (j['category'] ?? 'other_commitments') as String);
+      category: (j['category'] ?? 'other_commitments') as String,
+      nextDue: j['next_due'] as String?,
+      lastPaid: j['last_paid'] as String?);
 }
 
 class Debt {
@@ -45,10 +53,29 @@ class Debt {
 
 class Goal {
   Goal({required this.name, required this.target, this.saved = 0, required this.monthsLeft, this.done = false,
-      this.doneOn});
+      this.doneOn, this.deadline});
   String name;
   double target, saved;
   int monthsLeft;
+
+  /// The month the money is needed ('2027-03'). Months left are counted from it, so the goal counts down by
+  /// itself (monthsLeft alone stayed the same for ever).
+  String? deadline;
+
+  /// 'YYYY-MM', [months] from now (this month counts as 0).
+  static String deadlineIn(int months, [DateTime? from]) {
+    final now = from ?? DateTime.now();
+    final total = now.year * 12 + now.month - 1 + months;
+    return '${total ~/ 12}-${(total % 12 + 1).toString().padLeft(2, '0')}';
+  }
+
+  /// Months from now until [deadline] (at least 1).
+  static int monthsUntil(String deadline, [DateTime? from]) {
+    final now = from ?? DateTime.now();
+    final y = int.parse(deadline.substring(0, 4)), m = int.parse(deadline.substring(5, 7));
+    final n = (y * 12 + m) - (now.year * 12 + now.month);
+    return n < 1 ? 1 : n;
+  }
 
   /// Reached: the server ticks a goal off when an imported purchase matches it. Kept through every save
   /// (before 5 Nov the app dropped these two fields, so saving Commitments brought a reached goal back).
@@ -56,14 +83,15 @@ class Goal {
   String? doneOn;
 
   Map<String, dynamic> toJson() => {'name': name, 'target': target, 'saved': saved, 'months_left': monthsLeft,
-        if (done) 'done': true, if (doneOn != null) 'done_on': doneOn};
+        if (deadline != null) 'deadline': deadline, if (done) 'done': true, if (doneOn != null) 'done_on': doneOn};
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
       name: j['name'] as String,
       target: (j['target'] as num).toDouble(),
       saved: ((j['saved'] ?? 0) as num).toDouble(),
       monthsLeft: (j['months_left'] as num).toInt(),
       done: j['done'] == true,
-      doneOn: j['done_on'] as String?);
+      doneOn: j['done_on'] as String?,
+      deadline: j['deadline'] as String?);
 }
 
 class Commitments {

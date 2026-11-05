@@ -213,6 +213,10 @@ class Api {
   Future<Map<String, dynamic>> getCommitments() async => (await get('/me/commitments')) as Map<String, dynamic>;
 
   /// Saves and returns the engine's summary: monthly figures, debt plans, goal amounts, warnings.
+  /// A bill was paid: the server records it and moves its due date on. Returns the new summary.
+  Future<Map<String, dynamic>> markPaid(int index) async =>
+      ((await post('/me/commitments/paid', {'index': index})) as Map<String, dynamic>)['summary'] as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> putCommitments(Map<String, dynamic> c) async =>
       ((await put('/me/commitments', c)) as Map<String, dynamic>)['summary'] as Map<String, dynamic>;
 }

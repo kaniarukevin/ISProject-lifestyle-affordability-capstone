@@ -40,6 +40,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  Future<void> _paid(int index) async {
+    try {
+      await context.read<AppState>().api.markPaid(index);
+      await _load();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -93,6 +102,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(n as String, style: theme.textTheme.bodySmall),
               )),
+          if (((d['bills_due'] as List?) ?? []).isNotEmpty)
+            _BillsDue(bills: (d['bills_due'] as List).cast<Map<String, dynamic>>(), onPaid: _paid),
           if (((d['timeline'] as List?) ?? []).length >= 2)
             _Timeline(months: (d['timeline'] as List).cast<Map<String, dynamic>>(),
                 summary: d['timeline_summary'] as String?),
@@ -171,6 +182,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ]),
             ),
           ),
+          if (((d['lifestyle'] as List?) ?? []).isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _Lifestyle(rows: (d['lifestyle'] as List).cast<Map<String, dynamic>>()),
+          ],
           if (history.length > 1) ...[
             const SizedBox(height: 12),
             Card(
@@ -372,6 +387,83 @@ class _Outlook extends StatelessWidget {
           if (income > 0)
             Text('Your income: ${kes(income)} a month. Further ahead is less certain, so the ranges get wider.',
                 style: theme.textTheme.bodySmall),
+        ]),
+      ),
+    );
+  }
+}
+
+
+/// Bills that are late or due within a week (only bills given a due date under Commitments).
+class _BillsDue extends StatelessWidget {
+  const _BillsDue({required this.bills, required this.onPaid});
+  final List<Map<String, dynamic>> bills;
+  final Future<void> Function(int index) onPaid;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.only(top: 12),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Coming up', style: theme.textTheme.titleSmall),
+          ...bills.map((b) {
+            final late = b['status'] == 'overdue';
+            final days = b['due_in_days'] as int;
+            return Row(children: [
+              Icon(late ? Icons.warning_amber_rounded : Icons.schedule,
+                  size: 20, color: late ? theme.colorScheme.error : theme.colorScheme.primary),
+              const SizedBox(width: 8),
+              Expanded(child: Text('${b['name']} · ${kes(b['amount_KES'] as num)}\n'
+                  '${late ? 'Overdue by ${-days} day(s)' : days == 0 ? 'Due today' : 'Due in $days day(s)'}',
+                  style: late ? TextStyle(color: theme.colorScheme.error) : null)),
+              TextButton(onPressed: () => onPaid(b['index'] as int), child: const Text('Paid')),
+            ]);
+          }),
+        ]),
+      ),
+    );
+  }
+}
+
+/// The last 3 months as shares of income, with a simple guide where one exists (proposal 3.4.6).
+class _Lifestyle extends StatelessWidget {
+  const _Lifestyle({required this.rows});
+  final List<Map<String, dynamic>> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Your lifestyle', style: theme.textTheme.titleSmall),
+          Text('Last 3 months, as a share of your income.', style: theme.textTheme.bodySmall),
+          const SizedBox(height: 8),
+          ...rows.map((r) {
+            final status = r['status'] as String?;
+            final warn = status == 'high' || status == 'low';
+            final color = warn ? theme.colorScheme.error : status == 'ok' ? Colors.green.shade700 : null;
+            final pct = ((r['share'] as num) * 100).round();
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  if (status != null)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(warn ? Icons.error_outline : Icons.check_circle_outline, size: 18, color: color),
+                    ),
+                  Expanded(child: Text(r['label'] as String)),
+                  Text('$pct% · ${kes(r['KES'] as num)}', style: TextStyle(fontWeight: FontWeight.w600, color: color)),
+                ]),
+                if (r['guide'] != null) Text(r['guide'] as String, style: theme.textTheme.bodySmall),
+              ]),
+            );
+          }),
         ]),
       ),
     );

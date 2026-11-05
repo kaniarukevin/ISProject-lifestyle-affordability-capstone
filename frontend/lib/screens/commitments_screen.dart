@@ -32,6 +32,10 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
     try {
       final data = await api.getCommitments();
       setState(() => c = Commitments.fromJson(data));
+      // Goals saved before deadlines existed get one now, so they start counting down.
+      for (final g in c!.goals) {
+        if (g.deadline == null && !g.done) g.deadline = Goal.deadlineIn(g.monthsLeft);
+      }
       if (c!.obligations.isNotEmpty || c!.debts.isNotEmpty || c!.goals.isNotEmpty) await _save(quiet: true);
     } on ApiException catch (e) {
       setState(() {
@@ -76,6 +80,26 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
     if (item == null) return;
     setState(() => replace(item));
     await _save();
+  }
+
+  Future<void> _markPaid(int index) async {
+    setState(() => busy = true);
+    try {
+      final s = await api.markPaid(index);
+      final data = await api.getCommitments();
+      if (!mounted) return;
+      setState(() {
+        summary = s;
+        c = Commitments.fromJson(data);
+      });
+      final next = c!.obligations[index].nextDue;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Marked paid.${next != null ? ' Next due ${_day(next)}.' : ''}')));
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   void _remove(VoidCallback removal) {
@@ -134,13 +158,30 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
           title: 'Bills and obligations',
           empty: 'Rent, school fees, chama, insurance…',
           onAdd: () => _add('obligation'),
-          children: c!.obligations.asMap().entries.map((e) => _Row(
-                title: e.value.name,
-                subtitle: '${kes(e.value.amount)} ${obligationFrequencies[e.value.frequency]} · '
-                    '${obligationCategories[e.value.category]}',
-                onDelete: () => _remove(() => c!.obligations.removeAt(e.key)),
-                onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
-              )).toList(),
+          children: c!.obligations.asMap().entries.map((e) {
+            final row = (s?['obligations'] as List?)?.elementAtOrNull(e.key) as Map?;
+            final status = row?['status'] as String?;
+            final days = row?['due_in_days'] as int?;
+            final dueText = e.value.nextDue == null
+                ? ''
+                : status == 'overdue'
+                    ? ' · overdue since ${_day(e.value.nextDue!)}'
+                    : status == 'due_soon'
+                        ? ' · due ${days == 0 ? 'today' : 'in $days day(s)'}'
+                        : ' · next due ${_day(e.value.nextDue!)}';
+            return _Row(
+              title: e.value.name,
+              subtitle: '${kes(e.value.amount)} ${obligationFrequencies[e.value.frequency]} · '
+                  '${obligationCategories[e.value.category]}$dueText',
+              subtitleColor: status == 'overdue' ? theme.colorScheme.error : null,
+              onDelete: () => _remove(() => c!.obligations.removeAt(e.key)),
+              onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
+              extra: e.value.nextDue == null
+                  ? null
+                  : IconButton(tooltip: 'Mark paid', icon: const Icon(Icons.check_circle_outline),
+                      onPressed: busy ? null : () => _markPaid(e.key)),
+            );
+          }).toList(),
         ),
         _Section(
           title: 'Debts',
@@ -227,19 +268,33 @@ class _Section extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.title, required this.subtitle, required this.onDelete, this.onTap});
+  const _Row({required this.title, required this.subtitle, required this.onDelete, this.onTap, this.extra,
+      this.subtitleColor});
   final String title, subtitle;
   final VoidCallback onDelete;
   final VoidCallback? onTap;      // change it
+  final Widget? extra;            // e.g. "Mark paid"
+  final Color? subtitleColor;
 
   @override
   Widget build(BuildContext context) => ListTile(
         contentPadding: EdgeInsets.zero,
         onTap: onTap,
         title: Text(title),
-        subtitle: Text(subtitle),
-        trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: onDelete),
+        subtitle: Text(subtitle, style: subtitleColor == null ? null : TextStyle(color: subtitleColor)),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          ?extra,
+          IconButton(icon: const Icon(Icons.delete_outline), onPressed: onDelete),
+        ]),
       );
+}
+
+const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// '2026-12-05' -> '5 Dec 2026'.
+String _day(String iso) {
+  final d = DateTime.parse(iso);
+  return '${d.day} ${_monthShort[d.month - 1]} ${d.year}';
 }
 
 /// One dialog for all three kinds, so the fields stay consistent.
@@ -258,6 +313,7 @@ class _AddDialogState extends State<_AddDialog> {
   final b = TextEditingController(); // rate / saved
   final d = TextEditingController(); // monthly payment / months left
   String frequency = 'monthly', category = 'housing';
+  DateTime? due;            // a bill's next due date (optional)
   String? error;
 
   String _txt(double v) => v == 0 ? '' : (v == v.roundToDouble() ? v.round().toString() : v.toString());
@@ -271,6 +327,7 @@ class _AddDialogState extends State<_AddDialog> {
       a.text = _txt(i.amount);
       frequency = i.frequency;
       category = i.category;
+      due = i.nextDue == null ? null : DateTime.parse(i.nextDue!);
     } else if (i is Debt) {
       name.text = i.name;
       a.text = _txt(i.balance);
@@ -280,7 +337,7 @@ class _AddDialogState extends State<_AddDialog> {
       name.text = i.name;
       a.text = _txt(i.target);
       b.text = _txt(i.saved);
-      d.text = '${i.monthsLeft}';
+      d.text = '${i.deadline != null ? Goal.monthsUntil(i.deadline!) : i.monthsLeft}';
     }
   }
 
@@ -294,15 +351,29 @@ class _AddDialogState extends State<_AddDialog> {
 
   double? _n(TextEditingController t) => double.tryParse(t.text.replaceAll(',', '').trim());
 
+  String _iso(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  Future<void> _pickDue() async {
+    final now = DateTime.now();
+    final d = await showDatePicker(context: context, initialDate: due ?? now,
+        firstDate: DateTime(now.year - 1), lastDate: DateTime(now.year + 2));
+    if (d != null) setState(() => due = d);
+  }
+
   void _submit() {
     final n = name.text.trim();
     Object? item;
     if (widget.kind == 'obligation' && n.isNotEmpty && (_n(a) ?? 0) > 0) {
-      item = Obligation(name: n, amount: _n(a)!, frequency: frequency, category: category);
+      final old = widget.initial is Obligation ? widget.initial as Obligation : null;
+      item = Obligation(name: n, amount: _n(a)!, frequency: frequency, category: category,
+          nextDue: due == null ? null : _iso(due!),
+          lastPaid: old?.lastPaid);
     } else if (widget.kind == 'debt' && n.isNotEmpty && (_n(a) ?? 0) > 0 && (_n(d) ?? 0) > 0) {
       item = Debt(name: n, balance: _n(a)!, annualRate: _n(b) ?? 0, monthlyPayment: _n(d)!);
     } else if (widget.kind == 'goal' && n.isNotEmpty && (_n(a) ?? 0) > 0 && (_n(d) ?? 0) >= 1) {
-      item = Goal(name: n, target: _n(a)!, saved: _n(b) ?? 0, monthsLeft: _n(d)!.round());
+      final months = _n(d)!.round();
+      item = Goal(name: n, target: _n(a)!, saved: _n(b) ?? 0, monthsLeft: months, deadline: Goal.deadlineIn(months));
     }
     if (item == null) {
       setState(() => error = 'Fill in the name and the amounts.');
@@ -340,6 +411,17 @@ class _AddDialogState extends State<_AddDialog> {
               decoration: const InputDecoration(labelText: 'Type'),
               items: obligationCategories.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
               onChanged: (v) => setState(() => category = v!),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.event),
+              title: Text(due == null ? 'Next due date (optional)' : 'Next due ${_day(_iso(due!))}'),
+              subtitle: const Text('Lets the app remind you when it is due.'),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                if (due != null) IconButton(tooltip: 'No due date', icon: const Icon(Icons.close),
+                    onPressed: () => setState(() => due = null)),
+                TextButton(onPressed: _pickDue, child: Text(due == null ? 'Set' : 'Change')),
+              ]),
             ),
           ],
           if (k == 'debt') ...[

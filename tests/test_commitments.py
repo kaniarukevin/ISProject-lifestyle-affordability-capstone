@@ -70,3 +70,40 @@ def test_output_feeds_the_budget():
 def test_bad_input_is_rejected(bad):
     with pytest.raises(cm.CommitmentsInputError):
         cm.evaluate(bad)
+
+
+# ---------- due dates and goal deadlines (5 Nov) ----------
+from datetime import date  # noqa: E402
+
+
+def test_the_next_due_date_follows_the_frequency():
+    assert cm.next_due_after(date(2026, 11, 5), "monthly") == date(2026, 12, 5)
+    assert cm.next_due_after(date(2026, 1, 31), "monthly") == date(2026, 2, 28)     # a short month
+    assert cm.next_due_after(date(2026, 1, 6), "termly") == date(2026, 5, 6)        # Kenyan terms: Jan, May, Sep
+    assert cm.next_due_after(date(2026, 11, 5), "weekly") == date(2026, 11, 12)
+    assert cm.next_due_after(date(2026, 11, 5), "yearly") == date(2027, 11, 5)
+
+
+def test_bills_say_when_they_are_due():
+    today = date(2026, 11, 5)
+    r = cm.evaluate({"obligations": [
+        {"name": "Rent", "amount": 12000, "category": "housing", "next_due": "2026-11-03"},
+        {"name": "Chama", "amount": 2000, "next_due": "2026-11-10"},
+        {"name": "Fees", "amount": 15000, "frequency": "termly", "category": "school_fees", "next_due": "2027-01-06"},
+        {"name": "Insurance", "amount": 1000}]}, today)
+    rows = {o["name"]: o for o in r["obligations"]}
+    assert (rows["Rent"]["status"], rows["Rent"]["due_in_days"]) == ("overdue", -2)
+    assert (rows["Chama"]["status"], rows["Fees"]["status"]) == ("due_soon", "later")
+    assert "status" not in rows["Insurance"]
+    with pytest.raises(cm.CommitmentsInputError):
+        cm.evaluate({"obligations": [{"name": "Rent", "amount": 1, "next_due": "5th"}]}, today)
+
+
+def test_a_goal_deadline_counts_down_but_months_left_alone_does_not():
+    goal = {"name": "Phone", "target": 30000, "deadline": "2027-03"}
+    assert cm.evaluate({"goals": [goal]}, date(2026, 11, 5))["goals"][0]["months_left"] == 4
+    later = cm.evaluate({"goals": [goal]}, date(2027, 1, 20))["goals"][0]
+    assert later["months_left"] == 2 and later["monthly_needed_KES"] == 15000
+    assert cm.evaluate({"goals": [goal]}, date(2027, 5, 1))["goals"][0]["months_left"] == 1      # past: this month
+    old = {"name": "Trip", "target": 6000, "months_left": 3}
+    assert cm.evaluate({"goals": [old]}, date(2027, 5, 1))["goals"][0]["months_left"] == 3
