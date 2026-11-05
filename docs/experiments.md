@@ -365,3 +365,27 @@ Score review: why the developer's statement scored Stable 100 in a year with 5 C
 - For the developer's own case a third cause is coverage: the M-PESA statement does not see card spending from the bank account, so "left over" can be money spent elsewhere. The "mix" tag (income = what arrived on M-PESA) is the fix already in the app.
 
 Decision: keep the score as "how your recent months look" and make the year visible next to it. Track record = months in the last 12 where spending before savings was more than the money that came in; three or more is a fragile year. The dashboard adds a note when the score is 56 or more and the year was fragile. "Can I afford it?" turns Affordable into Stretch for a fragile year and says why (a stated, cautious rule, like the savings safety rule; the what-to-cut plan is not shown for this case, because cutting now cannot change the past months). Not validated against labels, because the labels do not contain history: to be checked with volunteers.
+
+## 2026-11-05: Forecast one to three months ahead
+
+Script: scripts/forecast_horizons.py. Same households and split as the 4 Nov forecast entries (choose on 48 validation households from train, score the 60 test households once).
+
+For month 2 and 3 ahead the history ends 2 or 3 months before the target month. Options: A, reuse the deployed one-month model (its inputs are summaries of the past plus the target month's fee and December flags); B, one model per horizon trained on examples with that gap. Rule fixed before looking: keep A unless B is more than 2% better on validation.
+
+| Months ahead | Validation: median / A / B (MAE, KES) | Choice | Range widening |
+|---|---|---|---|
+| 1 | 12,254 / 10,912 / 10,912 | A (deployed) | x1.30 |
+| 2 | 13,078 / 11,891 / 12,046 | A | x1.35 |
+| 3 | 13,551 / 12,819 / 12,789 | A (B only 0.2% better) | x1.45 |
+
+Test (60 held-out households), the app's exact models:
+
+| Months ahead | Median MAE | Model MAE | Better by | Inside the 80% range | Average range width |
+|---|---|---|---|---|---|
+| 1 | 10,719 | 9,967 | 7.0% | 83% | 31,271 |
+| 2 | 11,738 | 10,354 | 11.8% | 83% | 32,554 |
+| 3 | 11,791 | 11,000 | 6.7% | 85% | 35,915 |
+
+The 1-month row reproduces the deployed numbers exactly, so the script matches the app. A first run of the script had the choice rule reversed (it picked B at 2 months although A was better); caught on reading the output and corrected before saving.
+
+Decision: one model for all three months, with the range widened per horizon (stored as `horizon_widen` in user_forecast.joblib). The dashboard shows this month and the next two, and notes a coming month expected to cost more than income (for example a January with school fees). Months beyond 3 from the last records use the 3-month range. Limits: synthetic households with 12 months each; fees fall in fixed months (January, May, September) in the data.

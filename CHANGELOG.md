@@ -22,6 +22,7 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Deviations from the proposal and requirements traceability (`docs/deviations.md`).
 - Privacy notice and recorded consent (Data Protection Act 2019): shown at sign-up, asked once of older accounts, required before reading statements; "Delete my account" in Your household.
 - Spending screen loads a month summary and fetches a month's records only when opened (`/me/transactions/summary`, `?month=`).
+- Three-month outlook on the dashboard (this month and the next two, with ranges that widen further ahead) and a note when a coming month should cost more than income; same model, checked at each horizon (`scripts/forecast_horizons.py`).
 - Change password (current password required; other devices are logged out), a show/hide eye on every password box, and editing of incomes, bills, debts, goals and typed-in spending (statement payments: category and one-off only).
 - Production safety: the hosted server refuses to start without a real `SECRET_KEY`; every error is plain JSON; uploads over 11 MB are refused before reading.
 

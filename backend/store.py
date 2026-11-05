@@ -743,9 +743,11 @@ def user_forecast_model():
     return _USER_FORECAST["m"]
 
 
-def _model_total(hist, totals, profile, target_month):
-    """Next month's total from the model: a multiple of the household's median, using only what is known
-    before the month starts (past months, income, household, and which calendar month it is)."""
+def _model_total(hist, totals, profile, target_month, ahead=1):
+    """A month's total from the model: a multiple of the household's median, using only what is known before the
+    month starts (past months, income, household, and which calendar month it is). ahead: 1 = the month after
+    the last recorded one, 2 or 3 = further out. The same model serves all three (it beat separate per-horizon
+    models on validation); the range is widened more further out (docs/experiments.md, 5 Nov)."""
     eng = user_forecast_model()
     median = statistics.median(totals)
     if eng is None or profile is None or median <= 0:
@@ -763,7 +765,8 @@ def _model_total(hist, totals, profile, target_month):
          "fees_median": statistics.median([m["school_fees"] for m in hist])}
     import pandas as pd
     row = pd.DataFrame([x])[eng["features"]]
-    mid = median * max(float(eng["model"].predict(row)[0]), 0.0)
+    models = eng.get("horizons", {}).get(ahead) or {"model": eng["model"], "low": eng.get("low"), "high": eng.get("high")}
+    mid = median * max(float(models["model"].predict(row)[0]), 0.0)
     if x["fee_month"] and x["fees_seen"] > 0:
         # Safety floor: in a fee month, a fee-paying household spends at least its usual non-fee spending plus
         # last term's fees. Neutral on accuracy (validation 10,923 vs 10,912; test 9,936 vs 9,967) and active in
@@ -772,8 +775,8 @@ def _model_total(hist, totals, profile, target_month):
         mid = max(mid, statistics.median([tt - m["school_fees"] for tt, m in zip(totals, hist)]) + x["fees_seen"])
     x["range"] = None
     if "low" in eng:            # 80% range: two quantile trees, widened on validation (docs/experiments.md, 4 Nov)
-        lo, hi = median * float(eng["low"].predict(row)[0]), median * float(eng["high"].predict(row)[0])
-        w = eng.get("widen", 1.0)
+        lo, hi = median * float(models["low"].predict(row)[0]), median * float(models["high"].predict(row)[0])
+        w = eng.get("horizon_widen", {}).get(ahead, eng.get("widen", 1.0))
         down, up = max(0.0, mid - lo), max(0.0, hi - mid)
         if "own_z" in eng and len(hist) >= eng.get("personal_range_min_months", 3):
             # Personal range: half the model's spread, half this household's own month-to-month spread, so a
@@ -802,7 +805,7 @@ def _commitment_changes(s, user_id, hist):
     return out
 
 
-def forecast_for_user(s, user_id, months, target_year, target_month):
+def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1):
     """The user's own forecast.
     Total: a boosted tree trained on the KIHBS-informed households (history + calendar month), which beat the
     median of monthly totals on held-out households at every history length (test MAE KES 9,794 vs 10,719,
@@ -821,7 +824,7 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
     shares = {c: sum(_known(m).get(c, 0.0) / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in parts}
     norm = sum(shares.values()) or 1.0
     shares = {c: v / norm for c, v in shares.items()}
-    model = _model_total(hist, totals, s.get(Profile, user_id), target_month)
+    model = _model_total(hist, totals, s.get(Profile, user_id), target_month, ahead)
     if model:
         usual_total, x = model
         fees = x["fees_seen"] if x["fee_month"] else x["fees_median"]
@@ -850,7 +853,7 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
         split, method = usual, ("forecast_model" if base == "model" else "trailing_median")
     breakdown = {c: round(v) for c, v in split.items() if round(v) > 0}
     total = sum(breakdown.values())
-    out = {"year": target_year, "month": target_month, "total": total,
+    out = {"year": target_year, "month": target_month, "total": total, "ahead": ahead,
            "breakdown": breakdown, "method": method, "months_used": len(hist)}
     if rng:
         # The same blend applied to the ends of the range (a budget makes the forecast surer, so the range narrows).
@@ -860,6 +863,24 @@ def forecast_for_user(s, user_id, months, target_year, target_month):
     if changes:
         out["note"] = "Includes your new " + " and ".join(
             {"housing": "rent", "loan_repayment": "loan repayments"}[c] for c in changes) + " from Commitments."
+    return out
+
+
+OUTLOOK_MONTHS = 3          # the proposal's "one to three months" (3.2.3)
+
+
+def outlook_for_user(s, user_id, months, year, month):
+    """This month and the next two: [forecast_for_user(...) for each], built from the same recorded history.
+    Held-out households, error vs the median: 1 month ahead 9,967 vs 10,719; 2 months 10,354 vs 11,738;
+    3 months 11,000 vs 11,791; 80% ranges hold 83-85% of months (scripts/forecast_horizons.py)."""
+    out = []
+    last = months[-1]["year"] * 12 + months[-1]["month"] if months else year * 12 + month - 1
+    for k in range(OUTLOOK_MONTHS):
+        y, m = year + (month - 1 + k) // 12, (month - 1 + k) % 12 + 1
+        # How far past the last recorded month (old records make "this month" further ahead); beyond 3 the
+        # 3-month range is used, the widest that was checked.
+        ahead = min(max(1, y * 12 + m - last), OUTLOOK_MONTHS)
+        out.append(forecast_for_user(s, user_id, months, y, m, ahead=ahead))
     return out
 
 
@@ -929,7 +950,8 @@ def overview():
             return jsonify(has_data=False, income_monthly=round(income), savings_balance=round(pic["savings_balance"]))
         complete, current = pic["complete"], pic["current"]
         basis = complete or months
-        fc = forecast_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
+        outlook = outlook_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
+        fc = outlook[0]
     health = aff.evaluate({"household": {"household_size": profile.household_size,
                                          "num_dependants": profile.dependants},
                            "months": pic["scored"], "statement_safe": pic["statement_safe"]})
@@ -984,6 +1006,13 @@ def overview():
     if fc["total"] > income > 0:
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
+    later = [f for f in outlook[1:] if f["total"] > income > 0]
+    if later:
+        f = later[0]
+        fees = f["breakdown"].get("school_fees", 0)
+        notes.append(f"{calendar.month_name[f['month']]} is expected to cost about KES {f['total']:,}, more than your "
+                     f"income" + (f", including about KES {fees:,} in school fees" if fees else "") +
+                     ". Setting a little aside now will help.")
     record = health["track_record"]
     if record["fragile"] and health["score_before"] >= aff.engine()["cutoffs"]["affordable"]:
         notes.append(f"Your score looks at your recent months, which went well. But you spent more than came in during "
@@ -1003,7 +1032,10 @@ def overview():
                    history=[{"year": m["year"], "month": m["month"],
                              "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings")),
                              "saved": round(m["savings"])} for m in months[-6:]],
-                   forecast=fc, notes=notes, timeline=timeline, timeline_summary=summary, track_record=record)
+                   forecast=fc, outlook=[{k: f[k] for k in ("year", "month", "total", "range", "ahead")
+                                          if k in f} | {"school_fees": f["breakdown"].get("school_fees", 0)}
+                                         for f in outlook],
+                   notes=notes, timeline=timeline, timeline_summary=summary, track_record=record)
 
 
 @bp.get("/me/budget-plan")
@@ -1886,7 +1918,8 @@ MODEL_REGISTER = [
     {"name": "Budget split", "file": "budget_split.joblib", "kind": "Random Forest, half with the average split",
      "metric": "KES 7,021 average error per category vs 7,295 one-size", "data": "974 Stable household-months"},
     {"name": "App forecast", "file": "user_forecast.joblib", "kind": "Boosted tree with fee-month/December flags",
-     "metric": "test MAE KES 9,967 vs 10,719 median; 80% range holds 83%", "data": "KIHBS-informed synthetic"},
+     "metric": "test MAE vs median: 1 month 9,967 vs 10,719; 2 months 10,354 vs 11,738; 3 months 11,000 vs 11,791; "
+               "80% ranges hold 83-85%", "data": "KIHBS-informed synthetic"},
     {"name": "Web Masters forecast (U-CS 37)", "file": "forecast_tree.joblib",
      "kind": "Budget blend + boosted-tree split", "metric": "test MAE KES 7,931, WAPE 0.106",
      "data": "Web Masters staging, 500 households"},
