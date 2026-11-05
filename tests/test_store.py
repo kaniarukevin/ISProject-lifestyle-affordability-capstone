@@ -883,3 +883,39 @@ def test_typed_in_payments_can_be_edited_but_statement_figures_cannot(client, mo
     s = client.get("/me/transactions/summary", headers=h).get_json()["months"][0]
     assert s["one_off"] == 179000 and s["total"] == 650
     assert client.patch(f"/me/transactions/{mine['id']}", headers=h, json={}).status_code == 400
+
+
+def test_overview_has_a_three_month_outlook_with_ranges(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)                                                  # Aug-Oct recorded, today in November
+    o = client.get("/me/overview", headers=h).get_json()
+    assert [(f["year"], f["month"]) for f in o["outlook"]] == [(2026, 11), (2026, 12), (2027, 1)]
+    assert [f["ahead"] for f in o["outlook"]] == [1, 2, 3]
+    assert o["outlook"][0]["total"] == o["forecast"]["total"]
+    for f in o["outlook"]:
+        assert f["total"] > 0 and f["range"]["low"] <= f["total"] <= f["range"]["high"]
+    width = [f["range"]["high"] - f["range"]["low"] for f in o["outlook"]]
+    assert width[2] >= width[0]                                             # further ahead, less sure
+
+
+def test_old_records_count_as_further_ahead(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2027, 1, 10))
+    h = _student(client)                                                  # last records October: January is 3 ahead
+    o = client.get("/me/overview", headers=h).get_json()
+    assert [f["ahead"] for f in o["outlook"]] == [3, 3, 3]
+
+
+def test_a_costly_month_ahead_gets_a_note(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "dependants": 1,
+                                                "incomes": [{"name": "Pay", "amount": 30000}]})
+    for m in range(1, 11):                                   # school fees of 20,000 in January, May and September
+        rows = [{"date": f"2026-{m:02d}-03", "amount": 24000, "category": "food_groceries"}]
+        if m in (1, 5, 9):
+            rows.append({"date": f"2026-{m:02d}-05", "amount": 20000, "category": "school_fees"})
+        client.post("/me/transactions", headers=h, json=rows)
+    o = client.get("/me/overview", headers=h).get_json()
+    jan = o["outlook"][2]
+    assert (jan["year"], jan["month"]) == (2027, 1) and jan["school_fees"] >= 20000 and jan["total"] > 30000
+    assert any(n.startswith("January is expected to cost") and "school fees" in n for n in o["notes"])

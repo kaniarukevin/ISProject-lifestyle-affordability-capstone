@@ -55,7 +55,11 @@ Status key used below:
   the blend and 8,155–8,567 for the boosted trees. On the final test months it scored 10,586 against 7,931 for the
   blend. Adding it to an ensemble made both totals and categories worse (experiments, 22 Oct). With 6 to 12 months
   per household there are too few sequences for an LSTM to learn from.
-- **Still different:** the forecast covers next month only. The proposal promised one to three months (see R12).
+- **One to three months (5 Nov):** the same model forecasts this month and the next two, with wider ranges further
+  out. It beats the median at every step on held-out households: 1 month 9,967 vs 10,719, 2 months 10,354 vs 11,738,
+  3 months 11,000 vs 11,791 (KES). Its 80% ranges hold 83–85% of months. Separate per-horizon models were tried and
+  were no better (experiments, 5 Nov). Forecasts are for total spending; the category split comes from the
+  household's own shares, not one forecast per category as the proposal described.
 
 ### D3. Affordability score: Random Forest replaced by monotonic gradient boosting. Budget allocation stays Random Forest
 
@@ -311,7 +315,7 @@ increments.
 | R9 | Categorisation, rules plus classifier (3.2.2) | Changed (D6) | `kenya_directory.py`, payee tags, `/me/payees` | Experiments, 4 Nov (41–43% → 89%) |
 | R10 | Feature engineering (3.2.2) | Built | `affordability.build_features`, matches `07_feature_engineering.py` to 5.8e-11 | Experiments, 22 Oct |
 | R11 | Financial state detection (3.2.3) | Changed (D1): Random Forest | `affordability._state` | 0.799 against HMM 0.531; experiments, 22 Oct |
-| R12 | Expenditure forecast 1–3 months (3.2.3) | Changed (D2): 1 month with a range; 3 months planned | `forecast_for_user`, dashboard | MAE 9,967 against 10,719; experiments, 4 Nov |
+| R12 | Expenditure forecast 1–3 months (3.2.3) | Changed (D2): boosted tree, 3 months with ranges | `outlook_for_user`, dashboard | Beats the median at 1, 2 and 3 months; experiments, 4–5 Nov |
 | R13 | Personalised budget allocation (3.2.3) | Built (Random Forest, half and half) | `backend/budget.py`, `/me/budget-plan`, `budget_screen.dart` | KES 7,021 against 7,295; experiments, 28 Oct |
 | R14 | 0–100 affordability score (3.2.3) | Changed (D3): monotonic gradient boosting | `affordability.assess` | 100% consistent; experiments, 22 Oct |
 | R15 | Scenario simulation with verdict (3.4.6) | Built; labels changed (D4) | `/me/afford`, `/me/scenarios`, `afford_screen.dart` | `tests/test_affordability.py` |
@@ -342,14 +346,14 @@ Counts, for the report's summary table: 33 requirements, of which:
 - **Not built:** 2.
 - **Planned:** 2.
 
-R12 (one month built, three months planned) and R15 (labels changed) carry notes in their status.
+R15 (labels changed) carries a note in its status.
 
 ---
 
 ## Part C: Before the defence (23 Nov)
 
 1. ~~SHAP on the score model (R16) and a review of how generous the score is~~ (done 5 Nov, D13).
-2. A three-month forecast with ranges (R12).
+2. ~~A three-month forecast with ranges (R12)~~ (done 5 Nov).
 3. ~~A consent screen and a delete-my-account button (R31, D8)~~ (done 5 Nov).
 4. Google sign-in (R2).
 5. Deployment to Render and Netlify, then Android and iOS builds (R29, R30).
