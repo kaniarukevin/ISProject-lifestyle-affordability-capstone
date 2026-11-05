@@ -90,6 +90,70 @@ def _score(f):
     return float(100 * (ps[0] + pok[0]) / 2)
 
 
+def _score_rows(X):
+    """The score for many rows at once (same formula as _score)."""
+    e = engine()
+    ps = e["p_stable_model"].predict_proba(X)[:, 1]
+    pok = np.maximum(e["p_ok_model"].predict_proba(X)[:, 1], ps)
+    return 100 * (ps + pok) / 2
+
+
+# ---------- why this score (SHAP, proposal 3.5.7) ----------
+# The 14 score features in six groups a user can understand. Shapley values are computed exactly over the groups
+# (2^6 = 64 coalitions), so no sampling and no extra library: the contributions add up to the score exactly.
+SCORE_GROUPS = [
+    ("income", "Your income", ["total_income", "zero_income_flag"]),
+    ("latest_month", "Spending against income, latest month",
+     ["total_expenditure", "income_to_expenditure_ratio", "overspend_flag"]),
+    ("recent_months", "The last 3 to 6 months", ["ratio_roll3", "overspend_roll3", "exp_roll3", "exp_roll6"]),
+    ("saving", "How much of your income you save", ["savings_rate"]),
+    ("debt", "Loan repayments", ["debt_service_coverage_ratio"]),
+    ("household", "Household size and dependants", ["household_size", "num_dependants", "dependant_cost_factor"]),
+]
+
+
+def shapley(x, background, groups, value=None):
+    """Exact interventional Shapley values of value(rows) for one row x, with features grouped.
+
+    x: 1-D array of features; background: 2-D array (reference rows); groups: list of lists of column positions.
+    A coalition S keeps x's values for the groups in S and takes the background's values for the rest; v(S) is
+    the mean output over the background. Returns (v(empty), contributions), and v(empty) + sum = value(x)."""
+    value = value or _score_rows
+    k, n = len(groups), len(background)
+    masks = np.array([[(s >> g) & 1 for g in range(k)] for s in range(2 ** k)], dtype=bool)
+    rows = np.repeat(background[None, :, :], 2 ** k, axis=0)
+    for s, mask in enumerate(masks):
+        for g in np.flatnonzero(mask):
+            rows[s][:, groups[g]] = x[groups[g]]
+    v = value(rows.reshape(-1, background.shape[1])).reshape(2 ** k, n).mean(axis=1)
+    sizes = masks.sum(axis=1)
+    phi = np.zeros(k)
+    for g in range(k):
+        without = ~masks[:, g]
+        s = np.flatnonzero(without)
+        weight = np.array([math.factorial(sizes[i]) * math.factorial(k - sizes[i] - 1) for i in s]) / math.factorial(k)
+        phi[g] = np.sum(weight * (v[s + (1 << g)] - v[s]))
+    return float(v[0]), phi
+
+
+def explain(f):
+    """Why the score is what it is: each group's contribution in score points, against a typical household.
+
+    f: the one-row feature frame used for the score. Returns None if the engine has no background stored."""
+    e = engine()
+    if "score_background" not in e:
+        return None
+    cols = e["score_features"]
+    bg = e["score_background"]
+    X = f[cols].to_numpy(dtype=float)[0]
+    groups = [[cols.index(c) for c in feats] for _, _, feats in SCORE_GROUPS]
+    frame = lambda a: pd.DataFrame(a, columns=cols)
+    base, phi = shapley(X, bg, groups, value=lambda a: _score_rows(frame(a)))
+    parts = [{"key": key, "label": label, "points": round(float(p), 1)} for (key, label, _), p in zip(SCORE_GROUPS, phi)]
+    parts.sort(key=lambda p: -abs(p["points"]))
+    return {"typical_score": round(base), "score": round(base + float(phi.sum())), "parts": parts}
+
+
 def _state(f, exact=False):
     """Financial state. exact=True uses the statement-safe model, trained only on figures an M-PESA statement gives
     exactly (totals, income, savings, loans): used when much spending is unsorted, because a wrong category split
@@ -127,8 +191,22 @@ def _facts(f):
             "savings_KES": round(r.savings)}
 
 
+FRAGILE_MONTHS = 3      # months in the last 12 with spending above income that make a year "fragile"
+
+
+def track_record(m):
+    """How the last 12 months went, straight from the figures: months where spending (before savings) was more
+    than the money that came in. The score only sees the last 3 to 6 months, and the training labels do too
+    (adding 12-month history changed held-out accuracy from 0.728 to 0.735; docs/experiments.md, 5 Nov), so a
+    year of overspending followed by three calm months scored 100. This makes that history visible."""
+    last = m.sort_values("month").tail(12)
+    spent = last[[c for c in CATS if c != "savings"]].sum(axis=1)
+    over = int((spent > last[INCOME].sum(axis=1)).sum())
+    return {"months": int(len(last)), "overspent_months": over, "fragile": over >= FRAGILE_MONTHS}
+
+
 def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.0, debt_label="Loan repayments",
-           state_exact=False):
+           state_exact=False, track=True):
     """Score now and after a monthly change, with the savings safety rule and plain-language reasons.
 
     duration: how many months the change lasts (None = for good). A 1-month cost is applied to 1 month only,
@@ -162,7 +240,16 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
     if a["spending_KES"] - a["savings_KES"] > a["income_KES"]:
         reasons.append("Your spending, before savings, would be more than you earn"
                        + (" while you pay." if duration else "."))
-    return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict,
+    record = track_record(m)
+    record["lowered_verdict"] = False
+    if track and record["fragile"] and verdict == "Affordable":
+        # A cautious rule, like the savings rule above: the score says yes on recent months, the year says careful.
+        verdict = "Stretch"
+        record["lowered_verdict"] = True
+        reasons.append(f"Your recent months make this look affordable, but you spent more than came in during "
+                       f"{record['overspent_months']} of the last {record['months']} months, so treat it as a stretch "
+                       "until the calmer months last.")
+    return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict, "track_record": record,
             "state_now": _state(bf, state_exact), "before": b, "after": a, "reasons": reasons,
             "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None,
             # A short cost scores the months you pay, not your finances for good (found walking through the app:
@@ -181,7 +268,7 @@ def what_to_cut(m, changes=None, income_change=0.0, **kw):
         cuts = {c: round(float(typical[c]) * pct / 100) for c in FLEXIBLE}
         for c, v in cuts.items():
             combined[c] = combined.get(c, 0) - v
-        r = assess(m, combined, income_change, **kw)
+        r = assess(m, combined, income_change, track=False, **kw)
         plan = {"cut_each_by_percent": pct, "monthly_cuts_KES": cuts, "total_cut_KES": sum(cuts.values()),
                 "left_over_after_KES": r["after"]["left_over_KES"], "score": r["score_after"], "verdict": r["verdict"]}
         if break_even is None and r["after"]["left_over_KES"] >= 0:
@@ -248,7 +335,7 @@ def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0, stat
         result["pay_from_savings"] = {"possible": balance >= price, "savings_left_KES": round(balance - price)}
         if balance >= price:
             result["reasons"].append(f"You could also pay it all now from your savings and keep KES {round(balance - price):,}.")
-    if result["verdict"] != "Affordable":
+    if result["verdict"] != "Affordable" and not result["track_record"]["lowered_verdict"]:
         result["what_to_cut"] = what_to_cut(m, {"loan_repayment": per_month}, **kw)
     if result["verdict"] == "Not affordable":
         result["advice"] = _advice(result["before"], per_month, months, balance)
@@ -277,6 +364,37 @@ def savings_goal(m, extra_per_month):
                               "total_cut_KES": round(short)}
     else:
         out["reasons"].append("That would need cutting more than half your flexible spending; try a smaller goal.")
+    return out
+
+
+def explain_request(payload):
+    """'Why this score?' for an /affordability request: the current score explained, and for a scenario the score
+    after it, plus how much each part moved (after minus before). Same inputs as evaluate()."""
+    hh = (payload or {}).get("household") or {}
+    m = months_frame(payload.get("months"), float(hh.get("household_size", 1)), float(hh.get("num_dependants", 0)))
+    sc = payload.get("scenario") or {"type": "none"}
+    kind = sc.get("type", "none")
+    changes, inc, span = None, 0.0, 3
+    if kind == "monthly_change":
+        changes, inc = sc.get("changes") or {}, float(sc.get("income_change", 0) or 0)
+        span = min(int(sc["months"]), 3) if sc.get("months") else 3
+    elif kind == "purchase":
+        price, n, r = float(sc.get("price", 0)), int(sc.get("months", 6)), float(sc.get("monthly_interest", 0))
+        if price <= 0 or n < 1 or r < 0:
+            raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
+        changes, span = {"loan_repayment": price * r / (1 - (1 + r) ** -n) if r > 0 else price / n}, min(n, 3)
+    elif kind != "none":
+        raise AffordabilityInputError("only the current score, monthly changes and purchases have a score to explain")
+    now = explain(build_features(m).iloc[[-1]])
+    out = {"now": now, "track_record": track_record(m)}
+    if changes is not None and now is not None:
+        after = explain(build_features(_apply(m, changes, inc, months=span)).iloc[[-1]])
+        moved = {p["key"]: p["points"] for p in after["parts"]}
+        for p in now["parts"]:
+            moved[p["key"]] = round(moved[p["key"]] - p["points"], 1)
+        out["after"] = after
+        out["moved"] = sorted(({"key": k, "label": next(lb for kk, lb, _ in SCORE_GROUPS if kk == k), "points": v}
+                               for k, v in moved.items()), key=lambda p: -abs(p["points"]))
     return out
 
 
@@ -310,7 +428,7 @@ def evaluate(payload):
             raise AffordabilityInputError("scenario.months must be at least 1 (leave it out for a lasting change)")
         kw = {"duration": int(lasts) if lasts else None, "savings_balance": balance}
         result = assess(m, changes, inc, state_exact=exact, **kw)
-        if result["verdict"] != "Affordable":
+        if result["verdict"] != "Affordable" and not result["track_record"]["lowered_verdict"]:
             result["what_to_cut"] = what_to_cut(m, changes, inc, **kw)
         if result["verdict"] == "Not affordable":
             extra = sum(float(v) for v in changes.values()) - inc

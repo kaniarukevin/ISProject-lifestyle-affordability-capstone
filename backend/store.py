@@ -804,6 +804,11 @@ def overview():
     if fc["total"] > income > 0:
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
+    record = health["track_record"]
+    if record["fragile"] and health["score_before"] >= aff.engine()["cutoffs"]["affordable"]:
+        notes.append(f"Your score looks at your recent months, which went well. But you spent more than came in during "
+                     f"{record['overspent_months']} of the last {record['months']} months, so keep a buffer before "
+                     "taking on new costs.")
     return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
                    state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED, estimated=pic["estimated"],
                    unsorted_share=round(pic["not_sorted_share"], 3), outside_share=round(pic["unsorted_share"], 3),
@@ -818,7 +823,7 @@ def overview():
                    history=[{"year": m["year"], "month": m["month"],
                              "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings")),
                              "saved": round(m["savings"])} for m in months[-6:]],
-                   forecast=fc, notes=notes, timeline=timeline, timeline_summary=summary)
+                   forecast=fc, notes=notes, timeline=timeline, timeline_summary=summary, track_record=record)
 
 
 @bp.get("/me/budget-plan")
@@ -982,6 +987,35 @@ def afford():
         s.commit()
         result["id"] = row.id
     return jsonify(result), 200
+
+
+@bp.post("/me/explain")
+@login_required
+def explain_score():
+    """'Why this score?' (SHAP, proposal 3.5.7). Empty body: the dashboard score. A 'Can I afford it?' body
+    (same presets): the score after it and what moved. Computed on request, because each explanation scores
+    12,800 rows (about 0.4 s), and nothing is stored."""
+    b = _body()
+    with session() as s:
+        pic = household_picture(s, g.user_id)
+        profile, months = pic["profile"], pic["scored"]
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        if not months:
+            return jsonify(error="record a month of spending first, so there is a score to explain"), 400
+        scenario, title = _scenario_from_preset(b, months) if b.get("preset") else ({"type": "none"}, None)
+    try:
+        out = aff.explain_request({"household": {"household_size": profile.household_size,
+                                                 "num_dependants": profile.dependants},
+                                   "months": months, "scenario": scenario})
+    except aff.AffordabilityInputError as exc:
+        raise InputError(str(exc))
+    if out["now"] is None:
+        return jsonify(error="explanations are not available on this server yet"), 503
+    out["title"] = title
+    out["note"] = ("Each part shows how many points it adds to or takes from the score, compared with a typical "
+                   f"household (score {out['now']['typical_score']}). The parts add up to your score.")
+    return jsonify(out), 200
 
 
 # ---------------- commitments, budgets, scenarios ----------------
@@ -1629,6 +1663,10 @@ MODEL_REGISTER = [
      "data": "same"},
     {"name": "Affordability score", "file": "affordability_engine.joblib", "kind": "Monotonic gradient boosting",
      "metric": "bigger cost never raises the score (100% of households); accuracy 0.654", "data": "same"},
+    {"name": "Score explanations (SHAP)", "file": "affordability_engine.joblib",
+     "kind": "Exact Shapley values over 6 feature groups, 200-row background",
+     "metric": "matches the shap library to 3e-13 points; parts add up to the score exactly",
+     "data": "200 training household-months"},
     {"name": "Budget split", "file": "budget_split.joblib", "kind": "Random Forest, half with the average split",
      "metric": "KES 7,021 average error per category vs 7,295 one-size", "data": "974 Stable household-months"},
     {"name": "App forecast", "file": "user_forecast.joblib", "kind": "Boosted tree with fee-month/December flags",

@@ -5,6 +5,7 @@ import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import 'profile_screen.dart' show kes;
+import 'why_score_sheet.dart';
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -234,6 +235,8 @@ class _StateCard extends StatelessWidget {
                       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
                     )),
               ),
+            const Spacer(),
+            TextButton(onPressed: () => showWhyScore(context), child: const Text('Why this score?')),
           ]),
         ]),
       ),

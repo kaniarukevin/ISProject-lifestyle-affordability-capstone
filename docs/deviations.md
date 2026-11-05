@@ -227,10 +227,23 @@ Status key used below:
 ### D13. SHAP explanations
 
 - **Proposal (3.5.7):** SHAP on the Random Forest score, shown to users.
-- **Current state:** every verdict comes with plain-language reasons computed from the figures, for example
-  "You would be short KES 1,729 a month…". SHAP is not yet built.
-- **Planned:** SHAP on the deployed score model (D3), explaining which of the user's own figures raised or lowered
-  the score.
+- **Built:** exact Shapley values of the deployed score (D3), grouped into six parts a user can read (income,
+  the latest month, the last 3 to 6 months, saving, loan repayments, household). "Why this score?" on the dashboard
+  and on every "Can I afford it?" answer shows how many points each part adds or takes away against a typical
+  household, and what a choice moves.
+- **Changes from the proposal:**
+  - The values explain the monotonic score model, because that model now produces the score (D3).
+  - They are computed exactly over the six groups (64 combinations) instead of with the shap library, so the server
+    needs no extra package.
+- **Checks:** with every feature on its own, the values match the shap library's exact explainer to 3e-13 points,
+  and the parts add up to the score exactly (experiments, 5 Nov).
+- **What it found:**
+  - The score looks only at the last 3 to 6 months: 9 overspent months followed by 3 calm ones score 100, the same
+    as a calm year.
+  - The synthetic labels have the same blind spot, so retraining cannot fix it (accuracy 0.728 → 0.735 with
+    12-month features).
+  - The app now shows a 12-month track record next to the score. A fragile year (3 or more months spending above
+    income) turns "Affordable" into "Stretch".
 
 ### D14. Platforms
 
@@ -301,7 +314,7 @@ increments.
 | R13 | Personalised budget allocation (3.2.3) | Built (Random Forest, half and half) | `backend/budget.py`, `/me/budget-plan`, `budget_screen.dart` | KES 7,021 against 7,295; experiments, 28 Oct |
 | R14 | 0–100 affordability score (3.2.3) | Changed (D3): monotonic gradient boosting | `affordability.assess` | 100% consistent; experiments, 22 Oct |
 | R15 | Scenario simulation with verdict (3.4.6) | Built; labels changed (D4) | `/me/afford`, `/me/scenarios`, `afford_screen.dart` | `tests/test_affordability.py` |
-| R16 | SHAP explanations (3.5.7) | Planned (D13) | — | — |
+| R16 | SHAP explanations (3.5.7) | Changed (D13): exact grouped Shapley values | `affordability.explain`, `/me/explain`, `why_score_sheet.dart` | Matches shap to 3e-13; experiments, 5 Nov |
 | R17 | Obligations with frequency (3.4.5) | Built | `commitments.py`, `commitments_screen.dart` | `tests/test_commitments.py` |
 | R18 | Debts with a payoff timeline (3.4.5) | Built, extended | `commitments.simulate_debts` | `tests/test_commitments.py` |
 | R19 | Goals with the monthly amount needed (3.4.5) | Built | `commitments.evaluate` | `tests/test_commitments.py` |
@@ -323,10 +336,10 @@ increments.
 Counts, for the report's summary table: 33 requirements, of which:
 
 - **Built:** 16 (including R18, built and extended).
-- **Changed:** 8.
+- **Changed:** 9.
 - **Partly built:** 4.
 - **Not built:** 2.
-- **Planned:** 3.
+- **Planned:** 2.
 
 R12 (one month built, three months planned) and R15 (labels changed) carry notes in their status.
 
@@ -334,8 +347,7 @@ R12 (one month built, three months planned) and R15 (labels changed) carry notes
 
 ## Part C: Before the defence (23 Nov)
 
-1. SHAP on the score model (R16) and a review of how generous the score is. On the developer's statement it
-   showed Stable 100 while the year had 5 Critical months.
+1. ~~SHAP on the score model (R16) and a review of how generous the score is~~ (done 5 Nov, D13).
 2. A three-month forecast with ranges (R12).
 3. A consent screen and a delete-my-account button (R31, D8).
 4. Google sign-in (R2).
