@@ -6,6 +6,21 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 ### Added
 - Unit tests for HMM state detection (`tests/test_hmm.py`).
 - Experiment log (`docs/experiments.md`).
+- Financial state detection: Random Forest (held-out accuracy 0.799) replaces the HMM (0.531) (#46).
+- Affordability engine: monotonic score, savings safety rule, purchases, savings goals, what-to-cut, advice (#50, #53, #55).
+- Web Masters U-CS 37 forecast service with a deployable ensemble (#57).
+- Dynamic budget (#59) and obligations, debts and goals (#61).
+- Flutter app (#63), PostgreSQL storage with accounts (#65), spending (#73), dashboard (#75), budget (#77) and "Can I afford it?" (#78) screens.
+- One shared household picture, savings balance, duration-aware purchases and month-by-month cash flow (#79).
+- "I'm doing this": a checked scenario becomes a debt, commitment, goal or profile change (#80).
+- Personal budget from the user's own spending; no unused lines; auto-saved; safe to spend per day; saving shown apart from spending (#81).
+- Rough monthly estimates at setup, so the app works on day one (#82).
+- ML forecast for app users (boosted tree with fee-month and December flags, personal 80% range, fee-month floor) (#83).
+- M-PESA statement upload: verified reading, M-PESA types, Kenyan business directory, nothing guessed, Who you pay tags and corrections, money-in tags, statement-safe state model, dashboard timeline (#84).
+- Admin dashboard: service health, model register, masked user list; admins named in `ADMIN_EMAILS` (#85).
+
+### Changed
+- M-PESA charges are now their own category ("M-PESA charges"), no longer folded into `mobile_money_transfers` (#84).
 
 ## [v0.1.1] - 2026-10-01 - Categories aligned with the proposal (PR #22)
 ### Changed
