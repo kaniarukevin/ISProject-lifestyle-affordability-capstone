@@ -6,6 +6,7 @@ dynamic budget can see last month. Connection string comes from DATABASE_URL (ne
 """
 import calendar
 import copy
+import hashlib
 import os
 import statistics
 import threading
@@ -79,6 +80,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Which privacy notice the user agreed to, and when (Data Protection Act 2019: consent must be recorded).
+    consent_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Profile(Base):
@@ -186,6 +190,7 @@ class StatementRule(Base):
 def init(url=None):
     """Create the engine and the tables (idempotent). Call once at start-up, or from tests with 'sqlite://'."""
     url = url or database_url()
+    secret_key()                       # fail at start-up, not on the first log-in
     if url.startswith("sqlite"):
         kw = {"connect_args": {"check_same_thread": False}}
         if url in ("sqlite://", "sqlite:///:memory:"):
@@ -222,7 +227,8 @@ def _upgrade(engine):
                                          "payee_key": "VARCHAR(160)", "label": "VARCHAR(60)",
                                          "auto_category": "VARCHAR(40)",
                                          "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
-                        "statement_rules": {"was": "VARCHAR(40)"}}.items():
+                        "statement_rules": {"was": "VARCHAR(40)"},
+                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
         for name, ddl in cols.items():
             if name not in have:
@@ -264,8 +270,36 @@ def _record(key):
         _ATTEMPTS[key].append(time.monotonic())
 
 
+DEV_SECRET = "dev-only-change-me"
+
+
+def production():
+    """True on the hosted server. Render sets RENDER=true for every service; APP_ENV=production works anywhere."""
+    return bool(os.environ.get("RENDER")) or os.environ.get("APP_ENV") == "production"
+
+
+def secret_key():
+    """The key that signs log-in tokens. The development fallback is public (it is in this repository), so anyone
+    could forge a token with it and read any user's finances: the hosted server refuses to start without a real
+    key of at least 32 characters (generate one with: python -c "import secrets; print(secrets.token_hex(32))")."""
+    key = os.environ.get("SECRET_KEY", "")
+    if production() and (len(key) < 32 or key == DEV_SECRET):
+        raise RuntimeError("SECRET_KEY must be set to a random value of at least 32 characters in production")
+    return key or DEV_SECRET
+
+
 def _serializer():
-    return URLSafeTimedSerializer(os.environ.get("SECRET_KEY", "dev-only-change-me"), salt="auth")
+    return URLSafeTimedSerializer(secret_key(), salt="auth")
+
+
+def _stamp(user):
+    """A short fingerprint of the password hash, carried in the token: changing the password changes it, so every
+    token issued before (a lost phone, a shared laptop) stops working."""
+    return hashlib.sha256(user.password_hash.encode()).hexdigest()[:16]
+
+
+def _token(user):
+    return _serializer().dumps({"u": user.id, "p": _stamp(user)})
 
 
 def login_required(fn):
@@ -274,11 +308,18 @@ def login_required(fn):
         header = request.headers.get("Authorization", "")
         token = header[7:] if header.startswith("Bearer ") else ""
         try:
-            g.user_id = _serializer().loads(token, max_age=TOKEN_DAYS * 86400)
+            data = _serializer().loads(token, max_age=TOKEN_DAYS * 86400)
         except SignatureExpired:
             return jsonify(error="your session has expired, log in again"), 401
         except BadSignature:
             return jsonify(error="log in first"), 401
+        if not isinstance(data, dict):                 # a token from before 5 Nov: log in once more
+            return jsonify(error="please log in again"), 401
+        with session() as s:
+            user = s.get(User, data.get("u"))
+            if user is None or _stamp(user) != data.get("p"):
+                return jsonify(error="your password was changed or the account was removed, log in again"), 401
+        g.user_id = user.id
         return fn(*args, **kwargs)
     return wrapper
 
@@ -329,9 +370,88 @@ def register():
         if s.scalar(select(User).where(User.email == email)):
             return jsonify(error="an account with this email already exists"), 409
         user = User(email=email, password_hash=generate_password_hash(password))
+        if b.get("consent") is True:             # the sign-up screen shows the notice with a tick box
+            user.consent_version, user.consent_at = PRIVACY["version"], _now()
         s.add(user)
         s.commit()
-        return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 201
+        return jsonify(token=_token(user), user_id=user.id), 201
+
+
+# ---------------- privacy notice and consent (Kenya Data Protection Act 2019) ----------------
+
+PRIVACY = {
+    "version": "2026-11-05",
+    "title": "How this app uses your data",
+    "sections": [
+        {"title": "Who runs this app",
+         "text": "This app is a final-year project by Kevin Kaniaru, a Computer Science student at Strathmore "
+                 "University, Nairobi. It is a study prototype, not a bank or a licensed financial adviser, and its "
+                 "answers are guidance, not financial advice."},
+        {"title": "What we keep",
+         "text": "Your email address and a scrambled form of your password (never the password itself); your "
+                 "household details and income; the spending you enter; and from M-PESA statements you upload, "
+                 "each transaction's date, amount, type and the name of the person or business as the statement "
+                 "shows it, so the app can remember how you sorted them."},
+        {"title": "What we never keep",
+         "text": "Uploaded statement files and their passwords. A statement is read in memory, you review what was "
+                 "found, and only the transactions you confirm are saved. The file and password are discarded."},
+        {"title": "Why",
+         "text": "Only to work out your budget, your financial health score, your spending forecast and whether a "
+                 "choice is affordable, for you. Your data is not sold, not shared with anyone and not used for "
+                 "advertising. The app's models were trained on made-up data, not on users' data."},
+        {"title": "Where it is stored",
+         "text": "In a cloud database (Neon) and on a cloud server (Render), which may be outside Kenya. Connections "
+                 "are encrypted, and the database host encrypts stored data."},
+        {"title": "Who can see it",
+         "text": "Only you, through your account. The administrator sees counts and partly hidden email addresses, "
+                 "not your transactions."},
+        {"title": "Your rights",
+         "text": "You can see everything the app keeps about you in the app, correct any entry, and delete your "
+                 "account at any time under Your household. Deleting removes all your data immediately and "
+                 "permanently, which also withdraws this consent. For any question, contact the developer through "
+                 "Strathmore University."},
+        {"title": "How long",
+         "text": "Until you delete your account. All accounts will be deleted when the project ends."},
+    ],
+}
+
+
+def _consented(user):
+    return user is not None and user.consent_version == PRIVACY["version"]
+
+
+@bp.get("/privacy")
+def privacy_notice():
+    return jsonify(PRIVACY), 200
+
+
+@bp.get("/me/consent")
+@login_required
+def get_consent():
+    with session() as s:
+        user = s.get(User, g.user_id)
+        return jsonify(version=PRIVACY["version"], accepted=_consented(user),
+                       accepted_at=user.consent_at.isoformat() if user and user.consent_at else None), 200
+
+
+@bp.post("/me/consent")
+@login_required
+def give_consent():
+    b = _body()
+    if b.get("accept") is not True or b.get("version") != PRIVACY["version"]:
+        raise InputError("to continue, agree to the current privacy notice")
+    with session() as s:
+        user = s.get(User, g.user_id)
+        user.consent_version, user.consent_at = PRIVACY["version"], _now()
+        s.commit()
+    return jsonify(accepted=True), 200
+
+
+def _needs_consent(s):
+    """Reading statements handles other people's names: only after the user has agreed to the notice."""
+    if not _consented(s.get(User, g.user_id)):
+        return jsonify(error="please read and agree to the privacy notice first", consent_required=True), 403
+    return None
 
 
 @bp.post("/auth/login")
@@ -349,7 +469,31 @@ def login():
         if not user or not check_password_hash(user.password_hash, str(b.get("password", ""))):
             _record(("login-fail", email))
             return jsonify(error="wrong email or password"), 401
-        return jsonify(token=_serializer().dumps(user.id), user_id=user.id), 200
+        return jsonify(token=_token(user), user_id=user.id), 200
+
+
+@bp.post("/me/password")
+@login_required
+def change_password():
+    """Change the password. The current one is required (someone holding an unlocked phone cannot take over the
+    account), and the answer carries a new token: this device stays logged in, every other one is logged out."""
+    b = _body()
+    current, new = str(b.get("current", "")), str(b.get("new", ""))
+    key = ("password-fail", g.user_id)
+    if _recent(key, 900) >= 5:
+        return jsonify(error="too many wrong passwords, wait 15 minutes"), 429
+    if len(new) < 8:
+        raise InputError("the new password must be at least 8 characters")
+    with session() as s:
+        user = s.get(User, g.user_id)
+        if not check_password_hash(user.password_hash, current):
+            _record(key)
+            return jsonify(error="your current password is not right"), 403
+        if check_password_hash(user.password_hash, new):
+            raise InputError("the new password must be different from the current one")
+        user.password_hash = generate_password_hash(new)
+        s.commit()
+        return jsonify(token=_token(user), changed=True), 200
 
 
 # ---------------- profile ----------------
@@ -417,9 +561,45 @@ def _tx_json(t):
 @bp.get("/me/transactions")
 @login_required
 def list_transactions():
-    q = select(Transaction).where(Transaction.user_id == g.user_id).order_by(Transaction.day.desc())
+    """All records, or one month's with ?month=YYYY-MM (the spending screen loads a month when it is opened:
+    a year of M-PESA statements is well over a thousand records, too many to send to a phone at once)."""
+    q = select(Transaction).where(Transaction.user_id == g.user_id).order_by(Transaction.day.desc(),
+                                                                             Transaction.id.desc())
+    month = request.args.get("month")
+    if month:
+        try:
+            first = date(int(month[:4]), int(month[5:7]), 1)
+        except (ValueError, IndexError):
+            raise InputError("month must look like 2026-10")
+        after = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+        q = q.where(Transaction.day >= first, Transaction.day < after)
     with session() as s:
         return jsonify(transactions=[_tx_json(t) for t in s.scalars(q).all()])
+
+
+@bp.get("/me/transactions/summary")
+@login_required
+def transaction_summary():
+    """One line per month, newest first: usual spending by category, one-offs apart, the user's own money moving
+    left out (same rules as the app's month cards), and how many records the month holds."""
+    q = select(Transaction.day, Transaction.amount, Transaction.category, Transaction.one_off, Transaction.source) \
+        .where(Transaction.user_id == g.user_id)
+    months, statement = {}, False
+    with session() as s:
+        for day, amount, category, one_off, source in s.execute(q):
+            m = months.setdefault((day.year, day.month), {"year": day.year, "month": day.month, "count": 0,
+                                                          "total": 0.0, "one_off": 0.0, "by_category": {}})
+            m["count"] += 1
+            statement = statement or source == "mpesa"
+            if category == "own_account":
+                continue
+            if one_off:
+                m["one_off"] += amount
+                continue
+            m["total"] += amount
+            m["by_category"][category] = m["by_category"].get(category, 0.0) + amount
+    rows = [months[k] for k in sorted(months, reverse=True)]
+    return jsonify(months=rows, has_statement=statement), 200
 
 
 @bp.post("/me/transactions")
@@ -1273,6 +1453,10 @@ def statement_preview():
     """Read an uploaded M-PESA statement and return what would be imported. Nothing is saved; the PDF and the
     password are only held in memory for this request."""
     import mpesa
+    with session() as s:
+        blocked = _needs_consent(s)
+    if blocked:
+        return blocked
     f = request.files.get("file")
     if f is None:
         raise InputError("choose your M-PESA statement (PDF) to upload")
@@ -1333,6 +1517,10 @@ def statement_import():
     """Save a reviewed statement. Body: the preview's transactions (with any one-off changes), tags for payees
     {payee_key: category | 'own_account' | 'unsorted'}, the period, and goals a purchase completed."""
     import mpesa
+    with session() as s:
+        blocked = _needs_consent(s)
+    if blocked:
+        return blocked
     b = _body()
     rows, tags = b.get("transactions"), b.get("tags") or {}
     if not isinstance(rows, list) or not isinstance(tags, dict):
@@ -1500,10 +1688,15 @@ def _commitment_offer(s, user_id, key, tag):
 @bp.patch("/me/transactions/<int:tx_id>")
 @login_required
 def correct_transaction(tx_id):
-    """Change a payment's category: just this one (scope 'one'), or always for this payee (scope 'payee')."""
+    """Change a payment. category: just this one (scope 'one'), or always for this payee (scope 'payee').
+    one_off: for any payment. amount, date, description: only for entries typed in by hand; a statement's
+    payments keep the statement's exact figures and text (they were checked against its totals)."""
     b = _body()
     tag, scope = b.get("category"), b.get("scope", "one")
-    if tag not in SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT]:
+    edits = {k: b[k] for k in ("amount", "date", "description", "one_off") if k in b}
+    if tag is None and not edits:
+        raise InputError("nothing to change")
+    if tag is not None and tag not in SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT]:
         raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES + OUTSIDE + [OWN_ACCOUNT])}")
     if scope not in ("one", "payee"):
         raise InputError("scope must be one or payee")
@@ -1511,6 +1704,29 @@ def correct_transaction(tx_id):
         t = s.get(Transaction, tx_id)
         if t is None or t.user_id != g.user_id:
             return jsonify(error="no such payment"), 404
+        if t.source == "mpesa" and set(edits) - {"one_off"}:
+            raise InputError("a payment from a statement keeps the statement's amount, date and text; you can "
+                             "change what it is, or mark it as a one-off")
+        if "amount" in edits:
+            amount = _num(edits["amount"], "amount")
+            if amount <= 0:
+                raise InputError("amount must be more than 0")
+            t.amount = amount
+        if "date" in edits:
+            try:
+                day = date.fromisoformat(str(edits["date"]))
+            except ValueError:
+                raise InputError("date must look like 2026-10-29")
+            if day > _today():
+                raise InputError("the date cannot be in the future")
+            t.day = day
+        if "description" in edits:
+            t.description = str(edits["description"] or "")[:200]
+        if "one_off" in edits:
+            t.one_off = bool(edits["one_off"])
+        if tag is None:
+            s.commit()
+            return jsonify(updated=1, offer=None, transaction=_tx_json(t)), 200
         if scope == "payee":
             if not t.payee_key:
                 raise InputError("this payment has no payee to remember; change just this one")

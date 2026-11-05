@@ -166,8 +166,9 @@ Status key used below:
 - **Added for privacy (Kenya Data Protection Act 2019):**
   - Uploaded statements are read in memory and never stored. The PDF and its password are discarded after
     reading.
-  - Users can delete their whole account and all their data (`DELETE /me`). The app does not have a delete button
-    for this yet.
+  - A privacy notice (who, what, why, where, rights, how long) is shown at sign-up, and the user's consent is
+    recorded with the notice version and time. Older accounts are asked once. Statements cannot be read without it.
+  - Users can delete their whole account and all their data from Your household (`DELETE /me`).
   - The admin view masks users' emails and shows counts only.
 
 ### D9. Database design
@@ -349,7 +350,7 @@ R12 (one month built, three months planned) and R15 (labels changed) carry notes
 
 1. ~~SHAP on the score model (R16) and a review of how generous the score is~~ (done 5 Nov, D13).
 2. A three-month forecast with ranges (R12).
-3. A consent screen and a delete-my-account button (R31, D8).
+3. ~~A consent screen and a delete-my-account button (R31, D8)~~ (done 5 Nov).
 4. Google sign-in (R2).
 5. Deployment to Render and Netlify, then Android and iOS builds (R29, R30).
 6. 3–5 volunteers: consent form, statements, a categorisation-accuracy count, and a rating questionnaire (R31, D6).

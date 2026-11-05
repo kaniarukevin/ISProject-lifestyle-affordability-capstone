@@ -20,6 +20,16 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Admin dashboard: service health, model register, masked user list; admins named in `ADMIN_EMAILS` (#85).
 - Why this score (SHAP): exact Shapley values over six plain-language parts, on the dashboard and in "Can I afford it?"; 12-month track record note and a cautious Stretch rule for a fragile year.
 - Deviations from the proposal and requirements traceability (`docs/deviations.md`).
+- Privacy notice and recorded consent (Data Protection Act 2019): shown at sign-up, asked once of older accounts, required before reading statements; "Delete my account" in Your household.
+- Spending screen loads a month summary and fetches a month's records only when opened (`/me/transactions/summary`, `?month=`).
+- Change password (current password required; other devices are logged out), a show/hide eye on every password box, and editing of incomes, bills, debts, goals and typed-in spending (statement payments: category and one-off only).
+- Production safety: the hosted server refuses to start without a real `SECRET_KEY`; every error is plain JSON; uploads over 11 MB are refused before reading.
+
+### Fixed
+- M-PESA reversals: the reversed payment (and its charge) is now left out of spending as well as the refund; previously the refund was counted as money received and the payment stayed as spending. A reversal of a charge is no longer counted as a charge.
+- Reached goals no longer come back: the app dropped the goal's `done` flag when saving Commitments, and matched goals to the server's figures by position (wrong once a goal was reached).
+- A log-in token kept being accepted after its account was deleted; tokens now carry a password fingerprint and are checked against the account on every request.
+- App name in the browser tab, home screen and phone launchers (was "lifestyle_affordability" / "A new Flutter project").
 
 ### Changed
 - M-PESA charges are now their own category ("M-PESA charges"), no longer folded into `mobile_money_transfers` (#84).

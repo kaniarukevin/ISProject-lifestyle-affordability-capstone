@@ -44,17 +44,26 @@ class Debt {
 }
 
 class Goal {
-  Goal({required this.name, required this.target, this.saved = 0, required this.monthsLeft});
+  Goal({required this.name, required this.target, this.saved = 0, required this.monthsLeft, this.done = false,
+      this.doneOn});
   String name;
   double target, saved;
   int monthsLeft;
 
-  Map<String, dynamic> toJson() => {'name': name, 'target': target, 'saved': saved, 'months_left': monthsLeft};
+  /// Reached: the server ticks a goal off when an imported purchase matches it. Kept through every save
+  /// (before 5 Nov the app dropped these two fields, so saving Commitments brought a reached goal back).
+  bool done;
+  String? doneOn;
+
+  Map<String, dynamic> toJson() => {'name': name, 'target': target, 'saved': saved, 'months_left': monthsLeft,
+        if (done) 'done': true, if (doneOn != null) 'done_on': doneOn};
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
       name: j['name'] as String,
       target: (j['target'] as num).toDouble(),
       saved: ((j['saved'] ?? 0) as num).toDouble(),
-      monthsLeft: (j['months_left'] as num).toInt());
+      monthsLeft: (j['months_left'] as num).toInt(),
+      done: j['done'] == true,
+      doneOn: j['done_on'] as String?);
 }
 
 class Commitments {

@@ -5,6 +5,8 @@ import '../models/profile.dart';
 import '../models/transaction.dart' show spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'password_field.dart';
+import 'privacy_screen.dart';
 
 String kes(num v) => 'KES ${v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
 
@@ -29,6 +31,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _addIncome() async {
     final source = await showDialog<IncomeSource>(context: context, builder: (_) => const _IncomeDialog());
     if (source != null) setState(() => draft.incomes.add(source));
+  }
+
+  Future<void> _editIncome(int i) async {
+    final source = await showDialog<IncomeSource>(
+        context: context, builder: (_) => _IncomeDialog(initial: draft.incomes[i]));
+    if (source != null) setState(() => draft.incomes[i] = source);
   }
 
   Future<void> _save() async {
@@ -103,6 +111,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               style: theme.textTheme.bodySmall),
           ...draft.incomes.asMap().entries.map((e) => ListTile(
                 contentPadding: EdgeInsets.zero,
+                onTap: () => _editIncome(e.key),
                 title: Text(e.value.name),
                 subtitle: Text('${kes(e.value.amount)} ${frequencyLabel[e.value.frequency]}'
                     '${e.value.frequency == 'monthly' ? '' : '  ≈ ${kes(e.value.monthly)} a month'}'),
@@ -111,6 +120,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onPressed: () => setState(() => draft.incomes.removeAt(e.key)),
                 ),
               )),
+          if (draft.incomes.isNotEmpty)
+            Text('Tap an income to change it.', style: theme.textTheme.bodySmall),
           TextButton.icon(onPressed: _addIncome, icon: const Icon(Icons.add), label: const Text('Add income')),
           const SizedBox(height: 8),
           Card(
@@ -156,6 +167,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           const SizedBox(height: 16),
           FilledButton(onPressed: _save, child: const Text('Save')),
+          // Only for an existing account: the first-time setup screen has nothing to delete yet.
+          if (context.read<AppState>().profile != null) ...[
+            const Divider(height: 40),
+            Text('Your account', style: theme.textTheme.titleMedium),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.lock_outline),
+              title: const Text('Change password'),
+              onTap: () => showDialog<void>(context: context, builder: (_) => const _PasswordDialog()),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.privacy_tip_outlined),
+              title: const Text('How this app uses your data'),
+              onTap: () => showPrivacy(context, context.read<AppState>().api),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.delete_forever_outlined, color: theme.colorScheme.error),
+              title: Text('Delete my account', style: TextStyle(color: theme.colorScheme.error)),
+              subtitle: const Text('Removes everything, permanently'),
+              onTap: () => confirmDeleteAccount(context),
+            ),
+          ],
         ],
       ),
     );
@@ -180,17 +215,19 @@ class _Counter extends StatelessWidget {
       );
 }
 
+/// Add an income, or change one ([initial]).
 class _IncomeDialog extends StatefulWidget {
-  const _IncomeDialog();
+  const _IncomeDialog({this.initial});
+  final IncomeSource? initial;
 
   @override
   State<_IncomeDialog> createState() => _IncomeDialogState();
 }
 
 class _IncomeDialogState extends State<_IncomeDialog> {
-  final _name = TextEditingController();
-  final _amount = TextEditingController();
-  String _frequency = 'monthly';
+  late final _name = TextEditingController(text: widget.initial?.name ?? '');
+  late final _amount = TextEditingController(text: widget.initial == null ? '' : widget.initial!.amount.round().toString());
+  late String _frequency = widget.initial?.frequency ?? 'monthly';
   String? _error;
 
   @override
@@ -211,7 +248,7 @@ class _IncomeDialogState extends State<_IncomeDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('Add income'),
+        title: Text(widget.initial == null ? 'Add income' : 'Change income'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -238,7 +275,80 @@ class _IncomeDialogState extends State<_IncomeDialog> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-          FilledButton(onPressed: _submit, child: const Text('Add')),
+          FilledButton(onPressed: _submit, child: Text(widget.initial == null ? 'Add' : 'Save')),
+        ],
+      );
+}
+
+
+/// Change the password: the current one, then the new one twice. This device stays logged in; others are logged out.
+class _PasswordDialog extends StatefulWidget {
+  const _PasswordDialog();
+
+  @override
+  State<_PasswordDialog> createState() => _PasswordDialogState();
+}
+
+class _PasswordDialogState extends State<_PasswordDialog> {
+  final _current = TextEditingController();
+  final _new = TextEditingController();
+  final _again = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in [_current, _new, _again]) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_new.text.length < 8) {
+      setState(() => _error = 'The new password must be at least 8 characters.');
+      return;
+    }
+    if (_new.text != _again.text) {
+      setState(() => _error = 'The two new passwords are not the same.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<AppState>().changePassword(_current.text, _new.text);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Password changed. Any other phone or computer will need to log in again.')));
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Change password'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            PasswordField(controller: _current, label: 'Current password', autofillHints: const [AutofillHints.password]),
+            PasswordField(controller: _new, label: 'New password', helper: 'At least 8 characters',
+                autofillHints: const [AutofillHints.newPassword]),
+            PasswordField(controller: _again, label: 'New password again', onSubmitted: (_) => _submit()),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+              ),
+          ]),
+        ),
+        actions: [
+          TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: _busy ? null : _submit, child: const Text('Change')),
         ],
       );
 }

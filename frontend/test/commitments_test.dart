@@ -20,4 +20,12 @@ void main() {
     expect(back.goals.single.name, 'Phone');
     expect(back.debts, isEmpty);
   });
+
+  test('a reached goal stays reached through a save (the app used to drop the flag)', () {
+    final j = <String, dynamic>{'goals': [<String, dynamic>{'name': 'Phone', 'target': 30000, 'saved': 0, 'months_left': 5, 'done': true, 'done_on': '2026-10-04'}]};
+    final back = Commitments.fromJson(Commitments.fromJson(j).toJson());
+    expect(back.goals.single.done, isTrue);
+    expect(back.goals.single.doneOn, '2026-10-04');
+    expect(Goal(name: 'Trip', target: 5000, monthsLeft: 2).toJson().containsKey('done'), isFalse);
+  });
 }

@@ -212,7 +212,7 @@ def understand(rows, remembered=None):
     for r in rows:
         d, low, amt = r["details"], r["details"].lower(), r["amount"]
         number, name, account = _payee(d)
-        if "charge" in low and abs(amt) < 1000 and (len(by_receipt[r["receipt"]]) > 1 or low.endswith("charge")):
+        if "charge" in low and amt < 0 and abs(amt) < 1000 and (len(by_receipt[r["receipt"]]) > 1 or low.endswith("charge")):
             _set(r, "spend", "charges", "charges", "M-PESA charges", "type")   # its own line, never "money sent"
         elif low.startswith(("unit trust invest", "ziidi trader", "m-shwari deposit", "mshwari deposit",
                              "lock savings", "kcb m-pesa deposit")):
@@ -242,6 +242,8 @@ def understand(rows, remembered=None):
             phone, person = _person(d)
             _set(r, "received", "money_in", None, f"From {person.title()}", "type", payee=person.title(),
                  key=f"in:person:{phone}:{person}")
+        elif amt > 0 and "reversal" in low:
+            _set(r, "ignore", "other", None, "Reversal", "type")         # paired with its payment below
         elif amt > 0:
             _set(r, "received", "money_in", None, "Money received", "type")
         elif low.startswith(("customer bundle purchase", "airtime purchase", "buy bundles", "buy airtime")):
@@ -278,13 +280,57 @@ def understand(rows, remembered=None):
             else:
                 _set(r, "spend", "buy_goods", UNSORTED, f"Shop: {name}", None, payee=name, key=f"till:{number}")
         elif "reversal" in low:
-            _set(r, "ignore", "other", None, "Reversal", "type")
+            # Money taken back (a payment to the user reversed): not spending, and the money it takes back was
+            # never counted as income unless tagged, so it is left out.
+            _set(r, "ignore", "other", None, "Reversal (money taken back)", "type")
         else:
             _set(r, "spend", "other", UNSORTED, d[:60], None)
         r["auto_category"], r["auto_kind"] = r["category"], r["kind"]
         if r["payee_key"] and r["payee_key"] in remembered:
             apply_tag(r, remembered[r["payee_key"]])
+    _pair_reversals(rows)
     return rows
+
+
+REVERSAL_DAYS = 7
+
+
+def _pair_reversals(rows):
+    """A reversal is money given back for a payment that did not go through. Leaving out only the reversal would
+    still count the original as spending, so both are left out. The original is the payment whose receipt the
+    reversal names, else the closest earlier payment of the same amount (alone, or with its charge) within
+    REVERSAL_DAYS days. If none is found the reversal is kept as money received, so totals stay honest."""
+    receipts = defaultdict(list)
+    for r in rows:
+        receipts[r["receipt"]].append(r)
+    day = lambda r: datetime.strptime(r["time"][:10], "%Y-%m-%d")
+    for rev in rows:
+        if rev.get("label") != "Reversal" or rev["amount"] <= 0:
+            continue
+        named = [c for c in re.findall(r"\b[A-Z0-9]{10}\b", rev["details"]) if c in receipts and c != rev["receipt"]]
+        match = None
+        if named:
+            match = [x for x in receipts[named[0]] if x["amount"] < 0 and not x.get("reversed")]
+        else:
+            for code, group in receipts.items():
+                out = [x for x in group if x["amount"] < 0 and not x.get("reversed") and x["kind"] != "ignore"]
+                if code == rev["receipt"] or not out or out[0]["n"] > rev["n"]:
+                    continue
+                if not 0 <= (day(rev) - day(out[0])).days <= REVERSAL_DAYS:
+                    continue
+                whole = abs(-sum(x["amount"] for x in out) - rev["amount"]) < 0.005
+                single = [x for x in out if abs(-x["amount"] - rev["amount"]) < 0.005]
+                found = out if whole else single[:1]
+                if found and (match is None or found[0]["n"] > match[0]["n"]):
+                    match = found                       # the closest earlier payment wins
+        if not match:
+            _set(rev, "received", "money_in", None, "Reversal (payment not found)", "type")
+            rev["auto_category"], rev["auto_kind"] = rev["category"], rev["kind"]
+            continue
+        for x in match:
+            x.update(kind="ignore", reversed=True, label=f"Reversed: {x.get('label') or x['details'][:40]}")
+            x["auto_kind"] = "ignore"
+        rev["label"] = f"Reversal of {match[0]['receipt']}"
 
 
 def apply_tag(r, tag):

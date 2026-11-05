@@ -32,4 +32,26 @@ void main() {
     expect(() => api.login('a@b.com', 'nope12345'),
         throwsA(isA<ApiException>().having((e) => e.message, 'message', 'wrong email or password')));
   });
+
+  test('changing the password keeps the new token for later requests', () async {
+    final client = MockClient((req) async {
+      expect(jsonDecode(req.body), {'current': 'old-pass-1', 'new': 'new-pass-2'});
+      return http.Response(jsonEncode({'token': 'fresh', 'changed': true}), 200);
+    });
+    final api = Api(client: client, baseUrl: 'http://test')..token = 'stale';
+    expect(await api.changePassword('old-pass-1', 'new-pass-2'), 'fresh');
+    expect(api.token, 'fresh');
+  });
+
+  test('editing a record sends a PATCH with only the changed fields', () async {
+    late http.Request seen;
+    final api = Api(client: MockClient((req) async {
+      seen = req;
+      return http.Response(jsonEncode({'updated': 1}), 200);
+    }), baseUrl: 'http://test');
+    await api.editTransaction(7, {'amount': 650, 'one_off': false});
+    expect(seen.method, 'PATCH');
+    expect(seen.url.path, '/me/transactions/7');
+    expect(jsonDecode(seen.body), {'amount': 650, 'one_off': false});
+  });
 }

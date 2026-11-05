@@ -17,6 +17,9 @@ class AppState extends ChangeNotifier {
   final Api api;
   Profile? profile;
   bool loaded = false;
+  /// false: the server says this user has not agreed to the current privacy notice. null: not known (offline),
+  /// so the app is not blocked; the server still refuses statements without consent.
+  bool? consented;
   bool get signedIn => api.token != null;
 
   Future<void> load() async {
@@ -28,6 +31,7 @@ class AppState extends ChangeNotifier {
       try {
         final remote = await api.getProfile();
         if (remote != null) await _cache(Profile.fromJson(remote));
+        consented = (await api.consent())['accepted'] == true;
       } on ApiException catch (e) {
         if (e.isUnauthorised) await signOut();   // token expired or account deleted
         // Offline: keep the cached copy.
@@ -37,8 +41,8 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> signIn(String email, String password, {required bool newAccount}) async {
-    newAccount ? await api.register(email, password) : await api.login(email, password);
+  Future<void> signIn(String email, String password, {required bool newAccount, bool consent = false}) async {
+    newAccount ? await api.register(email, password, consent: consent) : await api.login(email, password);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, api.token!);
     profile = null;
@@ -48,12 +52,37 @@ class AppState extends ChangeNotifier {
     } else {
       await prefs.remove(_profileKey);
     }
+    try {
+      consented = (await api.consent())['accepted'] == true;
+    } on ApiException {
+      consented = null;                         // unknown for now; asked again on the next start
+    }
     notifyListeners();
+  }
+
+  /// Change the password and keep this device logged in with the new token.
+  Future<void> changePassword(String current, String newPassword) async {
+    await api.changePassword(current, newPassword);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, api.token!);
+  }
+
+  Future<void> acceptPrivacy(String version) async {
+    await api.giveConsent(version);
+    consented = true;
+    notifyListeners();
+  }
+
+  /// Delete everything on the server, then forget the account on this device.
+  Future<void> deleteAccount() async {
+    await api.deleteAccount();
+    await signOut();
   }
 
   Future<void> signOut() async {
     api.token = null;
     profile = null;
+    consented = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_profileKey);

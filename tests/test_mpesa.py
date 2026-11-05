@@ -218,3 +218,42 @@ def test_money_in_is_taggable_and_bank_money_is_not_income_until_the_user_says()
     assert ins and outs and info["payees"].index(ins[0]) > info["payees"].index(outs[-1])     # pay first, then in
     tagged = mpesa.understand(mpesa.parse_text(SAMPLE)["rows"], remembered={"in:standard chartered bank": "income"})
     assert by_receipt(tagged, "TJ00000013")["kind"] == "income"
+
+
+# ---------- reversals (5 Nov): the original payment must not stay counted as spending ----------
+
+def _rows(*specs):
+    """(receipt, date, details, amount) oldest first, as parse_text returns them."""
+    return [{"receipt": rc, "time": f"{d} 10:00:00", "details": det, "amount": amt, "balance": 0.0, "n": i}
+            for i, (rc, d, det, amt) in enumerate(specs)]
+
+
+def test_a_reversal_cancels_the_payment_it_names():
+    rows = mpesa.understand(_rows(
+        ("TK00000001", "2026-10-02", "Customer Transfer to - 0711***111 JOHN MWANGI", -2000.0),
+        ("TK00000002", "2026-10-02", "Customer Transfer to - 0722***222 JANE AKINYI", -2000.0),
+        ("TK00000003", "2026-10-03", "Reversal of transaction TK00000001", 2000.0)))
+    assert [r["kind"] for r in rows] == ["ignore", "spend", "ignore"]
+    assert rows[0]["label"].startswith("Reversed") and rows[2]["label"] == "Reversal of TK00000001"
+
+
+def test_a_reversal_without_a_receipt_cancels_the_closest_earlier_payment_and_its_charge():
+    rows = mpesa.understand(_rows(
+        ("TK00000001", "2026-10-01", "Customer Transfer to - 0711***111 JOHN MWANGI", -500.0),
+        ("TK00000002", "2026-10-05", "Customer Transfer of Funds Charge", -13.0),
+        ("TK00000002", "2026-10-05", "Customer Transfer to - 0711***111 JOHN MWANGI", -500.0),
+        ("TK00000003", "2026-10-06", "Reversal", 513.0)))
+    assert [r["kind"] for r in rows] == ["spend", "ignore", "ignore", "ignore"]
+
+
+def test_a_reversal_with_no_matching_payment_is_money_received_not_income():
+    rows = mpesa.understand(_rows(
+        ("TK00000001", "2026-09-01", "Customer Transfer to - 0711***111 JOHN MWANGI", -700.0),
+        ("TK00000002", "2026-10-20", "Reversal", 700.0)))          # 49 days later: too far to be the same payment
+    assert rows[0]["kind"] == "spend" and rows[1]["kind"] == "received"
+
+
+def test_a_reversed_charge_is_not_counted_as_a_charge():
+    rows = mpesa.understand(_rows(("TK00000001", "2026-10-02", "Customer Transfer of Funds Charge", -13.0),
+                                  ("TK00000002", "2026-10-02", "Reversal of Customer Transfer of Funds Charge", 13.0)))
+    assert rows[1]["kind"] != "spend" and rows[0]["kind"] == "ignore"

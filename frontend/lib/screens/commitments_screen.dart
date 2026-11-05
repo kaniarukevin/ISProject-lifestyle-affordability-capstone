@@ -70,6 +70,14 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
     await _save();
   }
 
+  /// Change an item: the same form, filled in. Saved as soon as it is confirmed.
+  Future<void> _edit(String kind, Object current, void Function(Object) replace) async {
+    final item = await showDialog<Object>(context: context, builder: (_) => _AddDialog(kind: kind, initial: current));
+    if (item == null) return;
+    setState(() => replace(item));
+    await _save();
+  }
+
   void _remove(VoidCallback removal) {
     setState(removal);
     _save(quiet: true);
@@ -131,6 +139,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
                 subtitle: '${kes(e.value.amount)} ${obligationFrequencies[e.value.frequency]} · '
                     '${obligationCategories[e.value.category]}',
                 onDelete: () => _remove(() => c!.obligations.removeAt(e.key)),
+                onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
               )).toList(),
         ),
         _Section(
@@ -146,6 +155,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
                     '${kes(e.value.monthlyPayment)} a month'
                     '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}',
                 onDelete: () => _remove(() => c!.debts.removeAt(e.key)),
+                onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
               );
             }),
             if (c!.debts.isNotEmpty)
@@ -171,12 +181,22 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
           empty: 'A new phone, an emergency fund, a trip…',
           onAdd: () => _add('goal'),
           children: c!.goals.asMap().entries.map((e) {
-            final g = (s?['goals'] as List?)?.elementAtOrNull(e.key) as Map?;
+            // Matched by name: the server's list leaves reached goals out, so positions differ.
+            final g = ((s?['goals'] as List?) ?? []).cast<Map>().where((x) => x['name'] == e.value.name).firstOrNull;
+            if (e.value.done) {
+              // Reached: shown, nothing more is set aside for it, nothing to edit.
+              return _Row(
+                title: '✓ ${e.value.name}',
+                subtitle: 'Reached${e.value.doneOn != null ? ' on ${e.value.doneOn}' : ''} · ${kes(e.value.target)}',
+                onDelete: () => _remove(() => c!.goals.removeAt(e.key)),
+              );
+            }
             return _Row(
               title: e.value.name,
               subtitle: '${kes(e.value.target)} in ${e.value.monthsLeft} months'
                   '${g != null ? ' · save ${kes(g['monthly_needed_KES'] as num)} a month' : ''}',
               onDelete: () => _remove(() => c!.goals.removeAt(e.key)),
+              onTap: () => _edit('goal', e.value, (x) => c!.goals[e.key] = x as Goal),
             );
           }).toList(),
         ),
@@ -207,13 +227,15 @@ class _Section extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.title, required this.subtitle, required this.onDelete});
+  const _Row({required this.title, required this.subtitle, required this.onDelete, this.onTap});
   final String title, subtitle;
   final VoidCallback onDelete;
+  final VoidCallback? onTap;      // change it
 
   @override
   Widget build(BuildContext context) => ListTile(
         contentPadding: EdgeInsets.zero,
+        onTap: onTap,
         title: Text(title),
         subtitle: Text(subtitle),
         trailing: IconButton(icon: const Icon(Icons.delete_outline), onPressed: onDelete),
@@ -222,8 +244,9 @@ class _Row extends StatelessWidget {
 
 /// One dialog for all three kinds, so the fields stay consistent.
 class _AddDialog extends StatefulWidget {
-  const _AddDialog({required this.kind});
+  const _AddDialog({required this.kind, this.initial});
   final String kind; // obligation, debt, goal
+  final Object? initial; // set when changing an existing item
 
   @override
   State<_AddDialog> createState() => _AddDialogState();
@@ -236,6 +259,30 @@ class _AddDialogState extends State<_AddDialog> {
   final d = TextEditingController(); // monthly payment / months left
   String frequency = 'monthly', category = 'housing';
   String? error;
+
+  String _txt(double v) => v == 0 ? '' : (v == v.roundToDouble() ? v.round().toString() : v.toString());
+
+  @override
+  void initState() {
+    super.initState();
+    final i = widget.initial;
+    if (i is Obligation) {
+      name.text = i.name;
+      a.text = _txt(i.amount);
+      frequency = i.frequency;
+      category = i.category;
+    } else if (i is Debt) {
+      name.text = i.name;
+      a.text = _txt(i.balance);
+      b.text = _txt(i.annualRate);
+      d.text = _txt(i.monthlyPayment);
+    } else if (i is Goal) {
+      name.text = i.name;
+      a.text = _txt(i.target);
+      b.text = _txt(i.saved);
+      d.text = '${i.monthsLeft}';
+    }
+  }
 
   @override
   void dispose() {
@@ -274,7 +321,8 @@ class _AddDialogState extends State<_AddDialog> {
   Widget build(BuildContext context) {
     final k = widget.kind;
     return AlertDialog(
-      title: Text(k == 'obligation' ? 'Add a bill or obligation' : k == 'debt' ? 'Add a debt' : 'Add a savings goal'),
+      title: Text('${widget.initial == null ? 'Add' : 'Change'} '
+          '${k == 'obligation' ? 'a bill or obligation' : k == 'debt' ? 'a debt' : 'a savings goal'}'),
       content: SingleChildScrollView(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           _field(name, 'Name', number: false,
@@ -312,7 +360,7 @@ class _AddDialogState extends State<_AddDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _submit, child: const Text('Add')),
+        FilledButton(onPressed: _submit, child: Text(widget.initial == null ? 'Add' : 'Save')),
       ],
     );
   }

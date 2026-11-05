@@ -61,6 +61,8 @@ Future<void> handleOffer(BuildContext context, Map<String, dynamic>? offer) asyn
 
 /// Tap a payment to correct it: choose what it is, and whether that applies to just this payment or always
 /// to this payee (past and future). Returns true when something changed.
+const _oneOffSwitch = '__one_off__';
+
 Future<bool> showCorrectSheet(BuildContext context, Txn t) async {
   final api = context.read<AppState>().api;
   var always = t.payeeKey != null;
@@ -85,6 +87,13 @@ Future<bool> showCorrectSheet(BuildContext context, Txn t) async {
             allowOwnAccount: t.payeeKey != null,
             onPick: (tag) => Navigator.pop(ctx, tag),
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: t.oneOff,
+            onChanged: (_) => Navigator.pop(ctx, _oneOffSwitch),
+            title: const Text('One-off purchase'),
+            subtitle: const Text('Big and rare, like a phone or a plot: shown, but kept out of your usual spending.'),
+          ),
           if (t.payeeKey != null)
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
@@ -98,6 +107,19 @@ Future<bool> showCorrectSheet(BuildContext context, Txn t) async {
     ),
   );
   if (picked == null || picked == t.category || !context.mounted) return false;
+  if (picked == _oneOffSwitch) {
+    try {
+      await api.editTransaction(t.id!, {'one_off': !t.oneOff});
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(t.oneOff ? 'Counted as usual spending again.' : 'Marked as a one-off.')));
+      }
+      return true;
+    } on ApiException catch (e) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return false;
+    }
+  }
   try {
     final r = await api.correctTransaction(t.id!, picked, scope: always && t.payeeKey != null ? 'payee' : 'one');
     if (context.mounted) {

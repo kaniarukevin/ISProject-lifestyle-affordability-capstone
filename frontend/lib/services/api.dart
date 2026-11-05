@@ -70,10 +70,22 @@ class Api {
   Future<dynamic> delete(String path) => _send('DELETE', path);
 
   // ---- accounts ----
-  Future<String> register(String email, String password) async {
-    final d = await post('/auth/register', {'email': email, 'password': password});
+  /// [consent]: the user ticked "I agree to the privacy notice" on the sign-up screen.
+  Future<String> register(String email, String password, {bool consent = false}) async {
+    final d = await post('/auth/register', {'email': email, 'password': password, 'consent': consent});
     return token = d['token'] as String;
   }
+
+  // ---- privacy (Data Protection Act 2019) ----
+  Future<Map<String, dynamic>> privacy() async => (await get('/privacy')) as Map<String, dynamic>;
+
+  /// Whether this user agreed to the current notice: {version, accepted, accepted_at}.
+  Future<Map<String, dynamic>> consent() async => (await get('/me/consent')) as Map<String, dynamic>;
+
+  Future<void> giveConsent(String version) => post('/me/consent', {'accept': true, 'version': version});
+
+  /// Remove the account and all its data on the server.
+  Future<void> deleteAccount() => delete('/me');
 
   Future<String> login(String email, String password) async {
     final d = await post('/auth/login', {'email': email, 'password': password});
@@ -94,12 +106,17 @@ class Api {
   Future<void> putProfile(Map<String, dynamic> profile) => put('/me/profile', profile);
 
   // ---- spending ----
-  Future<List<Txn>> getTransactions() async {
-    final d = await get('/me/transactions') as Map<String, dynamic>;
+  /// All records, or one month's ([month] like '2026-10').
+  Future<List<Txn>> getTransactions({String? month}) async {
+    final d = await get(month == null ? '/me/transactions' : '/me/transactions?month=$month') as Map<String, dynamic>;
     return (d['transactions'] as List).map((e) => Txn.fromJson(e as Map<String, dynamic>)).toList();
   }
 
   /// One transaction or many (a parsed statement) in a single request.
+  /// One line per month (totals by category, record count), newest first, and whether a statement was imported.
+  Future<Map<String, dynamic>> spendingSummary() async =>
+      (await get('/me/transactions/summary')) as Map<String, dynamic>;
+
   Future<List<Txn>> addTransactions(List<Txn> txns) async {
     final d = await post('/me/transactions', txns.map((t) => t.toJson()).toList()) as Map<String, dynamic>;
     return (d['transactions'] as List).map((e) => Txn.fromJson(e as Map<String, dynamic>)).toList();
@@ -111,6 +128,15 @@ class Api {
   /// {updated, offer}; offer is set when tagging rent or school fees could become a commitment.
   Future<Map<String, dynamic>> correctTransaction(int id, String category, {String scope = 'one'}) async =>
       (await _send('PATCH', '/me/transactions/$id', {'category': category, 'scope': scope})) as Map<String, dynamic>;
+
+  /// Change fields of one record: amount, date, description (typed-in records only), category, one_off.
+  Future<void> editTransaction(int id, Map<String, dynamic> fields) => _send('PATCH', '/me/transactions/$id', fields);
+
+  /// Change the password; returns the new token (other devices are logged out).
+  Future<String> changePassword(String current, String newPassword) async {
+    final d = await post('/me/password', {'current': current, 'new': newPassword});
+    return token = d['token'] as String;
+  }
 
   /// Whether this account is an admin (named in the server's ADMIN_EMAILS).
   Future<bool> isAdmin() async => ((await get('/me/role')) as Map<String, dynamic>)['admin'] == true;
