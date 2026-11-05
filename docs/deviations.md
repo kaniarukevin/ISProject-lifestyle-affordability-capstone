@@ -173,6 +173,8 @@ Status key used below:
   - A privacy notice (who, what, why, where, rights, how long) is shown at sign-up, and the user's consent is
     recorded with the notice version and time. Older accounts are asked once. Statements cannot be read without it.
   - Users can delete their whole account and all their data from Your household (`DELETE /me`).
+  - Users can download everything the app keeps about them as one file (`GET /me/export`), the right to a copy
+    of one's data.
   - The admin view masks users' emails and shows counts only.
 
 ### D9. Database design
