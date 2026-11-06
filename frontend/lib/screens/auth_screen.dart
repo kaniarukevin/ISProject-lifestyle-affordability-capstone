@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../widgets/tosha_logo.dart';
 import 'password_field.dart';
 import 'privacy_screen.dart';
 
@@ -64,11 +65,11 @@ class _AuthScreenState extends State<AuthScreen> {
             shrinkWrap: true,
             padding: const EdgeInsets.all(24),
             children: [
-              Icon(Icons.account_balance_wallet, size: 56, color: theme.colorScheme.primary),
+              const Center(child: _LogoTile()),
               const SizedBox(height: 12),
-              Text('Lifestyle Affordability', textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
+              Text('Tosha', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
               const SizedBox(height: 4),
-              Text('Know what you can afford before you commit.',
+              Text("Know if it's enough.",
                   textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
               const SizedBox(height: 24),
               SegmentedButton<bool>(
@@ -129,4 +130,18 @@ class _AuthScreenState extends State<AuthScreen> {
       ),
     );
   }
+}
+
+/// The app icon on the sign-in screen: the lime ring on a black tile.
+class _LogoTile extends StatelessWidget {
+  const _LogoTile();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(20)),
+        alignment: Alignment.center,
+        child: const ToshaLogo(size: 48),
+      );
 }

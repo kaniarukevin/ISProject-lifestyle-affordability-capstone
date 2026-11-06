@@ -6,9 +6,17 @@ import 'screens/home_screen.dart';
 import 'screens/privacy_screen.dart';
 import 'screens/profile_screen.dart';
 import 'state/app_state.dart';
+import 'theme/app_theme.dart';
+import 'theme/theme_controller.dart';
 
 void main() {
-  runApp(ChangeNotifierProvider(create: (_) => AppState()..load(), child: const App()));
+  runApp(MultiProvider(
+    providers: [
+      ChangeNotifierProvider(create: (_) => AppState()..load()),
+      ChangeNotifierProvider(create: (_) => ThemeController()..load()),
+    ],
+    child: const App(),
+  ));
 }
 
 class App extends StatelessWidget {
@@ -16,9 +24,11 @@ class App extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'Lifestyle Affordability',
+        title: 'Tosha',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(colorSchemeSeed: const Color(0xFF1B7F5B), useMaterial3: true),
+        theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
+        themeMode: context.watch<ThemeController>().mode,
         home: const _Start(),
       );
 }

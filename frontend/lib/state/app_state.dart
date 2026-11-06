@@ -9,7 +9,9 @@ import '../services/api.dart';
 /// What the app knows about the signed-in user. The server (PostgreSQL on Neon) is the source of truth;
 /// the device keeps the log-in token and a copy of the profile so the app still opens without internet.
 class AppState extends ChangeNotifier {
-  AppState({Api? api}) : api = api ?? Api();
+  AppState({Api? api}) : api = api ?? Api() {
+    this.api.onUnauthorised = () => signOut();
+  }
 
   static const _tokenKey = 'token_v1';
   static const _profileKey = 'profile_v1';

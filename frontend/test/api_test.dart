@@ -19,6 +19,17 @@ void main() {
     expect(seenAuth, 'Bearer abc');
   });
 
+  test('an expired login signs the app out', () async {
+    var signedOut = false;
+    final api = Api(
+        client: MockClient((_) async => http.Response(jsonEncode({'error': 'your session has expired, log in again'}), 401)),
+        baseUrl: 'http://test')
+      ..token = 'old'
+      ..onUnauthorised = () => signedOut = true;
+    await expectLater(api.getProfile(), throwsA(isA<ApiException>()));
+    expect(signedOut, isTrue);
+  });
+
   test('a missing profile is null, not an error', () async {
     final api = Api(client: MockClient((_) async => http.Response(jsonEncode({'error': 'no profile yet'}), 404)),
         baseUrl: 'http://test');
