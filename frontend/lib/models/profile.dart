@@ -39,6 +39,17 @@ class IncomeSource {
       );
 }
 
+/// How money comes in (onboarding: pick all that apply). Only "salary" reaches the models, as formalJob.
+const Map<String, String> incomeTypeLabels = {
+  'salary': 'A salary with a payslip',
+  'casual': 'Casual or contract work',
+  'business': 'My own business or hustle',
+  'farming': 'Farming',
+  'support': 'Allowance, HELB or family support',
+  'pension': 'Pension',
+  'none': 'Not earning right now',
+};
+
 class Profile {
   Profile({
     this.householdSize = 1,
@@ -49,8 +60,27 @@ class Profile {
     this.savingsBalance = 0,
     List<IncomeSource>? incomes,
     Map<String, double>? estimates,
+    this.name,
+    List<String>? incomeTypes,
+    this.studying = false,
+    this.childrenInSchool = 0,
+    this.incomeLow,
+    this.email,
   })  : incomes = incomes ?? [],
-        estimates = estimates ?? {};
+        estimates = estimates ?? {},
+        incomeTypes = incomeTypes ?? [];
+
+  /// What to call the user (first name). Null for accounts made before onboarding asked.
+  String? name;
+  List<String> incomeTypes;
+  bool studying;
+  int childrenInSchool;
+
+  /// "A low month is about": only when income varies.
+  double? incomeLow;
+
+  /// The account's email, from the server (read only).
+  String? email;
 
   int householdSize;
   int dependants;
@@ -82,6 +112,12 @@ class Profile {
         'savingsBalance': savingsBalance,
         'estimates': estimates,
         'incomes': incomes.map((s) => s.toJson()).toList(),
+        if (name != null) 'name': name,
+        if (incomeTypes.isNotEmpty) 'incomeTypes': incomeTypes,
+        'studying': studying,
+        'childrenInSchool': childrenInSchool,
+        'incomeLow': incomeLow,
+        if (email != null) 'email': email,
       };
 
   factory Profile.fromJson(Map<String, dynamic> j) => Profile(
@@ -96,5 +132,11 @@ class Profile {
         incomes: (j['incomes'] as List)
             .map((e) => IncomeSource.fromJson(e as Map<String, dynamic>))
             .toList(),
+        name: j['name'] as String?,
+        incomeTypes: ((j['incomeTypes'] as List?) ?? []).cast<String>(),
+        studying: (j['studying'] as bool?) ?? false,
+        childrenInSchool: (j['childrenInSchool'] as num?)?.toInt() ?? 0,
+        incomeLow: (j['incomeLow'] as num?)?.toDouble(),
+        email: j['email'] as String?,
       );
 }

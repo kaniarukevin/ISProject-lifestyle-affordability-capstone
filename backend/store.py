@@ -42,6 +42,10 @@ OUTSIDE = [UNSORTED, "shopping", "health", "personal_care", "other", "charges"]
 OWN_ACCOUNT = "own_account"    # tagged by the user as moving money to their own account: not spending
 EVERYDAY = ["food_groceries", "transport", "utilities", "airtime_data", "mobile_money_transfers", "entertainment"]
 URBAN_RURAL = ("urban", "peri_urban", "rural")
+# How money comes in, pick all that apply (onboarding). Close to the kinds of income household surveys record:
+# wages, casual work, own business, farming, money sent by others, pensions. Only "salary" reaches the models
+# (as formal_job, the formal/informal split the training data was built on); the rest tailors examples and wording.
+INCOME_TYPES = ("salary", "casual", "business", "farming", "support", "pension", "none")
 FREQUENCIES = {"weekly": 52, "monthly": 12, "termly": 3, "semester": 2, "yearly": 1}
 
 
@@ -130,6 +134,10 @@ class Profile(Base):
     savings_balance: Mapped[float] = mapped_column(Float, default=0.0)   # money already saved (M-Shwari, SACCO, bank)
     estimates: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # rough usual monthly spending, from setup
     income_low: Mapped[float | None] = mapped_column(Float, nullable=True)  # "a low month", if income varies
+    name: Mapped[str | None] = mapped_column(String(40), nullable=True)      # what to call the user (first name)
+    income_types: Mapped[list | None] = mapped_column(JSON, nullable=True)  # INCOME_TYPES, pick all that apply
+    studying: Mapped[bool] = mapped_column(Boolean, default=False)
+    children_in_school: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
@@ -192,6 +200,18 @@ class Scenario(Base):
 
 
 _DB = {}
+
+
+class IncomeHistory(Base):
+    """When the profile income changed: from (year, month) on, the monthly income was `monthly`. Past months are
+    scored with the income of their time, so raising the income today does not rewrite earlier months. (0, 0)
+    holds the income from before the first recorded change. No rows: every month uses the current income."""
+    __tablename__ = "income_history"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    year: Mapped[int] = mapped_column(Integer)
+    month: Mapped[int] = mapped_column(Integer)
+    monthly: Mapped[float] = mapped_column(Float)
 
 
 class MoneyIn(Base):
@@ -263,7 +283,9 @@ def _upgrade(engine):
                                          "auto_category": "VARCHAR(40)",
                                          "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "statement_rules": {"was": "VARCHAR(40)"},
-                        "profiles": {"income_low": "FLOAT"},
+                        "profiles": {"income_low": "FLOAT", "name": "VARCHAR(40)", "income_types": "JSON",
+                                     "studying": f"BOOLEAN NOT NULL DEFAULT {false}",
+                                     "children_in_school": "INTEGER NOT NULL DEFAULT 0"},
                         "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP",
                                   "session_epoch": "INTEGER NOT NULL DEFAULT 0"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
@@ -612,6 +634,24 @@ def change_password():
 
 # ---------------- profile ----------------
 
+def _record_income(s, user_id, old, new, change="from_now"):
+    """Keep income history (IncomeHistory). from_now: past months keep the old income and the new one applies
+    from this month. correction: the old figure was a mistake, so the history is cleared and every month uses
+    the new income."""
+    if change == "correction":
+        s.execute(delete(IncomeHistory).where(IncomeHistory.user_id == user_id))
+        return
+    if abs(new - old) < 1:
+        return
+    today = _today()
+    have = s.scalars(select(IncomeHistory).where(IncomeHistory.user_id == user_id)).all()
+    if not have:
+        s.add(IncomeHistory(user_id=user_id, year=0, month=0, monthly=round(old, 2)))
+    s.execute(delete(IncomeHistory).where(IncomeHistory.user_id == user_id, IncomeHistory.year == today.year,
+                                          IncomeHistory.month == today.month))
+    s.add(IncomeHistory(user_id=user_id, year=today.year, month=today.month, monthly=round(new, 2)))
+
+
 @bp.get("/me/profile")
 @login_required
 def get_profile():
@@ -623,7 +663,9 @@ def get_profile():
         return jsonify(householdSize=p.household_size, dependants=p.dependants, urbanRural=p.urban_rural,
                        formalJob=p.formal_job, paysOwnFees=p.pays_own_fees,
                        savingsBalance=p.savings_balance or 0.0, estimates=p.estimates or {},
-                       incomeLow=p.income_low,
+                       incomeLow=p.income_low, name=p.name, incomeTypes=p.income_types or [],
+                       studying=bool(p.studying), childrenInSchool=p.children_in_school or 0,
+                       email=s.get(User, g.user_id).email,
                        incomes=[{"name": i.name, "amount": i.amount, "frequency": i.frequency} for i in incomes])
 
 
@@ -651,10 +693,37 @@ def put_profile():
     if not isinstance(est, dict) or any(k not in SPENDING_CATEGORIES for k in est):
         raise InputError("estimates must be an object of spending categories and monthly amounts")
     estimates = {k: _num(v or 0, f"estimate for {k}") for k, v in est.items() if v}
+    types = b.get("incomeTypes")
+    if types is not None and (not isinstance(types, list) or any(x not in INCOME_TYPES for x in types)):
+        raise InputError(f"incomeTypes must be a list of: {', '.join(INCOME_TYPES)}")
+    name = b.get("name")
+    if name is not None and (not isinstance(name, str) or len(name.strip()) > 40):
+        raise InputError("name must be text of at most 40 characters")
+    children = int(_num(b.get("childrenInSchool", 0) or 0, "childrenInSchool"))
+    if children >= size:
+        raise InputError("children in school must be fewer than the household size")
+    change = b.get("incomeChange", "from_now")
+    if change not in ("from_now", "correction"):
+        raise InputError("incomeChange must be from_now or correction")
     with session() as s:
-        p = s.get(Profile, g.user_id) or Profile(user_id=g.user_id)
+        existing = s.get(Profile, g.user_id)
+        p = existing or Profile(user_id=g.user_id)
+        if existing is not None:                   # a new income, from this month or as a correction
+            old = sum(i.amount * FREQUENCIES[i.frequency] / 12
+                      for i in s.scalars(select(IncomeSource).where(IncomeSource.user_id == g.user_id)))
+            new = sum(r.amount * FREQUENCIES[r.frequency] / 12 for r in rows)
+            _record_income(s, g.user_id, old, new, change)
         p.household_size, p.dependants, p.urban_rural = size, deps, where
         p.formal_job, p.pays_own_fees = bool(b.get("formalJob")), bool(b.get("paysOwnFees"))
+        if types is not None:
+            p.income_types = list(dict.fromkeys(types))
+            p.formal_job = "salary" in types          # the one part of the answer the models use
+        if name is not None:
+            p.name = name.strip() or None
+        if "studying" in b:
+            p.studying = bool(b.get("studying"))
+        if "childrenInSchool" in b:
+            p.children_in_school = children
         p.savings_balance = _num(b.get("savingsBalance", 0) or 0, "savingsBalance")
         p.estimates = estimates
         if "incomeLow" in b:                       # optional; an app that does not send it keeps the answer
@@ -761,6 +830,16 @@ def _user_months(s, user_id):
     txs = s.scalars(select(Transaction).where(Transaction.user_id == user_id)).all()
     incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)).all()
     income = sum(i.amount * FREQUENCIES[i.frequency] / 12 for i in incomes)
+    history = sorted(s.scalars(select(IncomeHistory).where(IncomeHistory.user_id == user_id)).all(),
+                     key=lambda r: r.year * 12 + r.month)
+
+    def income_at(key):
+        """The profile income in a given month: the latest change on or before it (current income if none)."""
+        if not history:
+            return income
+        at = key[0] * 12 + key[1]
+        got = [r.monthly for r in history if r.year * 12 + r.month <= at]
+        return got[-1] if got else history[0].monthly
     # Income actually received, when the user has tagged a source in a statement as their pay or allowance. For
     # the months a statement covers, that replaces the profile figure (a late or short allowance then shows);
     # other months keep the profile income.
@@ -783,7 +862,7 @@ def _user_months(s, user_id):
         # "A mix": the profile income stays the plan, but a month where less arrived uses the lower amount
         # (a late or short allowance shows; moving one's own savings never inflates income).
         got = actual.get(key, 0.0)
-        return min(income, got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
+        return min(income_at(key), got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
     by_month, outside, one_offs = {}, {}, {}
     for t in txs:
         key = (t.day.year, t.day.month)
@@ -817,7 +896,7 @@ def _user_months(s, user_id):
         spread = {c: cats[c] + (un * weights.get(c, 0.0) if c in EVERYDAY else 0.0) for c in SPENDING_CATEGORIES}
         from_statement = use_actual and (y, mo) in covered
         months.append({"year": y, "month": mo, **spread,
-                       "income_primary": round(month_income((y, mo)) if from_statement else income, 2),
+                       "income_primary": round(month_income((y, mo)) if from_statement else income_at((y, mo)), 2),
                        "income_from": "statement" if from_statement else "profile",
                        "unsorted": round(un, 2), "outside": {k: round(v, 2) for k, v in out.items()},
                        "known": {c: round(v, 2) for c, v in cats.items()}})
@@ -2295,6 +2374,10 @@ def _apply_choice(s, user_id, req, result, how):
         notes.append(f"Added the goal {label}: KES {round(float(req['target']) / months):,} a month is set aside in your budget.")
     elif kind == "income_change":
         delta = float(req["amount"])
+        if not req.get("months"):                 # for good: the new income applies from this month on
+            before = sum(i.amount * FREQUENCIES[i.frequency] / 12
+                         for i in s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)))
+            _record_income(s, user_id, before, max(0.0, before + delta))
         if req.get("months"):
             notes.append("This is temporary, so your usual income is unchanged. Your savings carry the gap.")
         elif delta > 0:
@@ -3000,7 +3083,7 @@ def export_my_data():
         user, profile, c = s.get(User, g.user_id), s.get(Profile, g.user_id), s.get(Commitments, g.user_id)
         data = {
             "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "about": "Everything Lifestyle Affordability keeps about you. Uploaded statement files and passwords are "
+            "about": "Everything Tosha keeps about you. Uploaded statement files and passwords are "
                      "never kept, so they are not here.",
             "account": {"email": user.email, "created_at": user.created_at.isoformat() if user.created_at else None,
                         "privacy_notice_agreed": user.consent_version,
@@ -3009,7 +3092,11 @@ def export_my_data():
                 "household_size": profile.household_size, "dependants": profile.dependants,
                 "urban_rural": profile.urban_rural, "formal_job": profile.formal_job,
                 "pays_own_fees": profile.pays_own_fees, "savings_balance": profile.savings_balance,
-                "usual_month_estimates": profile.estimates, "low_month_income": profile.income_low},
+                "usual_month_estimates": profile.estimates, "low_month_income": profile.income_low,
+                "name": profile.name, "income_types": profile.income_types, "studying": profile.studying,
+                "children_in_school": profile.children_in_school},
+            "income_history": [{"from_year": r.year, "from_month": r.month, "monthly": r.monthly}
+                               for r in rows(s, IncomeHistory, IncomeHistory.id)],
             "income_sources": [{"name": i.name, "amount": i.amount, "frequency": i.frequency}
                                for i in rows(s, IncomeSource, IncomeSource.id)],
             "spending": [_tx_json(t) for t in rows(s, Transaction, Transaction.day)],
@@ -3033,7 +3120,7 @@ def delete_account():
     """Privacy: a user (or a tester after the study) can remove everything about them."""
     with session() as s:
         for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
-                      RevokedToken, ForecastSnapshot):
+                      RevokedToken, ForecastSnapshot, IncomeHistory):
             s.execute(delete(table).where(table.user_id == g.user_id))
         s.execute(delete(User).where(User.id == g.user_id))
         s.commit()

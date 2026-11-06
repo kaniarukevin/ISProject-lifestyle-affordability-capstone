@@ -102,10 +102,19 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Save to the server first; only then update the device copy.
-  Future<void> saveProfile(Profile p) async {
-    await api.putProfile(p.toJson());
-    await _cache(p);
+  /// Save to the server first; only then update the device copy. [incomeChange]: 'from_now' (the income
+  /// changed this month, earlier months keep the old figure) or 'correction' (the old figure was a mistake).
+  Future<void> saveProfile(Profile p, {String incomeChange = 'from_now'}) async {
+    await api.putProfile({...p.toJson(), 'incomeChange': incomeChange});
+    final remote = await api.getProfile();            // picks up the email and anything the server set
+    await _cache(remote != null ? Profile.fromJson(remote) : p);
+    notifyListeners();
+  }
+
+  /// A profile already saved on the server (onboarding): fetch it back, keep it here and open the app.
+  Future<void> useSavedProfile(Profile p) async {
+    final remote = await api.getProfile();
+    await _cache(remote != null ? Profile.fromJson(remote) : p);
     notifyListeners();
   }
 

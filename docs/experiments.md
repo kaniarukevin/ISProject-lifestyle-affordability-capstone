@@ -438,3 +438,13 @@ Check on the model as deployed: for a student spending about KES 22,000 a month 
 
 Changed: `forecast_for_user` gives the model a fee month only when the user pays fees: school fees in their records, a school-fees bill under Plans, or "I pay my own fees" in the profile (`_pays_fees`). The model is not retrained. Test: `test_no_fee_bump_for_someone_who_pays_no_fees` (fails on the old code: January 17,291 against November 16,211 for the same student).
 
+## 2026-11-06: Past months keep the income they were lived on
+
+Found by Kevin: raising the profile income made earlier months look healthier. Months without statement income were all scored with today's profile income, so a raise rewrote the user's own history and the score (which looks at recent months) jumped.
+
+Test case (KES 30,000 allowance, six months spending about 29,000): all six months Strained, score 50. Income raised to 60,000 on the old code: all six Stable, score 100. On the new code: still Strained, score 50; the new income shows in this month's figures and in months recorded from now on.
+
+Changed: a new table `income_history` keeps "from this month the income is X" whenever incomes are saved or an income change is applied with "I'm doing this". Each past month uses the income of its time; statement months keep what actually arrived. Saving asks whether the income changed (from this month) or a mistake is being corrected (`incomeChange: correction` clears the history so every month uses the new figure). Accounts with no history behave as before. Test: `test_a_new_income_does_not_rewrite_past_months` (fails on the old code).
+
+Also added to the profile, for the new onboarding: a first name, how money comes in (pick all that apply: salary, casual work, business, farming, support from family or HELB, pension, not earning), studying, and children in school; the email is returned with the profile. Only "salary" reaches the models, as the existing formal-job input (the formal/informal split the training data was built on), so no model was retrained or re-tested.
+

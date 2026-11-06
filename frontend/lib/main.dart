@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/privacy_screen.dart';
-import 'screens/profile_screen.dart';
+import 'screens/onboarding_screen.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
@@ -33,7 +33,7 @@ class App extends StatelessWidget {
       );
 }
 
-/// Not signed in: account screen. Signed in without a household: profile. Otherwise: the app.
+/// Not signed in: account screen. Signed in without a household: onboarding. Otherwise: the app.
 class _Start extends StatelessWidget {
   const _Start();
 
@@ -43,6 +43,6 @@ class _Start extends StatelessWidget {
     if (!state.loaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (!state.signedIn) return const AuthScreen();
     if (state.consented == false) return const ConsentScreen();
-    return state.profile == null ? const ProfileScreen() : const HomeScreen();
+    return state.profile == null ? const OnboardingScreen() : const HomeScreen();
   }
 }

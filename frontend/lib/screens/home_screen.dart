@@ -54,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    context.watch<AppState>(); // rebuild when the household changes
+    final state = context.watch<AppState>(); // rebuild when the household changes
     final pages = [
       DashboardScreen(onAddSpending: () => showAddSheet(context), onOpenTab: _go),
       const AffordScreen(),
@@ -68,7 +68,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final wide = box.maxWidth >= HomeScreen.wideFrom;
       final page = _Page(
         title: _dests[_tab].title,
-        greeting: _tab == 0 ? 'Habari' : null,
+        greeting: _tab == 0 ? 'Habari${(state.profile?.name ?? '').isNotEmpty ? ', ${state.profile!.name}' : ''}' : null,
         onAdd: _tab == 0 ? () => showAddSheet(context) : null,
         wide: wide,
         child: body,
