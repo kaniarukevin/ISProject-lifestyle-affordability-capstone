@@ -423,3 +423,18 @@ Review against the people the app is for (students and people on allowances, emp
 
 Speed after these: dashboard 151 ms on 13 months and 1,092 records (was 100 ms), budget forecast 81 ms.
 
+## 2026-11-06: No fee-month bump for people who pay no school fees
+
+Question (Kevin, as a student who does not pay his own fees): does the forecast make January more expensive for someone with no school fees? The fee-aware split and the fee-month floor already used the user's own fees (0 for a non-payer), but the model was told "fee month" for every user in January, May and September.
+
+Check on the model as deployed: for a student spending about KES 22,000 a month with no fees, January, May and September came out about KES 1,200 (6%) above other months. On the 60 held-out test households (27 never pay fees), switching the flag off for households with no fees in their records (`scripts/fee_month_check.py`):
+
+| | As deployed | Flag only for fee payers |
+|---|---|---|
+| All test forecasts (MAE) | 9,936 | 9,908 |
+| Non-payers, fee months | 10,833 | 10,490 |
+| Non-payers, other months | 10,329 | 10,329 |
+| Fee payers, fee months | 7,744 | 7,744 |
+
+Changed: `forecast_for_user` gives the model a fee month only when the user pays fees: school fees in their records, a school-fees bill under Plans, or "I pay my own fees" in the profile (`_pays_fees`). The model is not retrained. Test: `test_no_fee_bump_for_someone_who_pays_no_fees` (fails on the old code: January 17,291 against November 16,211 for the same student).
+
