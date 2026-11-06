@@ -28,6 +28,10 @@ class Api {
   final String baseUrl;
   String? token;
 
+  /// Called when the server says the login is no longer valid (expired, logged out elsewhere, password changed),
+  /// so the app returns to the log-in screen instead of showing errors on every screen (audit A-16).
+  void Function()? onUnauthorised;
+
   // The free server can take up to a minute to wake up, so allow for it.
   static const _timeout = Duration(seconds: 60);
 
@@ -57,6 +61,7 @@ class Api {
       // A crash on the server returns an HTML error page, not JSON: report it instead of hanging.
       throw ApiException('The server had a problem (${r.statusCode}). Please try again.', r.statusCode);
     }
+    if (r.statusCode == 401 && token != null) onUnauthorised?.call();
     if (r.statusCode >= 400) {
       final msg = data is Map && data['error'] != null ? data['error'].toString() : 'Something went wrong (${r.statusCode}).';
       throw ApiException(msg, r.statusCode);
@@ -172,6 +177,9 @@ class Api {
   Future<Map<String, dynamic>> overview() async => (await get('/me/overview')) as Map<String, dynamic>;
 
   /// This month's dynamic budget plan, spending so far, and any budget already saved.
+  /// The next three months at the usual pace against the budget, the savings path and what to put aside.
+  Future<Map<String, dynamic>> budgetForecast() async => (await get('/me/budget-forecast')) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> budgetPlan() async => (await get('/me/budget-plan')) as Map<String, dynamic>;
 
   Future<void> saveBudget(int year, int month, Map<String, dynamic> plan) => put('/me/budgets/$year/$month', plan);

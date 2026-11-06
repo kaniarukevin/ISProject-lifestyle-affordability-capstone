@@ -1,11 +1,11 @@
 {
-    "name": "Lifestyle Affordability",
-    "short_name": "Affordability",
+    "name": "Tosha",
+    "short_name": "Tosha",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#FFFFFF",
-    "theme_color": "#1B7F5B",
-    "description": "Know what you can afford before you commit.",
+    "background_color": "#F2F2EE",
+    "theme_color": "#111111",
+    "description": "Know if it's enough.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
