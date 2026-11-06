@@ -1143,3 +1143,180 @@ def test_a_check_shows_the_budget_now_and_after_side_by_side(client, monkeypatch
     lines = {x["category"]: x for x in r.get_json()["budgets"]["lines"]}
     assert lines["transport"]["after"] > lines["transport"]["now"] + 1000          # the new cost has its own line
     assert all(x["after"] > 0 for x in lines.values() if x["now"] > 0)            # no other line is wiped out
+
+
+# ---------- plan a change: upfront + monthly + money it brings in ----------
+
+def _earner(client, monkeypatch, savings=60000):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 2, "savingsBalance": savings,
+                                               "incomes": [{"name": "Pay", "amount": 45000}]})
+    client.post("/me/transactions", headers=h, json=[
+        {"date": f"2026-{mo:02d}-05", "amount": amt, "category": cat} for mo in (7, 8, 9, 10)
+        for cat, amt in (("housing", 12000), ("food_groceries", 8000), ("transport", 4500), ("utilities", 2000),
+                         ("entertainment", 2500), ("mobile_money_transfers", 3000), ("savings", 4000))])
+    return h
+
+
+def test_a_plan_with_instalments_is_checked_while_paying_and_after(client, monkeypatch):
+    h = _earner(client, monkeypatch)
+    boda = {"preset": "plan", "label": "Boda boda", "income": 18000,
+            "upfront": {"amount": 160000, "pay": "instalments", "months": 18, "annual_rate": 14},
+            "costs": [{"category": "transport", "amount": 6000, "label": "Fuel and repairs"}]}
+    r = client.post("/me/afford", headers=h, json=boda).get_json()
+    assert [p["label"] for p in r["phases"]] == ["While you pay the instalments", "After the instalments"]
+    assert r["score_after"] == min(p["score_after"] for p in r["phases"])      # the harder period decides
+    assert r["instalment_per_month_KES"] > 160000 / 18                         # interest included
+    sid = r["id"]
+    assert client.post(f"/me/scenarios/{sid}/apply", headers=h, json={}).status_code == 200
+    assert client.get("/me/commitments", headers=h).get_json()["debts"][0]["name"] == "Boda boda"
+
+
+def test_a_plan_paid_from_savings_needs_the_savings(client, monkeypatch):
+    h = _earner(client, monkeypatch, savings=20000)
+    car = {"preset": "plan", "label": "Car", "upfront": {"amount": 900000, "pay": "savings"}}
+    r = client.post("/me/afford", headers=h, json=car).get_json()
+    assert r["verdict"] == "Not affordable" and r["upfront_short_KES"] == 880000
+    fees = {"preset": "plan", "label": "Boarding school", "costs": [{"category": "school_fees", "amount": 28000,
+                                                                     "per": "term"}]}
+    r = client.post("/me/afford", headers=h, json=fees).get_json()
+    assert any("each term" in x and "7,000 a month" in x for x in r["reasons"])
+    assert client.post("/me/afford", headers=h, json={"preset": "plan"}).status_code == 400
+
+
+# ---------- low month: income that varies ----------
+
+def _irregular_earner(client, monkeypatch):
+    h = _earner(client, monkeypatch, savings=10000)
+    with store.session() as s:                    # pay that actually arrived, as a tagged statement would give
+        uid = s.scalar(store.select(store.User)).id
+        for mo, kes in ((7, 45000), (8, 45000), (9, 27000), (10, 45000)):
+            s.add(store.MoneyIn(user_id=uid, day=store.date(2026, mo, 28), amount=kes, kind="income",
+                                payee="EMPLOYER", payee_key="in:employer", label="Salary", ref=f"pay-{mo}"))
+        s.add(store.StatementRule(user_id=uid, key="in:employer", choice="income"))
+        s.commit()
+    return h
+
+
+def test_a_check_is_repeated_on_the_low_month(client, monkeypatch):
+    h = _irregular_earner(client, monkeypatch)
+    r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 18000}).get_json()
+    assert r["income_pattern"] == "varies"
+    lm = r["low_month"]
+    assert lm["income_KES"] == 27000 and "September 2026" in lm["when"]
+    assert lm["left_over_KES"] < r["after"]["left_over_KES"]                   # a low month is harder
+    bf = client.get("/me/budget-forecast", headers=h).get_json()
+    assert bf["income_pattern"] == "varies" and len(bf["low_month"]["path"]) == 3
+
+
+def test_the_low_month_can_come_from_the_setup_answer(client, monkeypatch):
+    h = _earner(client, monkeypatch)
+    client.put("/me/profile", headers=h, json={"householdSize": 2, "incomes": [{"name": "Pay", "amount": 45000}],
+                                               "incomeLow": 20000})
+    assert client.get("/me/profile", headers=h).get_json()["incomeLow"] == 20000
+    r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "entertainment",
+                                                   "amount": 3000}).get_json()
+    assert r["low_month"]["from"] == "you" and r["low_month"]["income_KES"] == 20000
+    client.put("/me/profile", headers=h, json={"householdSize": 2, "incomes": [{"name": "Pay", "amount": 45000}]})
+    assert client.get("/me/profile", headers=h).get_json()["incomeLow"] == 20000   # kept when not sent
+
+
+# ---------- borrowing to get through the month ----------
+
+def test_regular_fuliza_and_mobile_loans_are_flagged_but_do_not_change_the_score(client, monkeypatch):
+    h = _earner(client, monkeypatch)
+    before = client.get("/me/overview", headers=h).get_json()
+    assert not (before["borrowing"] or {}).get("flag")
+    od = "OD Loan Repayment to 232323 - M-PESA Overdraw"
+    rows = [{"date": f"2026-{mo:02d}-{d:02d}", "amount": 600, "category": "loan_repayment", "description": od}
+            for mo in (8, 9, 10) for d in (3, 9, 15)]
+    rows.append({"date": "2026-10-20", "amount": 2500, "category": "loan_repayment",
+                 "description": "Pay Bill to 851900 - TALA KENYA"})
+    rows.append({"date": "2026-10-21", "amount": 900, "category": "loan_repayment", "description": "NATALIA SHOP"})
+    client.post("/me/transactions", headers=h, json=rows)
+    b = client.get("/me/overview", headers=h).get_json()["borrowing"]
+    assert b["flag"] and b["fuliza_times"] == 9 and b["months_with"] == 3 and b["lenders"] == ["Tala"]
+    r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "entertainment",
+                                                   "amount": 2000}).get_json()
+    assert any("Fuliza 9 time(s)" in x for x in r["reasons"])
+
+
+# ---------- goals tracked from savings ----------
+
+def test_savings_count_towards_goals_once_the_user_agrees(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 10, 2))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 40000}]})
+    goals = {"goals": [{"name": "Laptop", "target": 60000, "saved": 5000, "deadline": "2027-03"},
+                       {"name": "Trip", "target": 20000, "saved": 0, "deadline": "2027-08"}]}
+    client.put("/me/commitments", headers=h, json=goals)                 # set on 2 October
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-09-20", "amount": 9999, "category": "savings"},           # before the goals: not counted
+        {"date": "2026-10-10", "amount": 4000, "category": "savings"},
+        {"date": "2026-10-25", "amount": 4500, "category": "savings"},
+        {"date": "2026-10-05", "amount": 9000, "category": "food_groceries"}])
+    ov = client.get("/me/overview", headers=h).get_json()
+    assert "goal_suggestions" in ov, ov
+    ask = ov["goal_suggestions"]
+    assert [(x["name"], x["found_KES"]) for x in ask] == [("Laptop", 8500), ("Trip", 8500)]
+    client.post("/me/goals/track", headers=h, json={"name": "Laptop", "count": True})
+    client.post("/me/goals/track", headers=h, json={"name": "Trip", "count": True})
+    got = {gl["name"]: gl for gl in client.get("/me/commitments", headers=h).get_json()["goals"]}
+    assert got["Laptop"]["saved"] == 5000 and got["Laptop"]["counted_KES"] == 8500    # earliest deadline first
+    assert got["Trip"]["counted_KES"] == 0                                            # each deposit counts once
+    # The app saves goals back without the tracking fields: they are kept, and nothing is counted twice.
+    client.put("/me/commitments", headers=h, json={"goals": [{k: v for k, v in gl.items() if k in
+                                                              ("name", "target", "saved", "deadline")}
+                                                             for gl in got.values()]})
+    again = {gl["name"]: gl for gl in client.get("/me/commitments", headers=h).get_json()["goals"]}
+    assert again["Laptop"]["counted_KES"] == 8500 and again["Laptop"]["tracking_from"] == "2026-10"
+
+
+# ---------- pasted M-PESA messages ----------
+
+SMS = ("TK51AB2C3D Confirmed. Ksh1,240.00 paid to NAIVAS SUPERMARKET. on 5/11/26 at 1:15 PM.New M-PESA balance is "
+       "Ksh3,210.50. Transaction cost, Ksh0.00. "
+       "TK52AB2C3E Confirmed. Ksh500.00 sent to JOHN MWANGI 0712345678 on 6/11/26 at 8:02 AM. New M-PESA balance "
+       "is Ksh2,703.50. Transaction cost, Ksh7.00. "
+       "TK59AB2C3M Confirmed. Ksh1,000.00 transferred to M-Shwari account on 8/11/26 at 6:00 PM. M-PESA balance is "
+       "Ksh1,703.50. Your OTP is 12345.")
+
+
+def test_pasted_messages_are_read_like_a_statement_and_kept_with_typed_records(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 30000}]})
+    client.post("/me/transactions", headers=h, json={"date": "2026-11-02", "amount": 300, "category": "transport"})
+    prev = client.post("/me/messages/preview", headers=h, json={"text": SMS}).get_json()
+    by = {t["label"]: t for t in prev["transactions"]}
+    assert by["Food & groceries"]["amount"] == 1240 and by["Sent to John Mwangi"]["category"] == "mobile_money_transfers"
+    assert by["M-PESA charges"]["amount"] == 7 and prev["origin"] == "messages"
+    body = {"transactions": prev["transactions"], "origin": "messages"}
+    assert client.post("/me/statements/import", headers=h, json=body).status_code == 200
+    assert client.post("/me/statements/import", headers=h, json=body).get_json()["imported"] == 0   # pasted twice
+    txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
+    assert any(t["source"] == "manual" for t in txs)                                # typed records kept
+    assert sum(t["amount"] for t in txs if t["category"] == "savings") == 1000
+    assert client.get("/me/overview", headers=h).get_json()["records_until"] == "2026-11-08"
+    bad = client.post("/me/messages/preview", headers=h, json={"text": "hello there"})
+    assert bad.status_code == 400 and "No M-PESA messages" in bad.get_json()["error"]
+
+
+# ---------- forecast check: what was expected against what happened ----------
+
+def test_a_forecast_made_before_the_month_is_checked_once_it_is_recorded(client, monkeypatch):
+    h = _earner(client, monkeypatch)                                    # records July to October
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 10, 20))
+    client.get("/me/overview", headers=h)                               # November is forecast in October
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 12, 3))
+    client.post("/me/transactions", headers=h, json=[
+        {"date": "2026-11-05", "amount": amt, "category": cat}
+        for cat, amt in (("housing", 12000), ("food_groceries", 9000), ("transport", 5000), ("utilities", 2000))])
+    ov = client.get("/me/overview", headers=h).get_json()
+    nov = next(c for c in ov["forecast_checks"] if c["month"] == 11)
+    assert nov["made_before"] and nov["actual"] == 28000 and nov["diff"] == 28000 - nov["expected"]
+    assert any(n.startswith("November: we expected") for n in ov["notes"])
+    with store.session() as s:                                          # pooled for the admin view
+        assert s.scalar(store.select(store.ForecastSnapshot).where(store.ForecastSnapshot.month == 11)).actual == 28000

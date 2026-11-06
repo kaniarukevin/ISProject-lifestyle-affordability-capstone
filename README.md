@@ -78,11 +78,11 @@ Everything under `/me` needs `Authorization: Bearer <token>` from `/auth/login` 
 | Account | `POST /auth/register`, `POST /auth/login`, `POST /auth/logout` (`{"everywhere": true}` for every device), `POST /me/password`, `DELETE /me`, `GET /me/export`, `GET/POST /me/consent`, `GET /privacy`, `GET /me/role` |
 | Household | `GET/PUT /me/profile` (incomes, household, savings balance, setup estimates) |
 | Spending | `GET/POST /me/transactions`, `PATCH/DELETE /me/transactions/<id>`, `GET /me/transactions/summary`, `GET /me/months` |
-| Statements | `POST /me/statements/preview` (PDF in, nothing saved), `POST /me/statements/import`, `DELETE /me/statements`, `GET/PUT/DELETE /me/payees`, `POST /me/payees/commitment` |
+| Statements and messages | `POST /me/statements/preview` (PDF in, nothing saved), `POST /me/messages/preview` (pasted M-PESA SMS), `POST /me/statements/import`, `DELETE /me/statements`, `GET/PUT/DELETE /me/payees`, `POST /me/payees/commitment` |
 | Dashboard | `GET /me/overview` (state, score, timeline, outlook, bills due, goals at risk, lifestyle), `POST /me/explain` (why this score) |
 | Budget | `GET /me/budget-plan`, `GET /me/budget-forecast` (next three months against the budget), `GET/PUT /me/budgets/<year>/<month>` |
-| Can I afford it? | `POST /me/afford`, `GET/POST /me/scenarios`, `DELETE /me/scenarios/<id>`, `POST /me/scenarios/<id>/apply` |
-| Commitments | `GET/PUT /me/commitments`, `POST /me/commitments/paid` |
+| Can I afford it? | `POST /me/afford` (presets, or `"preset": "plan"` for a whole decision), `GET/POST /me/scenarios`, `DELETE /me/scenarios/<id>`, `POST /me/scenarios/<id>/apply` |
+| Commitments | `GET/PUT /me/commitments`, `POST /me/commitments/paid`, `POST /me/goals/track` (count savings towards a goal) |
 | Admin | `GET /admin/overview` (service health, model register, masked user list) |
 | Engines (login needed) | `POST /affordability`, `POST /budget`, `POST /commitments`, for trying the models with your own figures |
 | Web Masters (U-CS 37) | `GET /health`, `POST /forecast`, described in `backend/README.md` |

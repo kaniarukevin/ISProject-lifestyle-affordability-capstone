@@ -390,6 +390,94 @@ def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0, stat
     return result
 
 
+RANK = {"Affordable": 2, "Stretch": 1, "Not affordable": 0}
+
+
+def plan(m, sc, savings_balance=0.0, state_exact=False):
+    """One check for a whole decision (6 Nov): most real choices are an upfront cost AND a monthly change, e.g.
+    moving (deposit, then rent), a car (loan, then fuel and insurance), a boda boda (loan, then fuel, and money it
+    brings in). sc: {"changes": {category: KES a month}, "income_change": KES a month (money it brings in, or
+    less pay), "months": how long the monthly part lasts (None = for good), "upfront": {"price", "pay": "savings" |
+    "instalments", "months", "monthly_interest"}}.
+    With instalments there are two periods: while paying (monthly part + instalment) and after (monthly part only).
+    Each is checked with the same engine and the answer is the harder of the two; both are reported. Paid from
+    savings, the upfront cost comes out of the savings balance first, so the safety rule uses what is left."""
+    changes = _changes(sc.get("changes") or {})
+    inc = _real(sc.get("income_change", 0) or 0, "income_change")
+    lasts = sc.get("months")
+    if lasts is not None:
+        lasts = int(_real(lasts, "months"))
+        if lasts < 1:
+            raise AffordabilityInputError("months must be at least 1 (leave it out for a lasting change)")
+    up = sc.get("upfront") or None
+    balance = max(0.0, _real(savings_balance or 0, "savings_balance"))
+    per_month, n, price, notes = 0.0, None, 0.0, []
+    if up:
+        price = _real(up.get("price", 0), "upfront price")
+        if price <= 0:
+            raise AffordabilityInputError("the upfront cost must be more than 0")
+        if up.get("pay") == "instalments":
+            n = int(_real(up.get("months", 6), "upfront months"))
+            r = _real(up.get("monthly_interest", 0), "monthly_interest")
+            if n < 1 or r < 0:
+                raise AffordabilityInputError("instalments need at least 1 month and interest that is not negative")
+            per_month = price * r / (1 - (1 + r) ** -n) if r > 0 else price / n
+        else:
+            if price > balance:
+                short = round(price - balance)
+                out = {"verdict": "Not affordable", "score_before": None, "score_after": None, "phases": [],
+                       "reasons": [f"The upfront KES {round(price):,} is more than your savings of KES "
+                                   f"{round(balance):,}: you would need KES {short:,} more, or pay it in instalments."],
+                       "upfront_KES": round(price), "savings_balance_KES": round(balance), "upfront_short_KES": short}
+                return out
+            balance -= price
+            notes.append(f"Paying KES {round(price):,} upfront from savings leaves KES {round(balance):,} saved.")
+    has_monthly = bool(changes) or inc != 0
+    phases = []
+    if per_month:
+        paying = dict(changes)
+        paying["loan_repayment"] = paying.get("loan_repayment", 0.0) + per_month
+        # While paying: the instalments last n months (or less, if the whole change is shorter).
+        dur = min(n, lasts) if lasts else n
+        phases.append(("While you pay the instalments", f"{n} month(s)",
+                       assess(m, paying, inc, duration=dur, savings_balance=balance, state_exact=state_exact,
+                              debt_label="These instalments and your loans")))
+        if has_monthly and (lasts is None or lasts > n):
+            phases.append(("After the instalments", "for good" if lasts is None else f"{lasts - n} month(s)",
+                           assess(m, changes, inc, duration=(lasts - n) if lasts else None, savings_balance=balance,
+                                  state_exact=state_exact)))
+    elif has_monthly:
+        phases.append(("Each month", "for good" if lasts is None else f"{lasts} month(s)",
+                       assess(m, changes, inc, duration=lasts, savings_balance=balance, state_exact=state_exact)))
+    else:                                            # only an upfront cost, paid from savings
+        phases.append(("After paying upfront", "now", assess(m, {}, 0.0, savings_balance=balance,
+                                                             state_exact=state_exact)))
+    worst = min(phases, key=lambda ph: (RANK[ph[2]["verdict"]], ph[2]["score_after"]))[2]
+    result = dict(worst)
+    result["reasons"] = notes + list(worst["reasons"])
+    result["phases"] = [{"label": label, "lasts": span, "verdict": r["verdict"], "score_after": r["score_after"],
+                         "left_over_KES": r["after"]["left_over_KES"]} for label, span, r in phases]
+    if per_month:
+        result.update({"instalment_per_month_KES": round(per_month), "total_paid_KES": round(per_month * n),
+                       "instalment_months": n})
+    if up:
+        result["upfront_KES"] = round(price)
+    if len(phases) > 1:
+        a, b = result["phases"]
+        result["reasons"].insert(0, f"{a['label']} ({a['lasts']}): {a['verdict']}, score {a['score_after']}. "
+                                    f"{b['label']} ({b['lasts']}): {b['verdict']}, score {b['score_after']}.")
+    worst_changes = dict(changes)
+    if per_month and worst is phases[0][2]:
+        worst_changes["loan_repayment"] = worst_changes.get("loan_repayment", 0.0) + per_month
+    kw = {"duration": worst.get("lasts_months"), "savings_balance": balance}
+    if result["verdict"] != "Affordable" and not result["track_record"]["lowered_verdict"]:
+        result["what_to_cut"] = what_to_cut(m, worst_changes, inc, **kw)
+    if result["verdict"] == "Not affordable":
+        extra = sum(worst_changes.values()) - inc
+        result["advice"] = _advice(result["before"], extra, kw["duration"], balance)
+    return result
+
+
 def savings_goal(m, extra_per_month):
     """Saving more moves left-over money into savings; it is not a new cost, so it is not scored."""
     extra = float(extra_per_month)
@@ -431,8 +519,21 @@ def explain_request(payload):
         if price <= 0 or n < 1 or r < 0:
             raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
         changes, span = {"loan_repayment": price * r / (1 - (1 + r) ** -n) if r > 0 else price / n}, min(n, 3)
+    elif kind == "plan":
+        changes = _changes(sc.get("changes") or {})
+        inc = _real(sc.get("income_change", 0) or 0, "income_change")
+        up = sc.get("upfront") or {}
+        if up.get("pay") == "instalments":
+            price, n = _real(up.get("price", 0), "upfront price"), int(_real(up.get("months", 6), "upfront months"))
+            r = _real(up.get("monthly_interest", 0), "monthly_interest")
+            if price > 0 and n >= 1:
+                per = price * r / (1 - (1 + r) ** -n) if r > 0 else price / n
+                changes["loan_repayment"] = changes.get("loan_repayment", 0.0) + per
+                span = min(n, 3)
+        if sc.get("months"):
+            span = min(span, int(_real(sc["months"], "months")))
     elif kind != "none":
-        raise AffordabilityInputError("only the current score, monthly changes and purchases have a score to explain")
+        raise AffordabilityInputError("only the current score, monthly changes, purchases and plans have a score to explain")
     now = explain(build_features(m).iloc[[-1]])
     out = {"now": now, "track_record": track_record(m)}
     if changes is not None and now is not None:
@@ -480,4 +581,6 @@ def evaluate(payload):
         return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance, exact)
     if kind == "savings_goal":
         return savings_goal(m, _real(sc.get("extra_per_month", 0), "extra_per_month"))
-    raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase or savings_goal")
+    if kind == "plan":
+        return plan(m, sc, balance, exact)
+    raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase, savings_goal or plan")
