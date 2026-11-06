@@ -21,4 +21,12 @@ void main() {
     expect(back.householdSize, 4);
     expect(back.monthlyIncome, 25300);
   });
+
+  test('onboarding answers survive saving and loading', () {
+    final p = Profile(householdSize: 4, dependants: 2, name: 'Wanjiku', incomeTypes: ['salary', 'business'],
+        childrenInSchool: 2, incomeLow: 52000, email: 'w@example.com');
+    final back = Profile.fromJson(p.toJson());
+    expect([back.name, back.childrenInSchool, back.incomeLow, back.email], ['Wanjiku', 2, 52000, 'w@example.com']);
+    expect(back.incomeTypes, ['salary', 'business']);
+  });
 }

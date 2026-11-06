@@ -5,6 +5,8 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/choice_sheet.dart';
+import '../widgets/format.dart';
+import '../widgets/panel.dart';
 import 'admin_screen.dart';
 import 'privacy_screen.dart';
 import 'profile_screen.dart';
@@ -41,9 +43,17 @@ class YouScreen extends StatelessWidget {
           child: CircleAvatar(
             radius: 44,
             backgroundColor: c.lime,
-            child: Icon(Icons.person_rounded, size: 44, color: c.onLime),
+            child: (p?.name ?? '').isNotEmpty
+                ? Text(p!.name!.characters.first.toUpperCase(),
+                    style: theme.textTheme.headlineLarge?.copyWith(color: c.onLime, fontWeight: FontWeight.w700))
+                : Icon(Icons.person_rounded, size: 44, color: c.onLime),
           ),
         ),
+        const SizedBox(height: 12),
+        if ((p?.name ?? '').isNotEmpty)
+          Text(p!.name!, textAlign: TextAlign.center, style: theme.textTheme.headlineSmall),
+        if (p?.email != null)
+          Text(p!.email!, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         const SizedBox(height: 16),
         if (p != null)
           Row(children: [
@@ -53,6 +63,42 @@ class YouScreen extends StatelessWidget {
             const SizedBox(width: 10),
             _Stat(value: _short(p.savingsBalance), label: 'Saved'),
           ]),
+        const SizedBox(height: 12),
+        if (p != null)
+          Panel(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Expanded(child: Text('Money coming in', style: theme.textTheme.titleMedium)),
+                FilledButton.tonal(
+                  style: FilledButton.styleFrom(backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
+                  onPressed: () => push(const ProfileScreen()),
+                  child: const Text('Edit'),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              if (p.incomes.isEmpty)
+                Text('No income added yet.', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+              for (final i in p.incomes)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(children: [
+                    Expanded(child: Text(i.name, style: theme.textTheme.bodyLarge)),
+                    Text('KES ${money(i.monthly)} a month', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+              if (p.incomes.length > 1) ...[
+                const Divider(height: 20),
+                Row(children: [
+                  Expanded(child: Text('Total', style: theme.textTheme.bodyLarge)),
+                  Text('KES ${money(p.monthlyIncome)}', style: theme.textTheme.titleMedium),
+                ]),
+              ],
+              if (p.incomeLow != null) ...[
+                const SizedBox(height: 6),
+                Text('A low month: about KES ${money(p.incomeLow!)}', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              ],
+            ]),
+          ),
         const SizedBox(height: 12),
         Card(
           child: Column(children: [

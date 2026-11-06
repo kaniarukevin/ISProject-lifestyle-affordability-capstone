@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/verdict.dart';
 import 'why_score_sheet.dart';
 
 /// Overview: lifestyle affordability and the budget forecast first (design canvas, 6 Nov).
@@ -189,29 +190,6 @@ class _ScoreCard extends StatelessWidget {
           child: const Text('Why this score?'),
         ),
       ]),
-    );
-  }
-}
-
-/// The verdict as a small coloured label: Affordable (lime), Stretch (amber), Not affordable (brown).
-class VerdictChip extends StatelessWidget {
-  const VerdictChip(this.verdict, {super.key, this.large = false});
-  final String verdict;
-  final bool large;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final (bg, fg) = switch (verdict) {
-      'Affordable' => (c.lime, _onLime),
-      'Stretch' => (c.warnBg, c.warn),
-      _ => (const Color(0xFF7A3E00), Colors.white),
-    };
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: large ? 16 : 10, vertical: large ? 6 : 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(large ? 18 : 12)),
-      child: Text(verdict,
-          style: TextStyle(fontFamily: 'PlusJakartaSans', color: fg, fontWeight: FontWeight.w700, fontSize: large ? 22 : 13)),
     );
   }
 }

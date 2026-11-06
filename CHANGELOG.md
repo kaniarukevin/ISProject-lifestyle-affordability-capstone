@@ -4,6 +4,12 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
 ### Fixed
+- Past months keep the income they were lived on: raising your income no longer turns earlier months Stable. Saving a new income asks whether it changed or a mistake is being corrected.
+
+### Added
+- Profile: first name, how money comes in (pick all that apply), studying, children in school; the email is returned with the profile.
+
+### Fixed
 - The forecast no longer raises January, May and September for people who pay no school fees; the fee months now follow the user's own fees (held-out error in those months 10,833 to 10,490).
 
 ### Added

@@ -9,6 +9,7 @@ import '../models/profile.dart';
 import '../models/transaction.dart' show spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../widgets/choice_sheet.dart';
 import 'password_field.dart';
 import 'privacy_screen.dart';
 
@@ -60,14 +61,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _save() async {
-    if (draft.incomes.isEmpty) {
+    if (draft.incomes.isEmpty && !draft.incomeTypes.contains('none')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Add at least one source of income.')),
       );
       return;
     }
+    // A different income: did it change (earlier months keep the old figure) or was the old one a mistake?
+    var change = 'from_now';
+    final before = context.read<AppState>().profile;
+    if (before != null && (draft.monthlyIncome - before.monthlyIncome).abs() >= 1) {
+      final pick = await showChoiceSheet<String>(
+        context,
+        title: 'Your income is different',
+        message: 'Did your income change, or are you correcting a mistake? If it changed, your past months keep '
+            '${kes(before.monthlyIncome)} and ${kes(draft.monthlyIncome)} applies from this month.',
+        choices: const [
+          SheetChoice('It changed from this month', 'from_now', primary: true),
+          SheetChoice("I'm correcting a mistake", 'correction'),
+        ],
+      );
+      if (pick == null || !mounted) return;
+      change = pick;
+    }
     try {
-      await context.read<AppState>().saveProfile(draft);
+      await context.read<AppState>().saveProfile(draft, incomeChange: change);
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
       return;
@@ -83,6 +101,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          TextFormField(
+            initialValue: draft.name ?? '',
+            maxLength: 40,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(labelText: 'What should we call you?'),
+            onChanged: (v) => draft.name = v.trim().isEmpty ? null : v.trim(),
+          ),
+          const SizedBox(height: 8),
+          Text('How does money come in? Pick all that apply.', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final e in incomeTypeLabels.entries)
+              FilterChip(
+                label: Text(e.value),
+                showCheckmark: false,
+                selected: draft.incomeTypes.contains(e.key),
+                onSelected: (on) => setState(() {
+                  if (on && e.key == 'none') draft.incomeTypes.clear();
+                  if (on && e.key != 'none') draft.incomeTypes.remove('none');
+                  on ? draft.incomeTypes.add(e.key) : draft.incomeTypes.remove(e.key);
+                  draft.formalJob = draft.incomeTypes.contains('salary');
+                }),
+              ),
+          ]),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text("I'm studying"),
+            value: draft.studying,
+            onChanged: (v) => setState(() => draft.studying = v),
+          ),
+          const Divider(height: 32),
           Text('Who lives in your household?', style: theme.textTheme.titleMedium),
           _Counter(
             label: 'People in the household (including you)',
@@ -91,6 +140,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onChanged: (v) => setState(() {
               draft.householdSize = v;
               if (draft.dependants >= v) draft.dependants = v - 1;
+              if (draft.childrenInSchool >= v) draft.childrenInSchool = v - 1;
             }),
           ),
           _Counter(
@@ -99,6 +149,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             min: 0,
             max: draft.householdSize - 1,
             onChanged: (v) => setState(() => draft.dependants = v),
+          ),
+          _Counter(
+            label: 'Children in school',
+            value: draft.childrenInSchool,
+            min: 0,
+            max: draft.householdSize - 1,
+            onChanged: (v) => setState(() => draft.childrenInSchool = v),
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
@@ -111,12 +168,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ],
             onChanged: (v) => setState(() => draft.urbanRural = v!),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('I have a formal, salaried job'),
-            value: draft.formalJob,
-            onChanged: (v) => setState(() => draft.formalJob = v),
-          ),
+          if (draft.incomeTypes.isEmpty)               // accounts from before the question was asked
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('I have a formal, salaried job'),
+              value: draft.formalJob,
+              onChanged: (v) => setState(() => draft.formalJob = v),
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('I pay my own school or university fees'),

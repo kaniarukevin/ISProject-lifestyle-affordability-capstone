@@ -471,6 +471,40 @@ def test_real_months_replace_the_estimates(client, monkeypatch):
     assert not o["estimated"] and o["latest"]["spent"] == 4000 + 3600 + 900
 
 
+def test_profile_keeps_name_how_money_comes_in_and_shows_the_email(client):
+    h = signup(client)
+    r = client.put("/me/profile", headers=h, json={"householdSize": 4, "dependants": 2, "childrenInSchool": 2,
+                                                   "name": " Wanjiku ", "incomeTypes": ["salary", "business"],
+                                                   "studying": False, "incomes": [{"name": "Pay", "amount": 65000}]})
+    assert r.status_code == 200
+    p = client.get("/me/profile", headers=h).get_json()
+    assert (p["name"], p["email"], p["childrenInSchool"]) == ("Wanjiku", "kevin@example.com", 2)
+    assert p["incomeTypes"] == ["salary", "business"] and p["formalJob"] is True     # salary is the formal job
+    assert client.put("/me/profile", headers=h, json={"householdSize": 1, "incomeTypes": ["lottery"],
+                                                      "incomes": []}).status_code == 400
+
+
+def test_a_new_income_does_not_rewrite_past_months(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    profile = {"householdSize": 1, "incomes": [{"name": "Allowance", "amount": 30000}]}
+    client.put("/me/profile", headers=h, json=profile)
+    for m in range(5, 11):                       # spending 29,000 of 30,000: tight months
+        client.post("/me/transactions", headers=h, json=[
+            {"date": f"2026-{m:02d}-02", "amount": 12000, "category": "housing"},
+            {"date": f"2026-{m:02d}-05", "amount": 11000, "category": "food_groceries"},
+            {"date": f"2026-{m:02d}-09", "amount": 6000, "category": "transport"}])
+    before = client.get("/me/overview", headers=h).get_json()["timeline"]
+    client.put("/me/profile", headers=h, json=profile | {"incomes": [{"name": "Salary", "amount": 60000}]})
+    after = client.get("/me/overview", headers=h).get_json()["timeline"]
+    assert [m["state"] for m in after] == [m["state"] for m in before]       # May-October lived on 30,000
+    assert all(m["income"] == 30000 for m in after)
+    client.put("/me/profile", headers=h, json=profile | {"incomeChange": "correction",
+                                                         "incomes": [{"name": "Salary", "amount": 60000}]})
+    fixed = client.get("/me/overview", headers=h).get_json()["timeline"]
+    assert all(m["income"] == 60000 for m in fixed)                          # a correction: it was always 60,000
+
+
 def test_estimates_must_be_known_categories(client):
     h = signup(client)
     r = client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": {"pets": 500},
