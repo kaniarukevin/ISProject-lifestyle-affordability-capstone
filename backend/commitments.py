@@ -9,6 +9,8 @@ Plain arithmetic, no model: every number can be checked by hand.
 """
 from datetime import date
 
+import limits
+
 FREQ_PER_YEAR = {"weekly": 52, "monthly": 12, "quarterly": 4, "termly": 3, "semester": 2, "yearly": 1}
 STEP_MONTHS = {"monthly": 1, "quarterly": 3, "termly": 4, "semester": 6, "yearly": 12}   # termly: Jan, May, Sep
 DUE_SOON_DAYS = 7
@@ -24,8 +26,10 @@ class CommitmentsInputError(ValueError):
 def _num(value, name, minimum=0.0):
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise CommitmentsInputError(f"{name} must be a number")
+    if not limits.is_real(v):
+        raise CommitmentsInputError(f"{name} must be a normal amount (at most {limits.MAX_AMOUNT:,})")
     if v < minimum:
         raise CommitmentsInputError(f"{name} must be at least {minimum:g}")
     return v

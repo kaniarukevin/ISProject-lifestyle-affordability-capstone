@@ -1007,3 +1007,58 @@ def test_download_my_data_has_everything_and_only_mine(client, monkeypatch):
     assert len(d["spending"]) == 9 and all(t["amount"] != 77777 for t in d["spending"])
     assert d["commitments"]["obligations"][0]["name"] == "Rent" and len(d["affordability_checks"]) == 1
     assert "password" not in str(d).lower().replace("passwords are", "")
+
+
+# ---------- bad input can never break an account (audit P0: A-01, A-02, A-03, A-07) ----------
+
+def test_unreal_numbers_are_refused_and_the_dashboard_survives(client):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 30000}]})
+    for bad in ("Infinity", "NaN", 1e15):
+        r = client.post("/me/transactions", headers=h, json={"date": "2026-10-05", "amount": bad, "category": "transport"})
+        assert r.status_code == 400, bad
+    raw = '{"date": "2026-10-05", "amount": Infinity, "category": "transport"}'      # a bare JSON literal
+    assert client.post("/me/transactions", headers=h, data=raw, content_type="application/json").status_code == 400
+    assert client.get("/me/overview", headers=h).status_code == 200
+
+
+def test_spending_dates_and_batch_size_are_bounded(client):
+    h = signup(client)
+    for day in ("1901-01-01", "2099-01-01"):
+        r = client.post("/me/transactions", headers=h, json={"date": day, "amount": 100, "category": "transport"})
+        assert r.status_code == 400, day
+    many = [{"date": "2026-10-05", "amount": 1, "category": "transport"}] * 2001
+    assert client.post("/me/transactions", headers=h, json=many).status_code == 400
+
+
+def test_a_junk_budget_is_refused(client):
+    h = signup(client)
+    for body in ({"budget": {"transport": "lots"}}, {"budget": {"pets": 100}}, {"budget": {"food_groceries": -5}}, {}):
+        assert client.put("/me/budgets/2026/11", headers=h, json=body).status_code == 400, body
+
+
+def test_a_budget_saved_before_validation_cannot_break_the_dashboard(client):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 30000}]})
+    client.post("/me/transactions", headers=h, json={"date": "2026-10-05", "amount": 9000, "category": "food_groceries"})
+    with store.session() as s:                                      # an old row written straight to the database
+        user = s.scalar(store.select(store.User))
+        s.add(store.Budget(user_id=user.id, year=2026, month=11, data={"budget": {"transport": "lots"}}))
+        s.commit()
+    assert client.get("/me/overview", headers=h).status_code == 200
+    assert client.get("/me/budget-plan", headers=h).status_code == 200
+
+
+def test_only_rows_read_from_the_statement_can_be_imported(client, monkeypatch):
+    h = signup(client)
+    prev = _upload(client, h, monkeypatch).get_json()
+    forged = [dict(prev["transactions"][0], amount=999999)]               # amount changed after the preview
+    r = client.post("/me/statements/import", headers=h, json={"transactions": forged, "period": prev["period"]})
+    assert r.status_code == 400 and "upload it again" in r.get_json()["error"]
+    other = signup(client, "other@example.com")                             # another user's preview rows
+    r = client.post("/me/statements/import", headers=other, json={"transactions": prev["transactions"]})
+    assert r.status_code == 400
+    # the user's own choices are not signed, so marking a one-off still works
+    rows = [dict(t, one_off=True) if i == 0 else t for i, t in enumerate(prev["transactions"])]
+    assert client.post("/me/statements/import", headers=h, json={"transactions": rows,
+                                                                 "period": prev["period"]}).status_code == 200

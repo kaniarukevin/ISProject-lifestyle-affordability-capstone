@@ -33,6 +33,7 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Production safety: the hosted server refuses to start without a real `SECRET_KEY`; every error is plain JSON; uploads over 11 MB are refused before reading.
 
 ### Fixed
+- Bad input can no longer break an account (audit P0, 6 Nov): NaN, Infinity and amounts above KES 100 million are refused everywhere (A-01); saved budgets are checked, and old bad ones are ignored (A-02); a statement import only accepts rows the preview read and signed for that user (A-03); spending dates must be within the last 5 years and not in the future, at most 2,000 records per request (A-07).
 - M-PESA reversals: the reversed payment (and its charge) is now left out of spending as well as the refund; previously the refund was counted as money received and the payment stayed as spending. A reversal of a charge is no longer counted as a charge.
 - Reached goals no longer come back: the app dropped the goal's `done` flag when saving Commitments, and matched goals to the server's figures by position (wrong once a goal was reached).
 - A log-in token kept being accepted after its account was deleted; tokens now carry a password fingerprint and are checked against the account on every request.

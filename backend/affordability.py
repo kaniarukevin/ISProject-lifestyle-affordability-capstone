@@ -10,6 +10,8 @@ import joblib
 import numpy as np
 import pandas as pd
 
+import limits
+
 CATS = ["housing", "food_groceries", "transport", "utilities", "airtime_data",
         "mobile_money_transfers", "loan_repayment", "school_fees", "entertainment", "savings"]
 INCOME = ["income_primary", "income_secondary", "informal_cash_income"]
@@ -56,6 +58,23 @@ def build_features(m):
     return m
 
 
+def _real(v, name):
+    """A number from a request: refuses text, NaN, Infinity and absurd sizes (audit A-01)."""
+    try:
+        x = float(v)
+    except (TypeError, ValueError, OverflowError):
+        raise AffordabilityInputError(f"{name} must be a number")
+    if not limits.is_real(x):
+        raise AffordabilityInputError(f"{name} must be a normal amount (at most {limits.MAX_AMOUNT:,})")
+    return x
+
+
+def _changes(changes):
+    if not isinstance(changes, dict):
+        raise AffordabilityInputError("changes must be an object of categories and monthly amounts")
+    return {c: _real(v, f"changes.{c}") for c, v in changes.items()}
+
+
 def months_frame(months, household_size, num_dependants):
     """Turn the request's list of months (oldest first) into a DataFrame, validating amounts."""
     if not isinstance(months, list) or not 1 <= len(months) <= 24:
@@ -66,10 +85,7 @@ def months_frame(months, household_size, num_dependants):
             raise AffordabilityInputError("each month must be an object of category amounts")
         row = {"month": i + 1}
         for c in CATS + INCOME:
-            try:
-                v = float(mth.get(c, 0) or 0)
-            except (TypeError, ValueError):
-                raise AffordabilityInputError(f"{c} must be a number")
+            v = _real(mth.get(c, 0) or 0, c)
             if v < 0:
                 raise AffordabilityInputError(f"{c} cannot be negative")
             row[c] = v
@@ -346,7 +362,7 @@ def _cash_flow(before, per_month, months, balance):
 def purchase(m, price, months=6, monthly_interest=0.0, savings_balance=0.0, state_exact=False):
     """A purchase paid over `months` months (1 = pay it all now). The cost lasts only those months, the savings
     balance can cover a temporary gap, and the answer says what happens month by month."""
-    price, months, r = float(price), int(months), float(monthly_interest)
+    price, months, r = _real(price, "price"), int(_real(months, "months")), _real(monthly_interest, "monthly_interest")
     if price <= 0 or months < 1 or r < 0:
         raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
     balance = max(0.0, float(savings_balance or 0))
@@ -401,15 +417,17 @@ def explain_request(payload):
     """'Why this score?' for an /affordability request: the current score explained, and for a scenario the score
     after it, plus how much each part moved (after minus before). Same inputs as evaluate()."""
     hh = (payload or {}).get("household") or {}
-    m = months_frame(payload.get("months"), float(hh.get("household_size", 1)), float(hh.get("num_dependants", 0)))
+    m = months_frame(payload.get("months"), _real(hh.get("household_size", 1), "household_size"),
+                     _real(hh.get("num_dependants", 0), "num_dependants"))
     sc = payload.get("scenario") or {"type": "none"}
     kind = sc.get("type", "none")
     changes, inc, span = None, 0.0, 3
     if kind == "monthly_change":
-        changes, inc = sc.get("changes") or {}, float(sc.get("income_change", 0) or 0)
-        span = min(int(sc["months"]), 3) if sc.get("months") else 3
+        changes, inc = _changes(sc.get("changes") or {}), _real(sc.get("income_change", 0) or 0, "income_change")
+        span = min(int(_real(sc["months"], "months")), 3) if sc.get("months") else 3
     elif kind == "purchase":
-        price, n, r = float(sc.get("price", 0)), int(sc.get("months", 6)), float(sc.get("monthly_interest", 0))
+        price, n = _real(sc.get("price", 0), "price"), int(_real(sc.get("months", 6), "months"))
+        r = _real(sc.get("monthly_interest", 0), "monthly_interest")
         if price <= 0 or n < 1 or r < 0:
             raise AffordabilityInputError("price must be positive, months at least 1, interest not negative")
         changes, span = {"loan_repayment": price * r / (1 - (1 + r) ** -n) if r > 0 else price / n}, min(n, 3)
@@ -433,17 +451,11 @@ def evaluate(payload):
     if not isinstance(payload, dict):
         raise AffordabilityInputError("request body must be a JSON object")
     hh = payload.get("household") or {}
-    try:
-        size, deps = float(hh.get("household_size", 1)), float(hh.get("num_dependants", 0))
-    except (TypeError, ValueError):
-        raise AffordabilityInputError("household_size and num_dependants must be numbers")
+    size, deps = _real(hh.get("household_size", 1), "household_size"), _real(hh.get("num_dependants", 0), "num_dependants")
     if size < 1 or deps < 0:
         raise AffordabilityInputError("household_size must be at least 1 and num_dependants not negative")
     m = months_frame(payload.get("months"), size, deps)
-    try:
-        balance = float(payload.get("savings_balance", 0) or 0)
-    except (TypeError, ValueError):
-        raise AffordabilityInputError("savings_balance must be a number")
+    balance = _real(payload.get("savings_balance", 0) or 0, "savings_balance")
     if balance < 0:
         raise AffordabilityInputError("savings_balance cannot be negative")
     sc = payload.get("scenario") or {"type": "none"}
@@ -452,9 +464,9 @@ def evaluate(payload):
     if kind == "none":
         return assess(m, state_exact=exact)
     if kind == "monthly_change":
-        changes, inc = sc.get("changes") or {}, float(sc.get("income_change", 0) or 0)
+        changes, inc = _changes(sc.get("changes") or {}), _real(sc.get("income_change", 0) or 0, "income_change")
         lasts = sc.get("months")                         # None = for good; a number = a temporary change
-        if lasts is not None and (not isinstance(lasts, (int, float)) or lasts < 1):
+        if lasts is not None and (not limits.is_real(lasts) or lasts < 1):
             raise AffordabilityInputError("scenario.months must be at least 1 (leave it out for a lasting change)")
         kw = {"duration": int(lasts) if lasts else None, "savings_balance": balance}
         result = assess(m, changes, inc, state_exact=exact, **kw)
@@ -467,5 +479,5 @@ def evaluate(payload):
     if kind == "purchase":
         return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance, exact)
     if kind == "savings_goal":
-        return savings_goal(m, sc.get("extra_per_month", 0))
+        return savings_goal(m, _real(sc.get("extra_per_month", 0), "extra_per_month"))
     raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase or savings_goal")

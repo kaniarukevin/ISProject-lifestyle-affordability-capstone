@@ -7,6 +7,8 @@ dynamic budget can see last month. Connection string comes from DATABASE_URL (ne
 import calendar
 import copy
 import hashlib
+import hmac
+import json
 import math
 import os
 import statistics
@@ -26,6 +28,7 @@ from sqlalchemy.pool import StaticPool
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import affordability as aff
+import limits
 
 ROOT = Path(__file__).resolve().parent.parent
 TOKEN_DAYS = 30
@@ -293,6 +296,23 @@ def _serializer():
     return URLSafeTimedSerializer(secret_key(), salt="auth")
 
 
+# What the statement reader found in each row. The preview signs these for the logged-in user and the import
+# checks the signature, so only rows read from a real statement can be saved; the user's own choices (one-off,
+# payee tags) are not signed and stay free (audit A-03: forged rows with any amount used to be stored).
+STATEMENT_ROW_FIELDS = ("ref", "date", "amount", "direction", "kind", "type", "category", "auto_category",
+                        "payee", "payee_key", "source", "label", "details", "auto_kind")
+MAX_STATEMENT_ROWS = 20_000
+
+
+def _row_sig(user_id, r):
+    def norm(k, v):
+        if k == "amount":                    # 1240.0 may come back as 1240 from the app; same amount, same text
+            return f"{float(v):.2f}" if limits.is_real(v) else None
+        return None if v is None else str(v)
+    msg = json.dumps([user_id] + [norm(k, r.get(k)) for k in STATEMENT_ROW_FIELDS], separators=(",", ":"))
+    return hmac.new(secret_key().encode(), b"statement-row:" + msg.encode(), hashlib.sha256).hexdigest()[:32]
+
+
 def _stamp(user):
     """A short fingerprint of the password hash, carried in the token: changing the password changes it, so every
     token issued before (a lost phone, a shared laptop) stops working."""
@@ -339,11 +359,28 @@ def _body():
 def _num(v, name, minimum=0.0):
     try:
         x = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise InputError(f"{name} must be a number")
+    if not limits.is_real(x):
+        raise InputError(f"{name} must be a normal amount (at most {limits.MAX_AMOUNT:,})")
     if x < minimum:
         raise InputError(f"{name} must be at least {minimum:g}")
     return x
+
+
+def _spend_day(v):
+    """A spending date: a real date, not in the future and not older than limits.MAX_YEARS_BACK years (audit A-07:
+    1901 and 2099 were accepted and skewed every average)."""
+    try:
+        day = date.fromisoformat(str(v))
+    except ValueError:
+        raise InputError("date must look like 2026-10-29")
+    today = _today()
+    if day > today:
+        raise InputError("the date cannot be in the future")
+    if day < date(today.year - limits.MAX_YEARS_BACK, today.month, 1):
+        raise InputError(f"the date must be within the last {limits.MAX_YEARS_BACK} years")
+    return day
 
 
 bp = Blueprint("store", __name__)
@@ -609,17 +646,19 @@ def add_transactions():
     """Accepts one transaction or a list (a parsed statement)."""
     b = request.get_json(silent=True)
     items = b if isinstance(b, list) else [b]
+    if len(items) > limits.MAX_ROWS:
+        raise InputError(f"send at most {limits.MAX_ROWS:,} records at a time")
     rows = []
     for t in items:
         if not isinstance(t, dict):
             raise InputError("each transaction must be an object")
         if t.get("category") not in SPENDING_CATEGORIES:
             raise InputError(f"category must be one of {', '.join(SPENDING_CATEGORIES)}")
-        try:
-            day = date.fromisoformat(str(t.get("date")))
-        except ValueError:
-            raise InputError("date must look like 2026-10-29")
-        rows.append(Transaction(user_id=g.user_id, day=day, amount=_num(t.get("amount"), "amount"),
+        day = _spend_day(t.get("date"))
+        amount = _num(t.get("amount"), "amount")
+        if amount <= 0:
+            raise InputError("amount must be more than 0")
+        rows.append(Transaction(user_id=g.user_id, day=day, amount=amount,
                                 category=t["category"], description=str(t.get("description", ""))[:200],
                                 source=str(t.get("source", "manual"))[:20], one_off=bool(t.get("one_off", False))))
     with session() as s:
@@ -722,10 +761,23 @@ def monthly_summary():
     return jsonify(months=months)
 
 
+BUDGET_LINES = SPENDING_CATEGORIES + ["other_commitments"]
+
+
+def _budget_lines(data):
+    """The usable lines of a saved budget: known categories with real numbers. Anything else is ignored, so a
+    budget saved before validation existed can never break the dashboard (audit A-02), or None."""
+    lines = data.get("budget") if isinstance(data, dict) else None
+    if not isinstance(lines, dict):
+        return None
+    return {c: float(v) for c, v in lines.items()
+            if c in BUDGET_LINES and limits.is_real(v)}
+
+
 def _saved_budget(s, user_id, year, month):
     b = s.scalar(select(Budget).where(Budget.user_id == user_id, Budget.year == year, Budget.month == month))
-    lines = (b.data or {}).get("budget") if b else None
-    return {c: float(lines.get(c, 0)) for c in SPENDING_CATEGORIES} if isinstance(lines, dict) else None
+    lines = _budget_lines(b.data) if b else None
+    return {c: lines.get(c, 0.0) for c in SPENDING_CATEGORIES} if lines is not None else None
 
 
 def _today():
@@ -1160,7 +1212,7 @@ def budget_plan():
         saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
         saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
         saved_now_data = saved_now.data if saved_now else None
-        prev_limits = (saved_prev.data or {}).get("budget") if saved_prev else None
+        prev_limits = _budget_lines(saved_prev.data) if saved_prev else None
     if income <= 0:
         return jsonify(error="add your income in your household profile first"), 400
 
@@ -1207,12 +1259,12 @@ def budget_plan():
         saved_now_data, auto_saved = plan, True
     # Safe to spend per day: what is left of the everyday limits, spread over the days left (audit 5.5).
     everyday = [cat for cat in bud.model()["variable"]]
-    limits = saved_now_data["budget"] if saved_now_data else plan["budget"]
-    left = sum(float(limits.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday + OUTSIDE)
+    lines = (_budget_lines(saved_now_data) if saved_now_data else None) or plan["budget"]
+    left = sum(float(lines.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday + OUTSIDE)
     days_left = calendar.monthrange(y, m)[1] - pic["today"].day + 1
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data, auto_saved=auto_saved,
                    everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left),
-                   warnings=budget_warnings(limits, spent, pic["today"], everyday))
+                   warnings=budget_warnings(lines, spent, pic["today"], everyday))
 
 
 def budget_warnings(limits, spent, today, categories):
@@ -1286,8 +1338,10 @@ def _scenario_from_preset(p, months):
                 f"{label}: KES {round(target):,} in {months_n} months")
     try:
         delta = float(p.get("amount"))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise InputError("amount must be a number (negative for a drop in income)")
+    if not limits.is_real(delta):
+        raise InputError(f"amount must be a normal amount (at most {limits.MAX_AMOUNT:,})")
     word = "rises" if delta >= 0 else "drops"
     sc, title = {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
     if p.get("months"):                           # e.g. HELB delayed for 2 months
@@ -1421,7 +1475,18 @@ def get_budget(year, month):
 def put_budget(year, month):
     if not 1 <= month <= 12:
         raise InputError("month must be 1-12")
+    today = _today()
+    if not today.year - 1 <= year <= today.year + 1:
+        raise InputError("a budget can be saved for last year, this year or next year")
     data = _body()
+    lines = data.get("budget")
+    if not isinstance(lines, dict) or not lines:
+        raise InputError("send the budget as an object of categories and monthly amounts")
+    for c, v in lines.items():
+        if c not in BUDGET_LINES:
+            raise InputError(f"{c} is not a budget category")
+        if not limits.is_real(v) or (v < 0 and c != "savings"):
+            raise InputError(f"the budget for {c} must be a normal amount of at least 0")
     with session() as s:
         b = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == year, Budget.month == month))
         b = b or Budget(user_id=g.user_id, year=year, month=month)
@@ -1676,6 +1741,7 @@ def statement_preview():
                      "details": r["details"][:200], "auto_kind": r.get("auto_kind"),
                      "one_off": bool(r.get("suggest_one_off")), "duplicate": ref in seen,
                      "goals": _goal_matches(goals, abs(r["amount"]), r["label"]) if r.get("suggest_one_off") else []})
+        rows[-1]["sig"] = _row_sig(g.user_id, rows[-1])
     for p in info["payees"]:
         p["hints"] = _hints(p, goals, checks)
     return jsonify(period=info["period"], checks=info["checks"], months=info["months"], flows=info["flows"],
@@ -1710,16 +1776,26 @@ def statement_import():
         raise InputError("send the transactions and tags from the preview")
     if any(v not in mpesa.ALL_TAGS for v in tags.values()):
         raise InputError("one of your choices was not recognised; read the statement again and retry")
-    skip = _partial_months(b.get("period"), _today())
+    if len(rows) > MAX_STATEMENT_ROWS:
+        raise InputError(f"a statement can have at most {MAX_STATEMENT_ROWS:,} records")
+    period = b.get("period")
+    try:
+        skip = _partial_months(period, _today())
+    except (TypeError, ValueError, AttributeError):
+        raise InputError("the statement period was not recognised; upload the statement again")
     spend, net, was, money_in = [], defaultdict(float), {}, []
     for r in rows:
         if not isinstance(r, dict):
             raise InputError("each transaction must be an object")
+        if not hmac.compare_digest(str(r.get("sig") or ""), _row_sig(g.user_id, r)):
+            raise InputError("these records do not match the statement you uploaded; upload it again")
         try:
             day = date.fromisoformat(str(r.get("date")))
             amount = float(r.get("amount"))
         except (TypeError, ValueError):
             raise InputError("each transaction needs a date (YYYY-MM-DD) and an amount")
+        if not limits.is_real(amount) or amount <= 0:
+            continue                         # a zero line on a statement moves no money
         row = {"amount": amount if r.get("direction") == "in" else -amount, "kind": r.get("kind"),
                "category": r.get("category"), "source": r.get("source")}
         key = r.get("payee_key")
@@ -1896,13 +1972,7 @@ def correct_transaction(tx_id):
                 raise InputError("amount must be more than 0")
             t.amount = amount
         if "date" in edits:
-            try:
-                day = date.fromisoformat(str(edits["date"]))
-            except ValueError:
-                raise InputError("date must look like 2026-10-29")
-            if day > _today():
-                raise InputError("the date cannot be in the future")
-            t.day = day
+            t.day = _spend_day(edits["date"])
         if "description" in edits:
             t.description = str(edits["description"] or "")[:200]
         if "one_off" in edits:
