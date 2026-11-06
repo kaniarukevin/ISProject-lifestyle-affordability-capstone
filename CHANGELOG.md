@@ -3,6 +3,9 @@
 Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
+### Fixed
+- The forecast no longer raises January, May and September for people who pay no school fees; the fee months now follow the user's own fees (held-out error in those months 10,833 to 10,490).
+
 ### Added
 - "Plan a change": one check for a whole decision, with an upfront cost (savings or instalments), monthly, termly or yearly costs, money it brings in and a duration; checked while paying instalments and after; can be applied.
 - Low-month check: when income varies, every check and the budget forecast are repeated on a low month (from pay that arrived, or the setup answer `incomeLow`).

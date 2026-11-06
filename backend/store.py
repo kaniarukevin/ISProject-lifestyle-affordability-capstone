@@ -876,7 +876,7 @@ def user_forecast_model():
     return _USER_FORECAST["m"]
 
 
-def _model_total(hist, totals, profile, target_month, ahead=1):
+def _model_total(hist, totals, profile, target_month, ahead=1, pays_fees=True):
     """A month's total from the model: a multiple of the household's median, using only what is known before the
     month starts (past months, income, household, and which calendar month it is). ahead: 1 = the month after
     the last recorded one, 2 or 3 = further out. The same model serves all three (it beat separate per-horizon
@@ -893,7 +893,10 @@ def _model_total(hist, totals, profile, target_month, ahead=1):
          "income": incomes[-1], "income_mean": statistics.mean(incomes),
          "household_size": profile.household_size, "num_dependants": profile.dependants,
          "formal": int(bool(profile.formal_job)), "month": target_month,
-         "fee_month": int(target_month in fee_months), "december": int(target_month == 12),
+         # A fee month only for someone who pays fees (fees in their records, a school-fees bill, or "I pay my own
+         # fees"): otherwise the model added about KES 1,200 to a student's January, May and September for no reason.
+         # Ignoring it for non-payers lowered held-out error in those months (10,833 to 10,490; experiments, 6 Nov).
+         "fee_month": int(target_month in fee_months and pays_fees), "december": int(target_month == 12),
          "fees_seen": max(fees_seen) if fees_seen else 0.0,
          "fees_median": statistics.median([m["school_fees"] for m in hist])}
     import pandas as pd
@@ -938,6 +941,15 @@ def _commitment_changes(s, user_id, hist):
     return out
 
 
+def _pays_fees(s, user_id, hist, profile):
+    """Does this person pay school fees? Fees in their records, a school-fees bill under Plans, or the profile's
+    "I pay my own fees"."""
+    if any(m.get("school_fees", 0) > 0 for m in hist) or (profile is not None and profile.pays_own_fees):
+        return True
+    c = s.get(Commitments, user_id)
+    return bool(c and c.data and any(o.get("category") == "school_fees" for o in c.data.get("obligations", [])))
+
+
 def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1, blend=True):
     """The user's own forecast.
     Total: a boosted tree trained on the KIHBS-informed households (history + calendar month), which beat the
@@ -957,7 +969,8 @@ def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1, bl
     shares = {c: sum(_known(m).get(c, 0.0) / t for m, t in zip(hist, totals) if t > 0) / len(hist) for c in parts}
     norm = sum(shares.values()) or 1.0
     shares = {c: v / norm for c, v in shares.items()}
-    model = _model_total(hist, totals, s.get(Profile, user_id), target_month, ahead)
+    profile = s.get(Profile, user_id)
+    model = _model_total(hist, totals, profile, target_month, ahead, _pays_fees(s, user_id, hist, profile))
     if model:
         usual_total, x = model
         fees = x["fees_seen"] if x["fee_month"] else x["fees_median"]

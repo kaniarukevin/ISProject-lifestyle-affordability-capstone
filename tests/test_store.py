@@ -501,6 +501,23 @@ def test_the_forecast_model_is_used_and_knows_fee_months(client, monkeypatch):
     assert jan["breakdown"]["school_fees"] == 15000 and jan["total"] > nov["total"]
 
 
+def test_no_fee_bump_for_someone_who_pays_no_fees(client, monkeypatch):
+    if store.user_forecast_model() is None:
+        pytest.skip("backend/models/user_forecast.joblib not trained")
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Allowance", "amount": 30000}]})
+    for m in range(1, 11):                       # a student: the same spending every month, no school fees
+        client.post("/me/transactions", headers=h, json=[
+            {"date": f"2026-{m:02d}-02", "amount": 8000, "category": "housing"},
+            {"date": f"2026-{m:02d}-05", "amount": 6000, "category": "food_groceries"},
+            {"date": f"2026-{m:02d}-09", "amount": 2500, "category": "transport"}])
+    with store.session() as s:
+        months, _, _ = store._user_months(s, 1)
+        nov = store.forecast_for_user(s, 1, months[:10], 2026, 11, blend=False)
+        jan = store.forecast_for_user(s, 1, months[:10], 2027, 1, blend=False)
+    assert jan["total"] == nov["total"] and "school_fees" not in jan["breakdown"]
+
+
 def test_forecast_gives_a_range_and_follows_a_new_rent(client, monkeypatch):
     if store.user_forecast_model() is None:
         pytest.skip("backend/models/user_forecast.joblib not trained")
