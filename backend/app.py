@@ -19,6 +19,7 @@ from flask import Flask, jsonify, request
 from affordability import AffordabilityInputError, evaluate
 import budget
 import commitments
+import limits
 import store
 from flask_cors import CORS
 
@@ -37,6 +38,16 @@ CORS(app, origins=[r"^https?://localhost(:\d+)?$", r"^https?://127\.0\.0\.1(:\d+
                    *[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]])
 store.init()
 app.register_blueprint(store.bp)
+
+
+@app.before_request
+def _refuse_unreal_numbers():
+    """NaN, Infinity or a number like 1e400 anywhere in a JSON body is refused before any endpoint runs
+    (audit A-01): Python reads them as floats without complaint and PostgreSQL would store them."""
+    if request.is_json and request.content_length:
+        bad = limits.bad_json_number(request.get_data(cache=True))
+        if bad is not None:
+            return jsonify(error=f"{bad} is not a number the app can use; enter an amount in shillings"), 400
 
 
 @app.errorhandler(Exception)

@@ -11,6 +11,7 @@ import joblib
 import pandas as pd
 
 import affordability as aff
+import limits
 
 MODEL_PATH = Path(__file__).resolve().parent / "models" / "budget_split.joblib"
 FIXED = ["housing", "loan_repayment", "school_fees", "other_commitments"]
@@ -36,8 +37,10 @@ def model():
 def _num(value, name, minimum=0.0):
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise BudgetInputError(f"{name} must be a number")
+    if not limits.is_real(v):
+        raise BudgetInputError(f"{name} must be a normal amount (at most {limits.MAX_AMOUNT:,})")
     if v < minimum:
         raise BudgetInputError(f"{name} must be at least {minimum:g}")
     return v
