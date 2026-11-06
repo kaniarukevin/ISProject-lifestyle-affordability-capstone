@@ -9,6 +9,7 @@ import 'afford_screen.dart';
 import 'commitments_screen.dart';
 import 'dashboard_screen.dart';
 import 'forecast_screen.dart';
+import 'spending_screen.dart';
 import 'you_screen.dart';
 
 class _Dest {
@@ -41,6 +42,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   bool _admin = false;
+  final _opened = <int>{0};   // tabs load the first time they are opened, not all five at start-up
 
   @override
   void initState() {
@@ -50,7 +52,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }).catchError((_) {});
   }
 
-  void _go(int i) => setState(() => _tab = i);
+  void _go(int i) => setState(() {
+        _tab = i;
+        _opened.add(i);
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +67,9 @@ class _HomeScreenState extends State<HomeScreen> {
       const CommitmentsScreen(),
       YouScreen(admin: _admin),
     ];
-    final body = IndexedStack(index: _tab, children: pages);
+    final body = IndexedStack(index: _tab, children: [
+      for (var i = 0; i < pages.length; i++) _opened.contains(i) ? pages[i] : const SizedBox.shrink(),
+    ]);
 
     return LayoutBuilder(builder: (context, box) {
       final wide = box.maxWidth >= HomeScreen.wideFrom;
@@ -70,6 +77,9 @@ class _HomeScreenState extends State<HomeScreen> {
         title: _dests[_tab].title,
         greeting: _tab == 0 ? 'Habari${(state.profile?.name ?? '').isNotEmpty ? ', ${state.profile!.name}' : ''}' : null,
         onAdd: _tab == 0 ? () => showAddSheet(context) : null,
+        onRecords: _tab == 0 || _tab == 2
+            ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SpendingScreen()))
+            : null,
         wide: wide,
         child: body,
       );
@@ -104,10 +114,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
 /// The page heading, then the page. Overview also gets the greeting and the Add button.
 class _Page extends StatelessWidget {
-  const _Page({required this.title, required this.child, required this.wide, this.greeting, this.onAdd});
+  const _Page({required this.title, required this.child, required this.wide, this.greeting, this.onAdd, this.onRecords});
   final String title;
   final String? greeting;
   final VoidCallback? onAdd;
+  final VoidCallback? onRecords;
   final bool wide;
   final Widget child;
 
@@ -127,6 +138,12 @@ class _Page extends StatelessWidget {
                 Text(title, style: wide ? theme.textTheme.headlineMedium : theme.textTheme.headlineSmall),
               ]),
             ),
+            if (onRecords != null) ...[
+              wide
+                  ? FilledButton.tonal(onPressed: onRecords, child: const Text('Records'))
+                  : IconButton.filledTonal(tooltip: 'Your records', onPressed: onRecords, icon: const Icon(Icons.receipt_long_rounded)),
+              const SizedBox(width: 8),
+            ],
             if (onAdd != null)
               wide
                   ? FilledButton.icon(onPressed: onAdd, icon: const Icon(Icons.add_rounded), label: const Text('Add records'))

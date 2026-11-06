@@ -165,11 +165,13 @@ TYPES = {                 # M-PESA's own transaction types: always right, becaus
 # Spending outside the models' 10 categories: shown by its real name, treated like unsorted money by the models.
 OUTSIDE = [UNSORTED, "shopping", "health", "personal_care", "other", "charges"]
 # Money coming in can be tagged too: the user's pay or allowance, their own money moving, or someone paying them.
-IN_TAGS = ["income", "mixed", "own_account", "received"]
+# Money coming in: pay or allowance, pay mixed with own money, own money, paid back or a gift, and a bonus or
+# other one-off (counted that month only as extra, never as usual income).
+IN_TAGS = ["income", "mixed", "own_account", "received", "one_off"]
 TAGS = ["housing", "food_groceries", "transport", "utilities", "airtime_data", "mobile_money_transfers",
         "loan_repayment", "school_fees", "entertainment", "savings", "shopping", "health", "personal_care",
         "other", "own_account", UNSORTED]
-ALL_TAGS = TAGS + ["income", "mixed", "received"]
+ALL_TAGS = TAGS + ["income", "mixed", "received", "one_off"]
 
 
 def _phone(raw):

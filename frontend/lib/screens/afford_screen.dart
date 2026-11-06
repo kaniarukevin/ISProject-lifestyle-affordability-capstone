@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/presets.dart';
+import '../models/profile.dart';
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/busy_words.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
@@ -13,8 +15,8 @@ import '../widgets/verdict.dart';
 import 'why_score_sheet.dart';
 
 /// The heart of the project: test a lifestyle change on your own numbers before committing to it.
-/// Pick the kind of change, fill in a few numbers, Check. On a wide screen the answer appears beside the form;
-/// on a phone it opens on its own page (design canvas, 6 Nov).
+/// 1. "What are you thinking of?": picture cards, the first row suggested from the profile. 2. A short form:
+/// on a phone its own page with Check fixed at the bottom; on a wide screen beside the answer. 3. The answer.
 class AffordScreen extends StatefulWidget {
   const AffordScreen({super.key});
 
@@ -24,53 +26,26 @@ class AffordScreen extends StatefulWidget {
   State<AffordScreen> createState() => _AffordScreenState();
 }
 
-const _groups = {'Anyone': anyonePresets, 'Family': familyPresets, 'Students': studentPresets};
+/// The four changes most likely to matter to this person, from what they told us at setup.
+List<Preset> suggestedPresets(Profile? p) {
+  Preset find(String id) => [...anyonePresets, ...familyPresets, ...studentPresets].firstWhere((x) => x.id == id);
+  if (p != null && p.studying) return [find('laptop'), find('offcampus'), find('trip'), find('helb')];
+  if (p != null && (p.householdSize > 1 || p.childrenInSchool > 0)) {
+    return [find('move'), find('school'), find('baby'), find('buy')];
+  }
+  return [find('buy'), find('loan'), find('save'), find('move')];
+}
 
 class _AffordScreenState extends State<AffordScreen> {
   List<Map<String, dynamic>> history = [];
-  String _group = 'Anyone';
-  Preset _preset = anyonePresets.first;
-  Map<String, TextEditingController> _ctl = {};
-  bool _busy = false;
-  String? _error;
-  Map<String, dynamic>? _result;      // shown beside the form on wide screens
+  Preset? _preset;                    // the change being looked at (wide screens keep it open beside the answer)
+  Map<String, dynamic>? _result;
   Map<String, dynamic>? _choice;
 
   @override
   void initState() {
     super.initState();
-    final p = context.read<AppState>().profile;
-    if (p != null && p.studying) {
-      _group = 'Students';
-    } else if (p != null && p.householdSize > 1) {
-      _group = 'Family';
-    }
-    _select(_groups[_group]!.first);
     _loadHistory();
-  }
-
-  @override
-  void dispose() {
-    for (final c in _ctl.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _select(Preset p) {
-    // The old fields are still on screen until the next frame: dispose their controllers after it.
-    final old = _ctl.values.toList();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      for (final c in old) {
-        c.dispose();
-      }
-    });
-    _preset = p;
-    _ctl = {
-      for (final f in p.fields) f.key: TextEditingController(text: f.initial == null ? '' : f.initial!.round().toString()),
-    };
-    _error = null;
-    _result = null;
   }
 
   Future<void> _loadHistory() async {
@@ -80,9 +55,186 @@ class _AffordScreenState extends State<AffordScreen> {
     } catch (_) {/* history is optional */}
   }
 
-  Future<void> _check({required bool sideBySide}) async {
+  Future<void> _pick(Preset p, bool sideBySide) async {
+    if (sideBySide) {
+      setState(() {
+        _preset = p;
+        _result = null;
+      });
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => _AskPage(preset: p)));
+    _loadHistory();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final suggested = suggestedPresets(context.watch<AppState>().profile);
+    final more = [
+      for (final p in [...anyonePresets, ...familyPresets, ...studentPresets])
+        if (!suggested.contains(p)) p,
+    ];
+    return LayoutBuilder(builder: (context, box) {
+      final sideBySide = box.maxWidth >= AffordScreen.sideBySideFrom;
+      final pastLink = history.isEmpty
+          ? null
+          : TextButton.icon(
+              onPressed: () async {
+                await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PastChecksScreen(history: history)));
+                _loadHistory();
+              },
+              icon: const Icon(Icons.history_rounded),
+              label: Text('Past checks (${history.length})'),
+            );
+
+      if (sideBySide && _preset != null) {
+        return ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  TextButton.icon(
+                    onPressed: () => setState(() {
+                      _preset = null;
+                      _result = null;
+                    }),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                    label: const Text('Choose something else'),
+                  ),
+                  const Spacer(),
+                  ?pastLink,
+                ]),
+                const SizedBox(height: 8),
+                Panel(
+                  child: AskForm(
+                    key: ValueKey(_preset!.id),
+                    preset: _preset!,
+                    onResult: (r, choice) {
+                      setState(() {
+                        _result = r;
+                        _choice = choice;
+                      });
+                      _loadHistory();
+                    },
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              flex: 2,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 56),
+                child: _result == null
+                    ? Panel(
+                        child: Text('Your answer appears here: a verdict, your score before and after, what it does '
+                            'to your budget month by month, and what would make it work.',
+                            style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+                      )
+                    : ResultView(result: _result!, choice: _choice, onChanged: _loadHistory,
+                        onExploring: () => setState(() => _result = null)),
+              ),
+            ),
+          ]),
+        ]);
+      }
+
+      final cols = sideBySide ? 4 : (box.maxWidth >= 600 ? 3 : 2);
+      Widget grid(List<Preset> ps) => LayoutBuilder(builder: (context, b) {
+            const gap = 12.0;
+            final w = (b.maxWidth - gap * (cols - 1)) / cols;
+            return Wrap(spacing: gap, runSpacing: gap, children: [
+              for (final p in ps) SizedBox(width: w, child: _PresetCard(preset: p, onTap: () => _pick(p, sideBySide))),
+            ]);
+          });
+      return RefreshIndicator(
+        onRefresh: _loadHistory,
+        child: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+          Row(children: [
+            Expanded(
+              child: Text('Try a change before you make it. Nothing is saved unless you go ahead.',
+                  style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+            ),
+            ?pastLink,
+          ]),
+          const SizedBox(height: 20),
+          Text('Suggested for you', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 12),
+          grid(suggested),
+          const SizedBox(height: 28),
+          Text('More ideas', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 12),
+          grid(more),
+        ]),
+      );
+    });
+  }
+}
+
+class _PresetCard extends StatelessWidget {
+  const _PresetCard({required this.preset, required this.onTap});
+  final Preset preset;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    return Material(
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(radius: 20, backgroundColor: c.field, child: Icon(preset.icon, size: 20, color: theme.colorScheme.onSurface)),
+            const SizedBox(height: 14),
+            Text(preset.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(preset.subtitle, maxLines: 2, overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// The few numbers a change needs, and Check. [sticky]: Check is fixed at the bottom (phone page).
+class AskForm extends StatefulWidget {
+  const AskForm({super.key, required this.preset, required this.onResult, this.sticky = false});
+  final Preset preset;
+  final void Function(Map<String, dynamic> result, Map<String, dynamic> choice) onResult;
+  final bool sticky;
+
+  @override
+  State<AskForm> createState() => _AskFormState();
+}
+
+class _AskFormState extends State<AskForm> {
+  late final Map<String, TextEditingController> _ctl = {
+    for (final f in widget.preset.fields)
+      f.key: TextEditingController(text: f.initial == null ? '' : f.initial!.round().toString()),
+  };
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    for (final c in _ctl.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _check() async {
     final values = <String, num>{};
-    for (final f in _preset.fields) {
+    for (final f in widget.preset.fields) {
       final v = num.tryParse(_ctl[f.key]!.text.replaceAll(',', '').trim());
       // isFinite and the cap stop "Infinity", "NaN" and 1e15 (audit A-15).
       if (v == null || !v.isFinite || v.abs() > 100000000 || (v < 0 && !f.allowNegative)) {
@@ -96,164 +248,118 @@ class _AffordScreenState extends State<AffordScreen> {
       _error = null;
     });
     try {
-      final choice = buildChoice(_preset, values);
+      final choice = buildChoice(widget.preset, values);
       final r = await context.read<AppState>().api.afford(choice);
-      if (!mounted) return;
-      if (sideBySide) {
-        setState(() {
-          _result = r;
-          _choice = choice;
-        });
-      } else {
-        await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResultScreen(result: r, choice: choice)));
-      }
-      _loadHistory();
+      if (mounted) widget.onResult(r, choice);
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  Future<void> _openPast(Map<String, dynamic> h) async {
-    final r = (h['result'] as Map).cast<String, dynamic>();
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ResultScreen(result: {...r, 'id': h['id']}, choice: (h['request'] as Map?)?.cast<String, dynamic>())));
-    _loadHistory();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
-    return LayoutBuilder(builder: (context, box) {
-      final sideBySide = box.maxWidth >= AffordScreen.sideBySideFrom;
-      final form = _form(theme, c, sideBySide);
-      final past = _past(theme, c);
-      return RefreshIndicator(
-        onRefresh: _loadHistory,
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          children: [
-            Text('Try a change before you make it. Nothing is saved unless you go ahead.',
-                style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: SegmentedButton<String>(
-                showSelectedIcon: false,
-                segments: [for (final g in _groups.keys) ButtonSegment(value: g, label: Text(g))],
-                selected: {_group},
-                onSelectionChanged: (s) => setState(() {
-                  _group = s.first;
-                  _select(_groups[_group]!.first);
-                }),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              for (final p in _groups[_group]!)
-                ChoiceChip(
-                  label: Text(p.title),
-                  avatar: Icon(p.icon, size: 18, color: p == _preset ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface),
-                  showCheckmark: false,
-                  selected: p == _preset,
-                  onSelected: (_) => setState(() => _select(p)),
-                ),
-            ]),
-            const SizedBox(height: 20),
-            if (sideBySide)
-              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Expanded(child: Column(children: [form, if (past != null) ...[const SizedBox(height: 20), past]])),
-                const SizedBox(width: 20),
-                Expanded(
-                  flex: 2,
-                  child: _result == null
-                      ? Panel(
-                          child: Text('Your answer appears here: a verdict, your score before and after, what it does '
-                              'to your budget month by month, and what would make it work.',
-                              style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
-                        )
-                      : ResultView(result: _result!, choice: _choice, onChanged: _loadHistory,
-                          onExploring: () => setState(() => _result = null)),
-                ),
-              ])
-            else ...[
-              form,
-              if (past != null) ...[const SizedBox(height: 20), past],
-            ],
-          ],
+    final fields = <Widget>[
+      Text(widget.preset.title, style: theme.textTheme.titleLarge),
+      const SizedBox(height: 4),
+      Text(widget.preset.subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+      const SizedBox(height: 18),
+      for (final f in widget.preset.fields) ...[
+        TextField(
+          controller: _ctl[f.key],
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: f.label, helperText: f.hint),
+          onSubmitted: (_) => _check(),
+        ),
+        const SizedBox(height: 14),
+      ],
+      if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: c.warn))),
+    ];
+    final button = FilledButton(
+      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+      onPressed: _busy ? null : _check,
+      child: _busy ? const BusyWords(lines: checkingWords) : const Text('Check'),
+    );
+    if (!widget.sticky) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [...fields, button]);
+    }
+    return Column(children: [
+      Expanded(child: ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 16), children: fields)),
+      SafeArea(top: false, child: Padding(padding: const EdgeInsets.fromLTRB(20, 8, 20, 16), child: button)),
+    ]);
+  }
+}
+
+/// Phones: the form on its own page, Check always visible at the bottom; the answer opens on the next page.
+class _AskPage extends StatelessWidget {
+  const _AskPage({required this.preset});
+  final Preset preset;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Can I afford it?')),
+        body: AskForm(
+          preset: preset,
+          sticky: true,
+          onResult: (r, choice) => Navigator.of(context)
+              .pushReplacement(MaterialPageRoute(builder: (_) => ResultScreen(result: r, choice: choice))),
         ),
       );
-    });
-  }
+}
 
-  Widget _form(ThemeData theme, AppColors c, bool sideBySide) => Panel(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text(_preset.title, style: theme.textTheme.titleLarge),
-          const SizedBox(height: 4),
-          Text(_preset.subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
-          const SizedBox(height: 16),
-          for (final f in _preset.fields) ...[
-            TextField(
-              key: ValueKey('${_preset.id}.${f.key}'),
-              controller: _ctl[f.key],
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(labelText: f.label, helperText: f.hint),
-            ),
-            const SizedBox(height: 14),
-          ],
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Text(_error!, style: TextStyle(color: c.warn)),
-            ),
-          FilledButton(
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-            onPressed: _busy ? null : () => _check(sideBySide: sideBySide),
-            child: _busy
-                ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Check'),
-          ),
-        ]),
+/// Every check so far: open one to see the answer again, or delete it.
+class PastChecksScreen extends StatefulWidget {
+  const PastChecksScreen({super.key, required this.history});
+  final List<Map<String, dynamic>> history;
+
+  @override
+  State<PastChecksScreen> createState() => _PastChecksScreenState();
+}
+
+class _PastChecksScreenState extends State<PastChecksScreen> {
+  late final List<Map<String, dynamic>> items = [...widget.history];
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        appBar: AppBar(title: const Text('Past checks')),
+        body: PageWidth(
+          child: ListView(padding: const EdgeInsets.fromLTRB(20, 8, 20, 24), children: [
+            for (final h in items)
+              Builder(builder: (context) {
+                final r = (h['result'] as Map).cast<String, dynamic>();
+                return Card(
+                  child: ListTile(
+                    title: Text((r['title'] ?? 'Check') as String),
+                    subtitle: Text('${(h['created_at'] as String? ?? '').split('T').first}'
+                        '${r['applied'] != null ? ' · going ahead' : ''}'),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => ResultScreen(result: {...r, 'id': h['id']},
+                            choice: (h['request'] as Map?)?.cast<String, dynamic>()))),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (r['verdict'] is String) VerdictChip(r['verdict'] as String),
+                      IconButton(
+                        tooltip: 'Delete this check',
+                        icon: const Icon(Icons.delete_outline_rounded),
+                        onPressed: () async {
+                          final sure = await showChoiceSheet<bool>(context,
+                              title: 'Delete this check?',
+                              message: 'It only removes the check from this list. Nothing else changes.',
+                              choices: const [SheetChoice('Delete', true, primary: true)]);
+                          if (sure != true || !context.mounted) return;
+                          await context.read<AppState>().api.deleteScenario(h['id'] as int);
+                          setState(() => items.remove(h));
+                        },
+                      ),
+                    ]),
+                  ),
+                );
+              }),
+          ]),
+        ),
       );
-
-  Widget? _past(ThemeData theme, AppColors c) {
-    if (history.isEmpty) return null;
-    return Panel(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('Past checks', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 6),
-        for (final h in history.take(8))
-          Builder(builder: (context) {
-            final r = (h['result'] as Map).cast<String, dynamic>();
-            final id = h['id'] as int;
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text((r['title'] ?? 'Check') as String),
-              subtitle: r['applied'] != null ? const Text('Going ahead') : null,
-              onTap: () => _openPast(h),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (r['verdict'] is String) VerdictChip(r['verdict'] as String),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline_rounded),
-                  tooltip: 'Delete this check',
-                  onPressed: () async {
-                    final sure = await showChoiceSheet<bool>(context,
-                        title: 'Delete this check?',
-                        message: 'It only removes the check from this list. Nothing else changes.',
-                        choices: const [SheetChoice('Delete', true, primary: true)]);
-                    if (sure != true || !context.mounted) return;
-                    await context.read<AppState>().api.deleteScenario(id);
-                    _loadHistory();
-                  },
-                ),
-              ]),
-            );
-          }),
-      ]),
-    );
-  }
 }
 
 /// The answer on its own page (phones, and past checks).

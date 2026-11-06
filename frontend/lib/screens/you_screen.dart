@@ -9,7 +9,9 @@ import '../widgets/format.dart';
 import '../widgets/panel.dart';
 import 'admin_screen.dart';
 import 'privacy_screen.dart';
+import 'payees_screen.dart';
 import 'profile_screen.dart';
+import 'spending_screen.dart';
 
 /// You: household and income, privacy, appearance, log out, delete account.
 class YouScreen extends StatelessWidget {
@@ -107,6 +109,20 @@ class YouScreen extends StatelessWidget {
               title: const Text('Household and income'),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => push(const ProfileScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.receipt_long_rounded),
+              title: const Text('Your records'),
+              subtitle: const Text('Search, change or delete any payment'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => push(const SpendingScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.people_rounded),
+              title: const Text('Who you pay and who pays you'),
+              subtitle: const Text('What each person and business is'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => push(const PayeesScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.lock_rounded),

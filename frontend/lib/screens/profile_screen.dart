@@ -1,7 +1,3 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,6 +6,7 @@ import '../models/transaction.dart' show spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../widgets/choice_sheet.dart';
+import '../widgets/panel.dart';
 import 'password_field.dart';
 import 'privacy_screen.dart';
 
@@ -38,21 +35,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (source != null) setState(() => draft.incomes.add(source));
   }
 
-  /// Save everything the app keeps about the user as a JSON file (downloads on the web, a save dialog on phones).
-  Future<void> _download() async {
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final data = await context.read<AppState>().api.exportData();
-      final now = DateTime.now();
-      final name = 'my-affordability-data-${now.year}-${now.month.toString().padLeft(2, '0')}-'
-          '${now.day.toString().padLeft(2, '0')}.json';
-      final bytes = Uint8List.fromList(utf8.encode(const JsonEncoder.withIndent('  ').convert(data)));
-      final saved = await FilePicker.saveFile(dialogTitle: 'Save your data', fileName: name, bytes: bytes);
-      if (saved != null) messenger.showSnackBar(SnackBar(content: Text('Saved $name')));
-    } on ApiException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
-    }
-  }
+  Future<void> _download() => downloadMyData(context);
 
   Future<void> _editIncome(int i) async {
     final source = await showDialog<IncomeSource>(
@@ -98,7 +81,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Your household')),
-      body: ListView(
+      body: PageWidth(child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextFormField(
@@ -277,7 +260,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           ],
         ],
-      ),
+      )),
     );
   }
 }
@@ -336,6 +319,7 @@ class _IncomeDialogState extends State<_IncomeDialog> {
         title: Text(widget.initial == null ? 'Add income' : 'Change income'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
+          spacing: 12,
           children: [
             TextField(controller: _name, decoration: const InputDecoration(labelText: 'Name, e.g. Salary or HELB')),
             TextField(
@@ -419,7 +403,7 @@ class _PasswordDialogState extends State<_PasswordDialog> {
   Widget build(BuildContext context) => AlertDialog(
         title: const Text('Change password'),
         content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, spacing: 12, children: [
             PasswordField(controller: _current, label: 'Current password', autofillHints: const [AutofillHints.password]),
             PasswordField(controller: _new, label: 'New password', helper: 'At least 8 characters',
                 autofillHints: const [AutofillHints.newPassword]),

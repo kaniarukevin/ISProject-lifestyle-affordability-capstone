@@ -505,6 +505,45 @@ def test_a_new_income_does_not_rewrite_past_months(client, monkeypatch):
     assert all(m["income"] == 60000 for m in fixed)                          # a correction: it was always 60,000
 
 
+def test_a_month_without_the_tagged_pay_is_not_scored_as_no_income(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Allowance", "amount": 27000}]})
+    for m in (8, 9, 10):
+        client.post("/me/transactions", headers=h, json=[{"date": f"2026-{m:02d}-05", "amount": 20000,
+                                                           "category": "food_groceries"}])
+    with store.session() as s:
+        s.add(store.StatementRule(user_id=1, key="in:allowance", choice="income"))
+        s.add_all([store.MoneyIn(user_id=1, day=store.date(2026, 8, 1), amount=27000, kind="income"),
+                   store.MoneyIn(user_id=1, day=store.date(2026, 9, 3), amount=18000, kind="own_account"),
+                   store.MoneyIn(user_id=1, day=store.date(2026, 9, 9), amount=4000, kind="received"),
+                   store.MoneyIn(user_id=1, day=store.date(2026, 10, 2), amount=50000, kind="own_account")])
+        s.commit()
+        months, _, _ = store._user_months(s, 1)
+    income = {m["month"]: m["income_primary"] for m in months}
+    assert income == {8: 27000, 9: 22000, 10: 27000}     # the tagged pay; what came in; capped at the usual income
+
+
+def test_one_payment_coming_in_can_be_changed_on_its_own(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 20000}]})
+    client.post("/me/transactions", headers=h, json=[{"date": "2026-07-05", "amount": 15000, "category": "food_groceries"}])
+    with store.session() as s:
+        s.add_all([store.MoneyIn(user_id=1, day=store.date(2026, 7, 1), amount=20000, kind="received", payee_key="in:ncba"),
+                   store.MoneyIn(user_id=1, day=store.date(2026, 7, 20), amount=57000, kind="received", payee_key="in:ncba")])
+        s.commit()
+    bonus = client.get("/me/money-in?key=in:ncba", headers=h).get_json()["payments"][0]
+    assert bonus["amount"] == 57000
+    assert client.patch(f"/me/money-in/{bonus['id']}", headers=h, json={"kind": "one_off"}).status_code == 200
+    client.put("/me/payees", headers=h, json={"key": "in:ncba", "tag": "income"})        # NCBA is my pay...
+    kinds = {p["amount"]: p["kind"] for p in client.get("/me/money-in?key=in:ncba", headers=h).get_json()["payments"]}
+    assert kinds == {20000: "income", 57000: "one_off"}                                   # ...except the bonus
+    with store.session() as s:
+        months, _, _ = store._user_months(s, 1)
+    assert months[0]["income_primary"] == 20000                                          # a bonus is not usual pay
+
+
 def test_estimates_must_be_known_categories(client):
     h = signup(client)
     r = client.put("/me/profile", headers=h, json={"householdSize": 1, "estimates": {"pets": 500},

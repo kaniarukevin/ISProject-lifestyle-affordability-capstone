@@ -28,38 +28,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? bf;         // GET /me/budget-forecast (null if it cannot be worked out yet)
   Map<String, dynamic>? lastCheck;  // the latest "Can I afford it?" result
   String? error;
+  bool _stale = false;              // showing the last figures while fresh ones load
 
   @override
   void initState() {
     super.initState();
+    _showLast();
     _load();
+  }
+
+  /// The figures from last time, at once (fetching fresh ones takes a few seconds on a slow connection).
+  Future<void> _showLast() async {
+    final state = context.read<AppState>();
+    final last = await state.cached('overview');
+    if (last == null || !mounted || o != null) return;
+    final f = await state.cached('forecast');
+    if (!mounted || o != null) return;
+    setState(() {
+      o = last;
+      bf = f;
+      _stale = true;
+    });
   }
 
   Future<void> _load() async {
     final api = context.read<AppState>().api;
     try {
+      // The three requests go out together: each one waits on the database, so one after another was slow.
+      final forecast = api.budgetForecast().then<Map<String, dynamic>?>((f) => f['has_data'] == true ? f : null,
+          onError: (_) => null); // for example no income yet: the rest of the overview still shows
+      final checks = api.scenarios().then<Map<String, dynamic>?>(
+          (h) => h.isEmpty ? null : (h.first['result'] as Map).cast<String, dynamic>(),
+          onError: (_) => null); // past checks are optional
       final d = await api.overview();
-      Map<String, dynamic>? f;
-      Map<String, dynamic>? check;
-      if (d['has_data'] == true) {
-        try {
-          f = await api.budgetForecast();
-          if (f['has_data'] != true) f = null;
-        } on ApiException {
-          f = null; // for example no income yet: the rest of the overview still shows
-        }
-        try {
-          final h = await api.scenarios();
-          if (h.isNotEmpty) check = (h.first['result'] as Map).cast<String, dynamic>();
-        } catch (_) {/* past checks are optional */}
-      }
+      final f = await forecast;
+      final check = await checks;
       if (!mounted) return;
       setState(() {
         o = d;
         bf = f;
         lastCheck = check;
         error = null;
+        _stale = false;
       });
+      final state = context.read<AppState>();
+      state.keep('overview', d);
+      state.keep('forecast', f);
     } catch (e) {
       if (mounted) setState(() => error = e is ApiException ? e.message : 'Something went wrong loading your overview.');
     }
@@ -83,7 +97,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _load();
       });
     }
-    if (o == null) return const Center(child: CircularProgressIndicator());
+    if (o == null) return const _Placeholder();
     final d = o!;
     if (d['has_data'] != true) {
       return _Message(
@@ -98,6 +112,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          if (_stale)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(children: [
+                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 8),
+                Text('Showing your last figures, updating…', style: theme.textTheme.bodySmall),
+              ]),
+            ),
           CardRow(children: [
             _ScoreCard(
               score: (d['score'] as num).round(),
@@ -248,16 +271,27 @@ class _LeftCard extends StatelessWidget {
     final left = (m0?['left_over'] ?? latest['left_over']) as num;
     final income = (m0?['income'] ?? overview['income_monthly']) as num;
     final spending = (m0?['spending'] ?? latest['spent']) as num;
+    final savings = ((overview['savings_balance'] ?? 0) as num);
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(m0 != null ? 'Expected left this month' : 'Left this month so far',
-            style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+        // Short: say it in words and show the amount without a minus sign (a "-KES 4,261" read as a typo).
+        Text(left < 0
+                ? 'Expected to spend more than comes in'
+                : m0 != null ? 'Expected left this month' : 'Left this month so far',
+            style: theme.textTheme.bodyLarge?.copyWith(color: left < 0 ? c.warn : c.muted)),
         const SizedBox(height: 4),
-        Text(kesAmount(left),
+        Text(kesAmount(left.abs()),
             style: theme.textTheme.displaySmall?.copyWith(
                 fontWeight: FontWeight.w700, letterSpacing: -1, color: left < 0 ? c.warn : null)),
         const SizedBox(height: 4),
-        Text('Before savings · $daysLeft days to go', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        Text(
+          left >= 0
+              ? 'Before savings · $daysLeft days to go'
+              : savings >= -left
+                  ? 'This comes out of your savings, which go down to ${kesAmount(savings + left)} · $daysLeft days to go'
+                  : 'More than your savings (${kesAmount(savings)}) can cover · $daysLeft days to go',
+          style: theme.textTheme.bodyMedium?.copyWith(color: left < 0 ? c.warn : c.muted),
+        ),
         const SizedBox(height: 18),
         Container(
           padding: const EdgeInsets.all(12),
@@ -463,3 +497,34 @@ class _Message extends StatelessWidget {
         ),
       );
 }
+
+/// Grey cards in the shape of the real ones, while the first figures load (instead of a bare spinner).
+class _Placeholder extends StatelessWidget {
+  const _Placeholder();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    Widget bar(double w, double h) => Container(
+          width: w,
+          height: h,
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(8)),
+        );
+    Widget card(double h) => Panel(
+          child: SizedBox(
+            height: h,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [bar(120, 14), bar(180, 40), bar(220, 12)]),
+          ),
+        );
+    return Semantics(
+      label: 'Loading your overview',
+      child: ListView(physics: const NeverScrollableScrollPhysics(), children: [
+        CardRow(children: [card(170), card(170), card(170)]),
+        const SizedBox(height: 20),
+        CardRow(minWidth: 340, flex: const [2, 1], children: [card(260), card(260)]),
+      ]),
+    );
+  }
+}
+

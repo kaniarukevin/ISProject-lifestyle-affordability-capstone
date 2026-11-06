@@ -20,10 +20,12 @@ class ChartMonth {
 /// Spending by month: a solid line for what was spent, a dashed line for what is expected, the likely range
 /// shaded, income as a dashed amber line, and the last forecast month marked in lime with its amount.
 class ForecastChart extends StatelessWidget {
-  const ForecastChart({super.key, required this.months, required this.income, this.height = 240});
+  const ForecastChart({super.key, required this.months, required this.income, this.height = 240, this.selected});
   final List<ChartMonth> months;
   final double income;
   final double height;
+  /// A month to highlight (its index in [months]), for example the month card tapped below the chart.
+  final int? selected;
 
   @override
   Widget build(BuildContext context) {
@@ -37,7 +39,7 @@ class ForecastChart extends StatelessWidget {
           height: height,
           child: CustomPaint(
             size: Size.infinite,
-            painter: _ChartPainter(months, income, Theme.of(context), AppColors.of(context)),
+            painter: _ChartPainter(months, income, Theme.of(context), AppColors.of(context), selected),
           ),
         ),
       ),
@@ -46,11 +48,12 @@ class ForecastChart extends StatelessWidget {
 }
 
 class _ChartPainter extends CustomPainter {
-  _ChartPainter(this.months, this.income, this.theme, this.c);
+  _ChartPainter(this.months, this.income, this.theme, this.c, this.selected);
   final List<ChartMonth> months;
   final double income;
   final ThemeData theme;
   final AppColors c;
+  final int? selected;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -75,6 +78,16 @@ class _ChartPainter extends CustomPainter {
     for (var v = lo; v <= hi + 1; v += step) {
       canvas.drawLine(Offset(left, y(v)), Offset(size.width - right, y(v)), grid);
       _text(canvas, compact(v), Offset(0, y(v) - 8), label);
+    }
+
+    // The highlighted month: a soft column behind everything.
+    final sel = selected;
+    if (sel != null && sel >= 0 && sel < months.length) {
+      final half = months.length == 1 ? w / 2 : w / (months.length - 1) / 2.4;
+      canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTRB(x(sel) - half, top - 8, x(sel) + half, size.height - 4),
+              const Radius.circular(12)),
+          Paint()..color = c.field);
     }
 
     // Likely range for forecast months, joined to the last real month.
@@ -135,7 +148,8 @@ class _ChartPainter extends CustomPainter {
 
     // Month labels; fee months get a small lime dot.
     for (var i = 0; i < months.length; i++) {
-      final tp = _layout(months[i].label, label);
+      final tp = _layout(months[i].label,
+          i == selected ? label.copyWith(color: theme.colorScheme.onSurface, fontWeight: FontWeight.w700) : label);
       tp.paint(canvas, Offset(x(i) - tp.width / 2, size.height - 18));
       if (months[i].fees > 0) canvas.drawCircle(Offset(x(i), size.height - 24), 3, Paint()..color = c.lime);
     }
@@ -165,5 +179,6 @@ class _ChartPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ChartPainter old) => old.months != months || old.income != income || old.theme != theme;
+  bool shouldRepaint(_ChartPainter old) =>
+      old.months != months || old.income != income || old.theme != theme || old.selected != selected;
 }

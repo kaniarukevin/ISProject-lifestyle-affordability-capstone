@@ -161,6 +161,14 @@ class Api {
   Future<Map<String, dynamic>> tagPayee(String key, String tag) async =>
       (await put('/me/payees', {'key': key, 'tag': tag})) as Map<String, dynamic>;
 
+  /// The payments from one source of money coming in, newest first.
+  Future<List<Map<String, dynamic>>> moneyIn(String key) async =>
+      (((await get('/me/money-in?key=${Uri.encodeQueryComponent(key)}')) as Map<String, dynamic>)['payments'] as List)
+          .cast<Map<String, dynamic>>();
+
+  /// This payment only: what one payment coming in was. The source's tag leaves it alone from then on.
+  Future<void> changeMoneyIn(int id, String kind) => _send('PATCH', '/me/money-in/$id', {'kind': kind});
+
   Future<void> untagPayee(String key) => delete('/me/payees?key=${Uri.encodeQueryComponent(key)}');
 
   /// Accept an offer to add rent or school fees to commitments.

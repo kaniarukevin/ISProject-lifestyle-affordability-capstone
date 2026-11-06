@@ -79,7 +79,7 @@ class _AdminScreenState extends State<AdminScreen> {
             _card('Service health', [
               Row(children: [
                 Icon(healthy ? Icons.check_circle : Icons.error_outline,
-                    color: healthy ? Colors.green.shade700 : theme.colorScheme.error),
+                    color: healthy ? theme.colorScheme.onSurface : theme.colorScheme.error),
                 const SizedBox(width: 8),
                 Text(healthy ? 'All systems working' : 'Something needs attention'),
               ]),
@@ -102,7 +102,7 @@ class _AdminScreenState extends State<AdminScreen> {
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
                       Icon(m['present'] == true ? Icons.check_circle_outline : Icons.error_outline, size: 18,
-                          color: m['present'] == true ? Colors.green.shade700 : theme.colorScheme.error),
+                          color: m['present'] == true ? theme.colorScheme.onSurface : theme.colorScheme.error),
                       const SizedBox(width: 6),
                       Expanded(child: Text(m['name'] as String, style: const TextStyle(fontWeight: FontWeight.w600))),
                     ]),
