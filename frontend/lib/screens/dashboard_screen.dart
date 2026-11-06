@@ -1,25 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
-import 'budget_warnings.dart';
-import 'profile_screen.dart' show kes;
+import '../theme/app_theme.dart';
+import '../widgets/forecast_chart.dart';
+import '../widgets/format.dart';
+import '../widgets/panel.dart';
+import 'why_score_sheet.dart';
 
-const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/// Step 4 of the journey: how am I doing? State, score, last month, and next month's forecast.
+/// Overview: lifestyle affordability and the budget forecast first (design canvas, 6 Nov).
+/// Top row: the affordability score, "Can I afford it?", and what is expected to be left this month.
+/// Then the budget forecast chart beside what is coming up, then anything worth knowing.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key, this.onAddSpending});
+  const DashboardScreen({super.key, this.onAddSpending, this.onOpenTab});
   final VoidCallback? onAddSpending;
+  /// Switch to another tab: 1 = Can I afford it?, 2 = Forecast and budget, 3 = Plans.
+  final ValueChanged<int>? onOpenTab;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  Map<String, dynamic>? o;
+  Map<String, dynamic>? o;          // GET /me/overview
+  Map<String, dynamic>? bf;         // GET /me/budget-forecast (null if it cannot be worked out yet)
+  Map<String, dynamic>? lastCheck;  // the latest "Can I afford it?" result
   String? error;
 
   @override
@@ -29,15 +35,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _load() async {
+    final api = context.read<AppState>().api;
     try {
-      final d = await context.read<AppState>().api.overview();
+      final d = await api.overview();
+      Map<String, dynamic>? f;
+      Map<String, dynamic>? check;
+      if (d['has_data'] == true) {
+        try {
+          f = await api.budgetForecast();
+          if (f['has_data'] != true) f = null;
+        } on ApiException {
+          f = null; // for example no income yet: the rest of the overview still shows
+        }
+        try {
+          final h = await api.scenarios();
+          if (h.isNotEmpty) check = (h.first['result'] as Map).cast<String, dynamic>();
+        } catch (_) {/* past checks are optional */}
+      }
+      if (!mounted) return;
       setState(() {
         o = d;
+        bf = f;
+        lastCheck = check;
         error = null;
       });
     } catch (e) {
-      // Any failure must end the spinner and say what happened.
-      setState(() => error = e is ApiException ? e.message : 'Something went wrong loading your dashboard.');
+      if (mounted) setState(() => error = e is ApiException ? e.message : 'Something went wrong loading your overview.');
     }
   }
 
@@ -54,156 +77,63 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (error != null && o == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(error!, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            OutlinedButton(onPressed: () {
-              setState(() => error = null);
-              _load();
-            }, child: const Text('Try again')),
-          ]),
-        ),
-      );
+      return _Message(text: error!, action: 'Try again', onAction: () {
+        setState(() => error = null);
+        _load();
+      });
     }
     if (o == null) return const Center(child: CircularProgressIndicator());
-    if (o!['has_data'] != true) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.insights, size: 56, color: theme.colorScheme.primary),
-            const SizedBox(height: 12),
-            Text('Your dashboard appears once you record some spending.', textAlign: TextAlign.center,
-                style: theme.textTheme.titleMedium),
-            const SizedBox(height: 12),
-            if (widget.onAddSpending != null)
-              FilledButton(onPressed: widget.onAddSpending, child: const Text('Add spending')),
-          ]),
-        ),
+    final d = o!;
+    if (d['has_data'] != true) {
+      return _Message(
+        text: 'Your overview appears once there are some records. Upload an M-PESA statement or type in your spending.',
+        action: 'Add records',
+        onAction: widget.onAddSpending,
       );
     }
-    final d = o!;
-    final latest = d['latest'] as Map<String, dynamic>;
-    final fc = d['forecast'] as Map<String, dynamic>;
-    final byCat = (latest['by_category'] as Map).cast<String, num>().entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    final history = (d['history'] as List).cast<Map<String, dynamic>>();
-
+    final notes = ((d['notes'] as List?) ?? []).cast<String>();
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.only(bottom: 24),
         children: [
-          _StateCard(state: d['state'] as String, score: (d['score'] as num).toInt(),
-              explained: d['score_explained'] as String?),
-          ...((d['notes'] as List?) ?? []).map((n) => Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(n as String, style: theme.textTheme.bodySmall),
-              )),
-          if (((d['budget_warnings'] as List?) ?? []).isNotEmpty)
-            BudgetWarnings(warnings: (d['budget_warnings'] as List).cast<Map<String, dynamic>>()),
-          if (((d['bills_due'] as List?) ?? []).isNotEmpty)
-            _BillsDue(bills: (d['bills_due'] as List).cast<Map<String, dynamic>>(), onPaid: _paid),
-          if (((d['timeline'] as List?) ?? []).length >= 2)
-            _Timeline(months: (d['timeline'] as List).cast<Map<String, dynamic>>(),
-                summary: d['timeline_summary'] as String?),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${_months[(latest['month'] as int) - 1]} ${latest['year']}${latest['partial'] == true ? ' so far' : ''}',
-                    style: theme.textTheme.titleSmall),
-                const SizedBox(height: 8),
-                _Line('Money in', kes(d['income_monthly'] as num)),
-                _Line('Spent', kes(latest['spent'] as num)),
-                if (((latest['saved'] ?? 0) as num) > 0) _Line('Saved this month', kes(latest['saved'] as num)),
-                if (((d['savings_balance'] ?? 0) as num) > 0) _Line('Total savings', kes(d['savings_balance'] as num)),
-                if (((latest['one_off'] ?? 0) as num) > 0)
-                  _Line('One-off purchases (not counted)', kes(latest['one_off'] as num)),
-                const Divider(),
-                _Line(latest['partial'] == true ? 'Left so far' : 'Left over', kes(latest['left_over'] as num),
-                    color: (latest['left_over'] as num) < 0 ? theme.colorScheme.error : theme.colorScheme.primary),
-              ]),
+          CardRow(children: [
+            _ScoreCard(
+              score: (d['score'] as num).round(),
+              state: d['state'] as String,
+              summary: d['timeline_summary'] as String?,
             ),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+            _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
+            _LeftCard(overview: d, forecast: bf),
+          ]),
+          const SizedBox(height: 20),
+          CardRow(minWidth: 340, flex: const [2, 1], children: [
+            _ForecastCard(overview: d, forecast: bf, onMore: () => widget.onOpenTab?.call(2)),
+            _ComingUpCard(
+              bills: ((d['bills_due'] as List?) ?? []).cast<Map<String, dynamic>>(),
+              goals: ((d['goals_at_risk'] as List?) ?? []).cast<Map<String, dynamic>>(),
+              onPaid: _paid,
+              onAll: () => widget.onOpenTab?.call(3),
+            ),
+          ]),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Expected spending in ${_months[(fc['month'] as int) - 1]}', style: theme.textTheme.titleSmall),
-                Text(kes(fc['total'] as num), style: theme.textTheme.headlineMedium),
-                if (fc['range'] is Map)
-                  Text('Probably between ${kes((fc['range'] as Map)['low'] as num)} and '
-                      '${kes((fc['range'] as Map)['high'] as num)} (8 months in 10 fall in this range).',
-                      style: theme.textTheme.bodySmall),
-                if (fc['note'] != null) Text(fc['note'] as String, style: theme.textTheme.bodySmall),
-                if (latest['partial'] == true && (fc['total'] as num) > 0)
+                Text('Good to know', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 10),
+                for (final n in notes.take(5))
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      LinearProgressIndicator(
-                        value: ((latest['spent'] as num) / (fc['total'] as num)).clamp(0, 1).toDouble(), minHeight: 8),
-                      const SizedBox(height: 4),
-                      Text('${kes(latest['spent'] as num)} spent so far '
-                          '(${((latest['spent'] as num) * 100 / (fc['total'] as num)).round()}% of what is expected)'),
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Padding(
+                        padding: const EdgeInsets.only(top: 7, right: 10),
+                        child: CircleAvatar(radius: 3, backgroundColor: theme.colorScheme.onSurface),
+                      ),
+                      Expanded(child: Text(n, style: theme.textTheme.bodyMedium)),
                     ]),
                   ),
-                Text(fc['method'] == 'trailing_median'
-                    ? 'Based on your usual spending over ${fc['months_used']} month(s).'
-                    : 'Based on your budget and your usual spending.',
-                    style: theme.textTheme.bodySmall),
-                const SizedBox(height: 8),
-                ...((fc['breakdown'] as Map).cast<String, num>().entries.toList()
-                      ..sort((a, b) => b.value.compareTo(a.value)))
-                    .take(5)
-                    .map((e) => _Line(categoryLabel(e.key), kes(e.value))),
               ]),
-            ),
-          ),
-          if (((d['outlook'] as List?) ?? []).length > 1) ...[
-            const SizedBox(height: 12),
-            _Outlook(months: (d['outlook'] as List).cast<Map<String, dynamic>>(),
-                income: (d['income_monthly'] as num?) ?? 0),
-          ],
-          const SizedBox(height: 12),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Where your money went', style: theme.textTheme.titleSmall),
-                const SizedBox(height: 8),
-                ...byCat.map((e) => _Bar(
-                      label: categoryLabel(e.key),
-                      value: e.value.toDouble(),
-                      max: byCat.first.value.toDouble(),
-                    )),
-              ]),
-            ),
-          ),
-          if (((d['lifestyle'] as List?) ?? []).isNotEmpty) ...[
-            const SizedBox(height: 12),
-            _Lifestyle(rows: (d['lifestyle'] as List).cast<Map<String, dynamic>>()),
-          ],
-          if (history.length > 1) ...[
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Spending by month', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 8),
-                  ...history.map((h) => _Bar(
-                        label: '${_months[(h['month'] as int) - 1]} ${h['year']}',
-                        value: (h['spent'] as num).toDouble(),
-                        max: history.map((x) => (x['spent'] as num).toDouble()).reduce((a, b) => a > b ? a : b),
-                      )),
-                ]),
-              ),
             ),
           ],
         ],
@@ -212,263 +142,346 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class _StateCard extends StatelessWidget {
-  const _StateCard({required this.state, required this.score, this.explained});
-  final String state;
+const _onLime = Color(0xFF111111);
+
+class _ScoreCard extends StatelessWidget {
+  const _ScoreCard({required this.score, required this.state, this.summary});
   final int score;
-  final String? explained;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final (color, text) = switch (state) {
-      'Stable' => (Colors.green.shade700, 'You are spending within your means.'),
-      'Strained' => (Colors.orange.shade800, 'Money is tight. Small changes now will help.'),
-      _ => (theme.colorScheme.error, 'You are spending more than you can sustain. Let\'s fix that first.'),
-    };
-    return Card(
-      color: color.withValues(alpha: 0.08),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(Icons.favorite, color: color),
-            const SizedBox(width: 8),
-            Text('Financial health: $state', style: theme.textTheme.titleMedium?.copyWith(color: color)),
-          ]),
-          const SizedBox(height: 4),
-          Text(text),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: LinearProgressIndicator(value: score / 100, minHeight: 10, color: color,
-                backgroundColor: color.withValues(alpha: 0.15)),
-          ),
-          const SizedBox(height: 4),
-          Row(children: [
-            Text('Score $score out of 100', style: theme.textTheme.bodySmall),
-            if (explained != null)
-              IconButton(
-                icon: const Icon(Icons.info_outline, size: 18),
-                tooltip: 'What does this mean?',
-                onPressed: () => showDialog<void>(context: context, builder: (_) => AlertDialog(
-                      title: const Text('Score and state'),
-                      content: Text(explained!),
-                      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-                    )),
-              ),
-          ]),
-        ]),
-      ),
-    );
-  }
-}
-
-class _Line extends StatelessWidget {
-  const _Line(this.label, this.value, {this.color});
-  final String label, value;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2),
-        child: Row(children: [
-          Expanded(child: Text(label)),
-          Text(value, style: TextStyle(fontWeight: FontWeight.w600, color: color)),
-        ]),
-      );
-}
-
-class _Bar extends StatelessWidget {
-  const _Bar({required this.label, required this.value, required this.max});
-  final String label;
-  final double value, max;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [Expanded(child: Text(label)), Text(kes(value))]),
-          const SizedBox(height: 2),
-          LinearProgressIndicator(value: max > 0 ? value / max : 0, minHeight: 6),
-        ]),
-      );
-}
-
-
-/// Your financial state month by month: each month scored with only the data up to then, newest first.
-class _Timeline extends StatelessWidget {
-  const _Timeline({required this.months, this.summary});
-  final List<Map<String, dynamic>> months;
+  final String state;
   final String? summary;
 
-  Color _color(BuildContext context, String state) => switch (state) {
-        'Stable' => Colors.green.shade700,
-        'Strained' => Colors.orange.shade800,
-        _ => Theme.of(context).colorScheme.error,
-      };
+  static const _says = {
+    'Stable': 'Your income covers your usual way of life, with room to save.',
+    'Strained': 'Money is tight: most of what comes in goes straight out.',
+    'Critical': 'More is going out than comes in. Acting early makes it easier.',
+  };
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final rows = months.reversed.toList();
-    return Card(
-      margin: const EdgeInsets.only(top: 12),
-      child: ExpansionTile(
-        title: const Text('Month by month'),
-        subtitle: summary == null ? null : Text(summary!),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        children: [
-          // A strip of coloured dots, oldest to newest, for the trend at a glance.
-          Row(children: months.map((m) => Expanded(
-                child: Container(height: 10, margin: const EdgeInsets.symmetric(horizontal: 1),
-                    color: _color(context, m['state'] as String)),
-              )).toList()),
-          const SizedBox(height: 8),
-          ...rows.map((m) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(children: [
-                  CircleAvatar(radius: 6, backgroundColor: _color(context, m['state'] as String)),
-                  const SizedBox(width: 8),
-                  SizedBox(width: 72, child: Text('${_months[(m['month'] as int) - 1]} ${m['year']}')),
-                  Expanded(child: Text('${m['state']} · score ${m['score']}')),
-                  Text('spent ${kes(m['spent'] as num)} of ${kes(m['income'] as num)}'
-                      '${m['income_from'] == 'statement' ? '*' : ''}', style: theme.textTheme.bodySmall),
-                ]),
-              )),
-          if (months.any((m) => m['income_from'] == 'statement'))
-            Text('* money that actually arrived, from your statement', style: theme.textTheme.bodySmall),
-        ],
-      ),
-    );
-  }
-}
-
-
-/// The next three months: expected spending with its likely range, against income. Further ahead is less sure,
-/// so the ranges widen (checked on held-out households: 8 months in 10 fall inside at every step).
-class _Outlook extends StatelessWidget {
-  const _Outlook({required this.months, required this.income});
-  final List<Map<String, dynamic>> months;
-  final num income;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final top = months.map((m) => ((m['range'] as Map?)?['high'] ?? m['total']) as num)
-        .fold<num>(income, (a, b) => a > b ? a : b);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('The next 3 months', style: theme.textTheme.titleSmall),
-          const SizedBox(height: 8),
-          ...months.map((m) {
-            final total = m['total'] as num;
-            final over = income > 0 && total > income;
-            final range = m['range'] as Map?;
-            final fees = (m['school_fees'] ?? 0) as num;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(child: Text('${_months[(m['month'] as int) - 1]} ${m['year']}')),
-                  Text(kes(total), style: TextStyle(fontWeight: FontWeight.w600,
-                      color: over ? theme.colorScheme.error : null)),
-                ]),
-                const SizedBox(height: 4),
-                LinearProgressIndicator(value: top > 0 ? (total / top).clamp(0, 1).toDouble() : 0, minHeight: 6,
-                    color: over ? theme.colorScheme.error : null),
-                Text([
-                  if (range != null) 'Probably ${kes(range['low'] as num)} to ${kes(range['high'] as num)}',
-                  if (fees > 0) 'includes about ${kes(fees)} school fees',
-                  if (over) 'more than your income',
-                ].join(' · '), style: theme.textTheme.bodySmall),
-              ]),
-            );
-          }),
-          if (income > 0)
-            Text('Your income: ${kes(income)} a month. Further ahead is less certain, so the ranges get wider.',
-                style: theme.textTheme.bodySmall),
+    final c = AppColors.of(context);
+    return Panel(
+      color: c.lime,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Affordability score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
+        const SizedBox(height: 6),
+        Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+          Text('$score',
+              style: theme.textTheme.displayMedium
+                  ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -1.5, height: 1, color: _onLime)),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            decoration: BoxDecoration(color: _onLime, borderRadius: BorderRadius.circular(16)),
+            child: Text(state, style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
         ]),
-      ),
+        const SizedBox(height: 10),
+        Text(_says[state] ?? '', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
+        if (summary != null) ...[
+          const SizedBox(height: 4),
+          Text(summary!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
+        ],
+        const SizedBox(height: 16),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: _onLime, foregroundColor: Colors.white),
+          onPressed: () => showWhyScore(context),
+          child: const Text('Why this score?'),
+        ),
+      ]),
     );
   }
 }
 
+/// The verdict as a small coloured label: Affordable (lime), Stretch (amber), Not affordable (brown).
+class VerdictChip extends StatelessWidget {
+  const VerdictChip(this.verdict, {super.key, this.large = false});
+  final String verdict;
+  final bool large;
 
-/// Bills that are late or due within a week (only bills given a due date under Commitments).
-class _BillsDue extends StatelessWidget {
-  const _BillsDue({required this.bills, required this.onPaid});
-  final List<Map<String, dynamic>> bills;
-  final Future<void> Function(int index) onPaid;
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final (bg, fg) = switch (verdict) {
+      'Affordable' => (c.lime, _onLime),
+      'Stretch' => (c.warnBg, c.warn),
+      _ => (const Color(0xFF7A3E00), Colors.white),
+    };
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: large ? 16 : 10, vertical: large ? 6 : 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(large ? 18 : 12)),
+      child: Text(verdict,
+          style: TextStyle(fontFamily: 'PlusJakartaSans', color: fg, fontWeight: FontWeight.w700, fontSize: large ? 22 : 13)),
+    );
+  }
+}
+
+class _AffordCard extends StatelessWidget {
+  const _AffordCard({required this.lastCheck, required this.onCheck});
+  final Map<String, dynamic>? lastCheck;
+  final VoidCallback onCheck;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(top: 12),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Coming up', style: theme.textTheme.titleSmall),
-          ...bills.map((b) {
-            final late = b['status'] == 'overdue';
-            final days = b['due_in_days'] as int;
+    final c = AppColors.of(context);
+    final last = lastCheck;
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Can I afford it?', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text('Check a purchase, a loan, a move or a new baby before you commit. Nothing is saved unless you go ahead.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(height: 16),
+        FilledButton.icon(onPressed: onCheck, icon: const Icon(Icons.verified_user_rounded), label: const Text('Check something')),
+        if (last != null) ...[
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: Text.rich(TextSpan(children: [
+                TextSpan(text: 'Last check · ', style: TextStyle(color: c.muted)),
+                TextSpan(text: (last['title'] ?? 'Check') as String, style: const TextStyle(fontWeight: FontWeight.w600)),
+              ])),
+            ),
+            if (last['verdict'] is String) VerdictChip(last['verdict'] as String),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+class _LeftCard extends StatelessWidget {
+  const _LeftCard({required this.overview, required this.forecast});
+  final Map<String, dynamic> overview;
+  final Map<String, dynamic>? forecast;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final now = DateTime.now();
+    final daysLeft = DateUtils.getDaysInMonth(now.year, now.month) - now.day + 1;
+    final months = ((forecast?['months'] as List?) ?? []).cast<Map<String, dynamic>>();
+    final latest = (overview['latest'] as Map).cast<String, dynamic>();
+    final m0 = months.isNotEmpty ? months.first : null;
+    final left = (m0?['left_over'] ?? latest['left_over']) as num;
+    final income = (m0?['income'] ?? overview['income_monthly']) as num;
+    final spending = (m0?['spending'] ?? latest['spent']) as num;
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(m0 != null ? 'Expected left this month' : 'Left this month so far',
+            style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+        const SizedBox(height: 4),
+        Text(kesAmount(left),
+            style: theme.textTheme.displaySmall?.copyWith(
+                fontWeight: FontWeight.w700, letterSpacing: -1, color: left < 0 ? c.warn : null)),
+        const SizedBox(height: 4),
+        Text('Before savings · $daysLeft days to go', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(height: 18),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(22)),
+          child: Row(children: [
+            Expanded(child: _InOut(up: true, label: 'Money in', value: income)),
+            Expanded(child: _InOut(up: false, label: m0 != null ? 'Expected spending' : 'Spent', value: spending)),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _InOut extends StatelessWidget {
+  const _InOut({required this.up, required this.label, required this.value});
+  final bool up;
+  final String label;
+  final num value;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: Colors.white,
+          child: Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 18, color: _onLime),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFFBDBDB6))),
+            Text(money(value), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white)),
+          ]),
+        ),
+      ]);
+}
+
+/// The chart months: up to five recorded months, then the forecast's three.
+List<ChartMonth> chartMonths(Map<String, dynamic> overview, Map<String, dynamic>? forecast) {
+  final next = ((forecast?['months'] as List?) ?? []).cast<Map<String, dynamic>>();
+  final firstNext = next.isEmpty ? 1 << 30 : (next.first['year'] as int) * 12 + (next.first['month'] as int);
+  final past = ((overview['history'] as List?) ?? [])
+      .cast<Map<String, dynamic>>()
+      .where((h) => (h['year'] as int) * 12 + (h['month'] as int) < firstNext)
+      .toList();
+  final shown = past.length > 5 ? past.sublist(past.length - 5) : past;
+  return [
+    for (final h in shown) ChartMonth(monthShort[(h['month'] as int) - 1], (h['spent'] as num).toDouble()),
+    for (final m in next)
+      ChartMonth(
+        monthShort[(m['month'] as int) - 1],
+        (m['spending'] as num).toDouble(),
+        low: ((m['range'] as Map?)?['low'] as num?)?.toDouble(),
+        high: ((m['range'] as Map?)?['high'] as num?)?.toDouble(),
+        fees: ((m['school_fees'] ?? 0) as num).toDouble(),
+        forecast: true,
+      ),
+  ];
+}
+
+class _ForecastCard extends StatelessWidget {
+  const _ForecastCard({required this.overview, required this.forecast, required this.onMore});
+  final Map<String, dynamic> overview;
+  final Map<String, dynamic>? forecast;
+  final VoidCallback onMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final f = forecast;
+    final notes = ((f?['notes'] as List?) ?? []).cast<String>();
+    Widget key(Widget mark, String text) => Row(mainAxisSize: MainAxisSize.min, children: [
+          mark,
+          const SizedBox(width: 6),
+          Text(text, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ]);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 14, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Text('Budget forecast', style: theme.textTheme.titleLarge),
+          key(Container(width: 16, height: 3, color: theme.colorScheme.onSurface), 'What you spent'),
+          key(Container(width: 16, height: 3, color: c.muted), 'Expected'),
+          key(Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
+              'Likely range'),
+        ]),
+        const SizedBox(height: 16),
+        if (f == null)
+          Text('Add your income in Household and income to see the next three months.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: c.muted))
+        else ...[
+          ForecastChart(months: chartMonths(overview, f), income: ((overview['income_monthly'] ?? 0) as num).toDouble()),
+          const SizedBox(height: 12),
+          Text(notes.take(2).join(' '), style: theme.textTheme.bodyLarge),
+          const SizedBox(height: 12),
+          FilledButton.tonal(
+            style: FilledButton.styleFrom(backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
+            onPressed: onMore,
+            child: const Text('See the full forecast'),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+class _ComingUpCard extends StatelessWidget {
+  const _ComingUpCard({required this.bills, required this.goals, required this.onPaid, required this.onAll});
+  final List<Map<String, dynamic>> bills;
+  final List<Map<String, dynamic>> goals;
+  final ValueChanged<int> onPaid;
+  final VoidCallback onAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final today = DateUtils.dateOnly(DateTime.now());
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Coming up', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 14),
+        if (bills.isEmpty && goals.isEmpty)
+          Text('Nothing due in the next week.', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        for (final b in bills) ...[
+          Builder(builder: (context) {
+            final days = (b['due_in_days'] as num).toInt();
+            final due = today.add(Duration(days: days));
             return Row(children: [
-              Icon(late ? Icons.warning_amber_rounded : Icons.schedule,
-                  size: 20, color: late ? theme.colorScheme.error : theme.colorScheme.primary),
-              const SizedBox(width: 8),
-              Expanded(child: Text('${b['name']} · ${kes(b['amount_KES'] as num)}\n'
-                  '${late ? 'Overdue by ${-days} day(s)' : days == 0 ? 'Due today' : 'Due in $days day(s)'}',
-                  style: late ? TextStyle(color: theme.colorScheme.error) : null)),
-              TextButton(onPressed: () => onPaid(b['index'] as int), child: const Text('Paid')),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(color: c.field, shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(monthShort[due.month - 1].toUpperCase(),
+                      style: theme.textTheme.labelSmall?.copyWith(color: c.muted, fontWeight: FontWeight.w700, height: 1)),
+                  Text('${due.day}', style: theme.textTheme.titleMedium?.copyWith(height: 1.1)),
+                ]),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(b['name'] as String, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  Text(
+                    days < 0 ? '${-days} days late' : days == 0 ? 'Due today' : 'in $days days',
+                    style: theme.textTheme.bodySmall?.copyWith(color: days < 0 ? c.warn : c.muted),
+                  ),
+                ]),
+              ),
+              Text(money(b['amount_KES'] as num), style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(width: 4),
+              TextButton(onPressed: () => onPaid((b['index'] as num).toInt()), child: const Text('Paid')),
             ]);
           }),
-        ]),
-      ),
+          const SizedBox(height: 12),
+        ],
+        for (final g in goals) ...[
+          Row(children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(color: c.warnBg, shape: BoxShape.circle),
+              child: Icon(Icons.flag_rounded, color: c.warn, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(g['name'] as String, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                Text('At risk: needs ${kesAmount(g['monthly_needed_KES'] as num)} a month',
+                    style: theme.textTheme.bodySmall?.copyWith(color: c.warn)),
+              ]),
+            ),
+          ]),
+          const SizedBox(height: 12),
+        ],
+        const SizedBox(height: 4),
+        TextButton(onPressed: onAll, child: const Text('All bills, debts and goals')),
+      ]),
     );
   }
 }
 
-/// The last 3 months as shares of income, with a simple guide where one exists (proposal 3.4.6).
-class _Lifestyle extends StatelessWidget {
-  const _Lifestyle({required this.rows});
-  final List<Map<String, dynamic>> rows;
+class _Message extends StatelessWidget {
+  const _Message({required this.text, this.action, this.onAction});
+  final String text;
+  final String? action;
+  final VoidCallback? onAction;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Your lifestyle', style: theme.textTheme.titleSmall),
-          Text('Last 3 months, as a share of your income.', style: theme.textTheme.bodySmall),
-          const SizedBox(height: 8),
-          ...rows.map((r) {
-            final status = r['status'] as String?;
-            final warn = status == 'high' || status == 'low';
-            final color = warn ? theme.colorScheme.error : status == 'ok' ? Colors.green.shade700 : null;
-            final pct = ((r['share'] as num) * 100).round();
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 6),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  if (status != null)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Icon(warn ? Icons.error_outline : Icons.check_circle_outline, size: 18, color: color),
-                    ),
-                  Expanded(child: Text(r['label'] as String)),
-                  Text('$pct% · ${kes(r['KES'] as num)}', style: TextStyle(fontWeight: FontWeight.w600, color: color)),
-                ]),
-                if (r['guide'] != null) Text(r['guide'] as String, style: theme.textTheme.bodySmall),
-              ]),
-            );
-          }),
-        ]),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Panel(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Text(text, textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodyLarge),
+              if (action != null && onAction != null) ...[
+                const SizedBox(height: 16),
+                FilledButton(onPressed: onAction, child: Text(action!)),
+              ],
+            ]),
+          ),
+        ),
+      );
 }
