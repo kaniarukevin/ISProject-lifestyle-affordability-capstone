@@ -11,6 +11,7 @@ import hmac
 import json
 import math
 import os
+import secrets
 import statistics
 import threading
 import time
@@ -31,7 +32,7 @@ import affordability as aff
 import limits
 
 ROOT = Path(__file__).resolve().parent.parent
-TOKEN_DAYS = 30
+TOKEN_DAYS = 14             # audit A-08: 30 days was long for a finance app; logging out now also revokes
 SPENDING_CATEGORIES = aff.CATS
 UNSORTED = "unsorted"          # a statement payment whose category is not certain (never guessed)
 # Spending that is known but has no place in the models' 10 categories (or is not known at all): shown by its
@@ -87,6 +88,16 @@ class User(Base):
     # Which privacy notice the user agreed to, and when (Data Protection Act 2019: consent must be recorded).
     consent_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Raised by "log out everywhere": every token carries the value it was issued with (audit A-08).
+    session_epoch: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RevokedToken(Base):
+    """A token logged out before it expired. Kept only until it would have expired anyway."""
+    __tablename__ = "revoked_tokens"
+    jti: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Profile(Base):
@@ -232,7 +243,8 @@ def _upgrade(engine):
                                          "auto_category": "VARCHAR(40)",
                                          "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "statement_rules": {"was": "VARCHAR(40)"},
-                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP"}}.items():
+                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP",
+                                  "session_epoch": "INTEGER NOT NULL DEFAULT 0"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
         for name, ddl in cols.items():
             if name not in have:
@@ -255,8 +267,23 @@ _ATTEMPTS_LOCK = threading.Lock()
 
 
 def _client_ip():
-    """Render sits behind a proxy, so the caller's address is the first entry of X-Forwarded-For."""
-    return request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "unknown"
+    """The caller's address for rate limits (audit A-04). Render sits behind Cloudflare, which sets
+    CF-Connecting-IP itself and overwrites any value a client sends, so it cannot be faked. The first
+    X-Forwarded-For entry CAN be faked (Render keeps whatever the client sent), so it is only a last resort.
+    The admin overview shows which source was used, to check this on the live server."""
+    return _client_ip_source()[0]
+
+
+def _client_ip_source():
+    for header in ("CF-Connecting-IP", "True-Client-IP"):
+        v = request.headers.get(header, "").strip()
+        if v:
+            return v, header
+    if production():
+        v = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if v:
+            return v, "X-Forwarded-For (can be faked)"
+    return request.remote_addr or "unknown", "connection"
 
 
 def _recent(key, window):
@@ -320,7 +347,9 @@ def _stamp(user):
 
 
 def _token(user):
-    return _serializer().dumps({"u": user.id, "p": _stamp(user)})
+    """u: user, p: password fingerprint, e: session epoch ("log out everywhere"), j: this token's id (logout)."""
+    return _serializer().dumps({"u": user.id, "p": _stamp(user), "e": user.session_epoch or 0,
+                                "j": secrets.token_hex(8)})
 
 
 def login_required(fn):
@@ -329,18 +358,20 @@ def login_required(fn):
         header = request.headers.get("Authorization", "")
         token = header[7:] if header.startswith("Bearer ") else ""
         try:
-            data = _serializer().loads(token, max_age=TOKEN_DAYS * 86400)
+            data, issued = _serializer().loads(token, max_age=TOKEN_DAYS * 86400, return_timestamp=True)
         except SignatureExpired:
             return jsonify(error="your session has expired, log in again"), 401
         except BadSignature:
             return jsonify(error="log in first"), 401
-        if not isinstance(data, dict):                 # a token from before 5 Nov: log in once more
+        if not isinstance(data, dict) or "j" not in data:     # a token from before 6 Nov: log in once more
             return jsonify(error="please log in again"), 401
         with session() as s:
             user = s.get(User, data.get("u"))
             if user is None or _stamp(user) != data.get("p"):
                 return jsonify(error="your password was changed or the account was removed, log in again"), 401
-        g.user_id = user.id
+            if data.get("e", 0) != (user.session_epoch or 0) or s.get(RevokedToken, str(data["j"])) is not None:
+                return jsonify(error="you were logged out, log in again"), 401
+        g.user_id, g.token_id, g.token_issued = user.id, str(data["j"]), issued
         return fn(*args, **kwargs)
     return wrapper
 
@@ -500,14 +531,38 @@ def login():
     _record(("login-ip", ip))
     b = _body()
     email = str(b.get("email", "")).strip().lower()
-    if _recent(("login-fail", email), 900) >= 5:
+    # Wrong passwords are counted per account AND address (audit A-05: counting per account alone let a
+    # stranger lock anyone out for 15 minutes with 5 guesses). A looser cap per account still stops guessing
+    # spread over many addresses.
+    if _recent(("login-fail", email, ip), 900) >= 5 or _recent(("login-fail", email), 3600) >= 30:
         return jsonify(error="too many wrong passwords for this account, wait 15 minutes"), 429
     with session() as s:
         user = s.scalar(select(User).where(User.email == email))
         if not user or not check_password_hash(user.password_hash, str(b.get("password", ""))):
+            _record(("login-fail", email, ip))
             _record(("login-fail", email))
             return jsonify(error="wrong email or password"), 401
         return jsonify(token=_token(user), user_id=user.id), 200
+
+
+@bp.post("/auth/logout")
+@login_required
+def logout():
+    """Log out (audit A-08: the token used to stay valid for 30 days). This device's token stops working at once;
+    with {"everywhere": true} every device is logged out, e.g. after losing a phone."""
+    b = request.get_json(silent=True) or {}
+    everywhere = bool(b.get("everywhere")) if isinstance(b, dict) else False
+    now = _now()
+    with session() as s:
+        s.execute(delete(RevokedToken).where(RevokedToken.expires_at < now))      # tidy: those expired anyway
+        if everywhere:
+            user = s.get(User, g.user_id)
+            user.session_epoch = (user.session_epoch or 0) + 1
+        else:
+            expires = datetime.fromtimestamp(g.token_issued.timestamp() + TOKEN_DAYS * 86400, timezone.utc)
+            s.add(RevokedToken(jti=g.token_id, user_id=g.user_id, expires_at=expires))
+        s.commit()
+    return jsonify(logged_out=True, everywhere=everywhere), 200
 
 
 @bp.post("/me/password")
@@ -858,7 +913,7 @@ def _commitment_changes(s, user_id, hist):
     return out
 
 
-def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1):
+def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1, blend=True):
     """The user's own forecast.
     Total: a boosted tree trained on the KIHBS-informed households (history + calendar month), which beat the
     median of monthly totals on held-out households at every history length (test MAE KES 9,794 vs 10,719,
@@ -896,8 +951,10 @@ def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1):
         usual[cat] = max(0.0, usual[cat] + diff)
     shift = sum(changes.values())
     py, pm = (target_year, target_month - 1) if target_month > 1 else (target_year - 1, 12)
-    this_budget = _saved_budget(s, user_id, target_year, target_month)
-    last_budget = _saved_budget(s, user_id, py, pm)
+    # blend=False: the plain model, "at your usual pace" (what the budget forecast compares the budget with; the
+    # held-out error KES 9,967 was measured on this, without a budget).
+    this_budget = _saved_budget(s, user_id, target_year, target_month) if blend else None
+    last_budget = _saved_budget(s, user_id, py, pm) if blend else None
     if this_budget:
         split, method = {c: 0.75 * this_budget.get(c, 0) + 0.25 * usual[c] for c in parts}, f"blend_budget_{base}"
     elif last_budget:
@@ -922,7 +979,7 @@ def forecast_for_user(s, user_id, months, target_year, target_month, ahead=1):
 OUTLOOK_MONTHS = 3          # the proposal's "one to three months" (3.2.3)
 
 
-def outlook_for_user(s, user_id, months, year, month):
+def outlook_for_user(s, user_id, months, year, month, blend=True):
     """This month and the next two: [forecast_for_user(...) for each], built from the same recorded history.
     Held-out households, error vs the median: 1 month ahead 9,967 vs 10,719; 2 months 10,354 vs 11,738;
     3 months 11,000 vs 11,791; 80% ranges hold 83-85% of months (scripts/forecast_horizons.py)."""
@@ -933,7 +990,7 @@ def outlook_for_user(s, user_id, months, year, month):
         # How far past the last recorded month (old records make "this month" further ahead); beyond 3 the
         # 3-month range is used, the widest that was checked.
         ahead = min(max(1, y * 12 + m - last), OUTLOOK_MONTHS)
-        out.append(forecast_for_user(s, user_id, months, y, m, ahead=ahead))
+        out.append(forecast_for_user(s, user_id, months, y, m, ahead=ahead, blend=blend))
     return out
 
 
@@ -1195,30 +1252,15 @@ def overview():
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record)
 
 
-@bp.get("/me/budget-plan")
-@login_required
-def budget_plan():
-    """This month's dynamic budget, assembled from everything the user has saved: income (profile), commitments
-    (rent, fees, debts, goals), health state (completed months), and last month's saved budget and spending
-    (overspend rule). Also returns what has been spent so far this month and any budget already saved."""
+def _recommend(pic, prev_limits, py, pm, set_aside=0.0):
+    """This month's recommended budget: the Random Forest split (budget.evaluate) fed with the household's income,
+    commitments, financial state, own spending and last month's overspending. set_aside: a new everyday cost
+    (from 'Can I afford it?') kept back before the everyday money is shared out."""
     import budget as bud
-    with session() as s:
-        pic = household_picture(s, g.user_id)
-        profile, income = pic["profile"], pic["income"]
-        if profile is None:
-            return jsonify(error="set up your household first"), 400
-        y, m = pic["today"].year, pic["today"].month
-        py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
-        saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
-        saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
-        saved_now_data = saved_now.data if saved_now else None
-        prev_limits = _budget_lines(saved_prev.data) if saved_prev else None
-    if income <= 0:
-        return jsonify(error="add your income in your household profile first"), 400
-
+    profile, income = pic["profile"], pic["income"]
     notes = []
     fixed, goal = dict(pic["fixed"]), pic["goal_per_month"]
-    complete, current = pic["complete"], pic["current"]
+    complete = pic["complete"]
     # Rent, fees or loans recorded as spending but not entered as commitments: use the usual amount.
     for cat, label in (("housing", "rent"), ("school_fees", "school fees"), ("loan_repayment", "loan repayments")):
         usual = statistics.median([mo[cat] for mo in complete]) if complete else 0
@@ -1246,8 +1288,35 @@ def budget_plan():
     if isinstance(prev_limits, dict) and prev_month:
         payload["last_month"] = {"limits": prev_limits,
                                  "spent": {cat: _known(prev_month)[cat] for cat in SPENDING_CATEGORIES if cat in prev_limits}}
+    if set_aside:
+        fixed["other_commitments"] = float(fixed.get("other_commitments", 0)) + set_aside
     plan = bud.evaluate(payload)
     plan["notes"] = notes + plan["notes"]
+    return plan
+
+
+@bp.get("/me/budget-plan")
+@login_required
+def budget_plan():
+    """This month's dynamic budget, assembled from everything the user has saved: income (profile), commitments
+    (rent, fees, debts, goals), health state (completed months), and last month's saved budget and spending
+    (overspend rule). Also returns what has been spent so far this month and any budget already saved."""
+    import budget as bud
+    with session() as s:
+        pic = household_picture(s, g.user_id)
+        profile, income = pic["profile"], pic["income"]
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        y, m = pic["today"].year, pic["today"].month
+        py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
+        saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
+        saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
+        saved_now_data = saved_now.data if saved_now else None
+        prev_limits = _budget_lines(saved_prev.data) if saved_prev else None
+    if income <= 0:
+        return jsonify(error="add your income in your household profile first"), 400
+    plan = _recommend(pic, prev_limits, py, pm)
+    complete, current = pic["complete"], pic["current"]
     spent = {cat: round(v) for cat, v in (_known(current) if current else {}).items() if v > 0}
     auto_saved = False
     if saved_now_data is None and complete:
@@ -1266,6 +1335,125 @@ def budget_plan():
                    everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left),
                    warnings=budget_warnings(lines, spent, pic["today"], everyday))
 
+
+NOTE_LABELS = {"food_groceries": "food", "transport": "transport", "utilities": "power, water and gas",
+               "airtime_data": "airtime and data", "mobile_money_transfers": "money sent to others",
+               "entertainment": "going out and fun"}
+WATCH_MIN_KES = 500          # a gap smaller than this is noise, not advice
+WATCH_SHARE = 0.10           # ...and so is one under 10% of the budget line
+
+
+@bp.get("/me/budget-forecast")
+@login_required
+def budget_forecast():
+    """The next three months against the budget (proposal 3.2.3: the forecast feeds the recommendation).
+    For this month and the next two: money in, spending at the household's usual pace (the plain forecast model,
+    no pull towards the budget, so the comparison is honest), what is left, school fees, and each everyday line's
+    budget against the usual pace. Then what it adds up to: the savings path if what is left is saved, the first
+    short month and how much to put aside each month before it, the lines most likely to run over, and goals
+    the money will not reach. Works from day one on the setup estimates, and says so."""
+    import budget as bud
+    with session() as s:
+        pic = household_picture(s, g.user_id)
+        profile, income = pic["profile"], pic["income"]
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        if income <= 0:
+            return jsonify(error="add your income in your household profile first"), 400
+        if not pic["months"] and not pic["estimated"]:
+            return jsonify(has_data=False)
+        today = pic["today"]
+        y, m = today.year, today.month
+        py, pm = (y, m - 1) if m > 1 else (y - 1, 12)
+        saved_now = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == y, Budget.month == m))
+        saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
+        prev_limits = _budget_lines(saved_prev.data) if saved_prev else None
+        chosen = _budget_lines(saved_now.data) if saved_now else None
+        outlook = outlook_for_user(s, g.user_id, pic["complete"] or pic["months"], y, m, blend=False)
+    plan = chosen or _recommend(pic, prev_limits, py, pm)["budget"]
+    everyday = bud.model()["variable"]
+    current = pic["current"]
+    rows, watch = [], defaultdict(float)
+    for k, f in enumerate(outlook):
+        b = f["breakdown"]
+        spending = sum(v for c, v in b.items() if c != "savings")
+        lines = []
+        for c in everyday:
+            budget_c, usual_c = round(float(plan.get(c, 0))), round(b.get(c, 0))
+            if budget_c <= 0 and usual_c <= 0:
+                continue
+            gap = usual_c - budget_c
+            lines.append({"category": c, "budget": budget_c, "usual": usual_c, "gap": gap})
+            if gap >= WATCH_MIN_KES and gap >= WATCH_SHARE * max(budget_c, 1):
+                watch[c] += gap
+        row = {"year": f["year"], "month": f["month"], "ahead": f["ahead"], "income": round(income),
+               "spending": round(spending), "range": f.get("range"), "left_over": round(income - spending),
+               "school_fees": round(b.get("school_fees", 0)), "bills": round(sum(b.get(c, 0) for c in
+                                                                                  ("housing", "loan_repayment"))),
+               "other_spending": round(sum(b.get(c, 0) for c in OUTSIDE)), "lines": lines}
+        if k == 0 and current is not None:
+            row["spent_so_far"] = round(sum(v for c, v in _known(current).items() if c != "savings"))
+        rows.append(row)
+    # Follow the money month by month: savings now plus what is left (or missing) each month, at the usual pace
+    # and if every everyday line kept to its budget (bills, fees and other spending as forecast either way).
+    plan_everyday = sum(float(plan.get(c, 0)) for c in everyday)
+    for r in rows:
+        usual_everyday = sum(line["usual"] for line in r["lines"])
+        r["left_over_on_budget"] = round(r["left_over"] + usual_everyday - plan_everyday)
+    path, bal, bal_b = [], pic["savings_balance"], pic["savings_balance"]
+    for r in rows:
+        bal, bal_b = bal + r["left_over"], bal_b + r["left_over_on_budget"]
+        path.append({"year": r["year"], "month": r["month"], "usual_pace": round(bal), "on_budget": round(bal_b)})
+    notes, put_aside = [], None
+    name = lambda r: calendar.month_name[r["month"]]
+    fees = lambda r: f", with about KES {r['school_fees']:,} in school fees" if r["school_fees"] else ""
+    runs_out = next((i for i, x in enumerate(path) if x["usual_pace"] < 0), None)
+    short = next((i for i, r in enumerate(rows) if r["left_over"] < 0), None)
+    if runs_out is None and short is None:
+        status = "fine"
+        notes.append(f"At your usual pace every month of the next {len(rows)} has money left over.")
+    elif runs_out is None:
+        status = "tight"
+        r = rows[short]
+        gap = -r["left_over"]
+        notes.append(f"{name(r)} costs KES {gap:,} more than comes in{fees(r)}.")
+        if short > 0:
+            # The forecast feeding the budget: spread the coming gap over the months before it.
+            per = math.ceil(gap / short / 100) * 100
+            put_aside = {"for_year": r["year"], "for_month": r["month"], "short_KES": gap, "per_month_KES": per,
+                         "months": short}
+            notes.append(f"Keep about KES {per:,} a month of what is left aside until then and it is covered.")
+        else:
+            notes.append("Your savings cover it.")
+    else:
+        status = "runs_out"
+        r = rows[runs_out]
+        notes.append(f"At your usual pace your money runs out in {name(r)}{fees(r)}.")
+        over = max(0.0, statistics.mean(sum(line["usual"] for line in x["lines"]) for x in rows) - plan_everyday)
+        if all(x["on_budget"] >= 0 for x in path):
+            notes.append(f"Keeping to your budget gets you through: about KES {round(over, -2):,.0f} a month less on "
+                         "everyday spending.")
+        else:
+            worst = min(path, key=lambda x: x["on_budget"])
+            notes.append(f"Even on your budget you would be about KES {-worst['on_budget']:,} short by "
+                         f"{calendar.month_name[worst['month']]}. Plan for it now: check a change in Can I afford it?")
+    top = sorted(watch.items(), key=lambda kv: -kv[1])[:3]
+    if top:
+        c, total_gap = top[0]
+        notes.append(f"At your usual pace {NOTE_LABELS.get(c, c)} runs about KES {round(total_gap / len(rows)):,} a "
+                     "month over its budget.")
+    at_risk = _goals_at_risk(pic)
+    based_on = "setup" if pic["estimated"] else "records"
+    if pic["estimated"]:
+        notes.append("Based on the rough figures you gave at setup. Upload a statement or record spending and "
+                     "your own pattern takes over.")
+    return jsonify(has_data=True, based_on=based_on, months_used=outlook[0]["months_used"],
+                   budget_source="saved" if chosen else "recommended", status=status, months=rows,
+                   savings_path=path, savings_now=round(pic["savings_balance"]), put_aside=put_aside,
+                   watch=[{"category": c, "over_per_month": round(v / len(rows))} for c, v in top],
+                   goals_at_risk=[{"name": r["name"], "monthly_needed_KES": r["monthly_needed_KES"],
+                                   "realistic_months": r["realistic_months"]} for r in at_risk],
+                   notes=notes)
 
 def budget_warnings(limits, spent, today, categories):
     """Budget lines running out this month: over the limit, or 80%+ used while well ahead of the calendar (more
@@ -1350,6 +1538,55 @@ def _scenario_from_preset(p, months):
     return sc, title
 
 
+FIXED_LINES = ("housing", "school_fees", "loan_repayment")
+
+
+def _budget_side_by_side(s, pic, scenario, result):
+    """Proposal 3.4.6: 'a side-by-side comparison of current and projected budget allocations'. The same
+    recommendation as the Budget screen (_recommend), run again with the change: a new rent, loan or bill becomes
+    a fixed line, a new everyday cost is set aside first and shown on its own line, a savings goal raises the
+    saving, an income change changes the money shared out. The financial state used is today's. None when the
+    household has no income set."""
+    if pic["income"] <= 0:
+        return None
+    today = pic["today"]
+    py, pm = (today.year, today.month - 1) if today.month > 1 else (today.year - 1, 12)
+    saved_prev = s.scalar(select(Budget).where(Budget.user_id == g.user_id, Budget.year == py, Budget.month == pm))
+    prev_limits = _budget_lines(saved_prev.data) if saved_prev else None
+    before = _recommend(pic, prev_limits, py, pm)["budget"]
+    after_pic, fixed = dict(pic), dict(pic["fixed"])
+    everyday_added = {}
+    kind = scenario.get("type")
+    if kind == "monthly_change":
+        for cat, delta in (scenario.get("changes") or {}).items():
+            if cat in FIXED_LINES:
+                fixed[cat] = max(0.0, float(fixed.get(cat) or before.get(cat, 0)) + delta)
+            elif delta > 0:
+                everyday_added[cat] = everyday_added.get(cat, 0.0) + delta
+        after_pic["income"] = pic["income"] + float(scenario.get("income_change") or 0)
+    elif kind == "purchase":
+        per = float(result.get("instalment_per_month_KES") or 0)
+        fixed["loan_repayment"] = float(fixed.get("loan_repayment") or before.get("loan_repayment", 0)) + per
+    elif kind == "savings_goal":
+        after_pic["goal_per_month"] = pic["goal_per_month"] + float(scenario.get("extra_per_month") or 0)
+    after_pic["fixed"] = fixed
+    after = None
+    if after_pic["income"] > 0:
+        import budget as bud
+        try:
+            after = dict(_recommend(after_pic, prev_limits, py, pm, sum(everyday_added.values()))["budget"])
+        except bud.BudgetInputError:
+            after = None
+    if after is not None:
+        for cat, add in everyday_added.items():         # show the new cost on its own line, not as "other"
+            after[cat] = after.get(cat, 0) + round(add)
+            after["other_commitments"] = after.get("other_commitments", 0) - round(add)
+    order = [c for c in BUDGET_LINES if before.get(c) or (after or {}).get(c)]
+    return {"lines": [{"category": c, "now": round(before.get(c, 0)),
+                       "after": None if after is None else round(after.get(c, 0))} for c in order],
+            "note": None if after is not None else "With this change there is no income left to share out."}
+
+
 @bp.post("/me/afford")
 @login_required
 def afford():
@@ -1373,6 +1610,7 @@ def afford():
             raise InputError(str(exc))
         result["title"] = title
         result["months_used"] = len(months)
+        result["budgets"] = _budget_side_by_side(s, pic, scenario, result)
         row = Scenario(user_id=g.user_id, request=b, result=result)
         s.add(row)
         s.commit()
@@ -2191,6 +2429,8 @@ def admin_overview():
                          if f.exists() else None})
     return jsonify(
         service={"status": "ok", "database": _DB["engine"].dialect.name, **SERVICE_STATUS["check"]()},
+        # Where rate limits read the caller's address (audit A-04); "CF-Connecting-IP" is the safe answer.
+        client_ip_source=_client_ip_source()[1],
         users={"total": len(users), "with_household": len(profiles), "with_statement": len(statement_users),
                "joined_7_days": sum(1 for j in joined if (now - j).days < 7),
                "records": n_tx, "affordability_checks": n_checks},
@@ -2240,7 +2480,8 @@ def export_my_data():
 def delete_account():
     """Privacy: a user (or a tester after the study) can remove everything about them."""
     with session() as s:
-        for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile):
+        for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
+                      RevokedToken):
             s.execute(delete(table).where(table.user_id == g.user_id))
         s.execute(delete(User).where(User.id == g.user_id))
         s.commit()

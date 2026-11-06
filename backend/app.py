@@ -348,7 +348,26 @@ def forecast():
 
 
 
+def _engine_limit(fn):
+    """The three engine endpoints below are for testing and demonstrating the models with your own figures. They
+    need a login and allow 60 calls a minute per account (audit A-06: they were open to anyone, on a small
+    server). Web Masters only use /forecast and /health, which stay as agreed."""
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        from flask import g
+        key = ("engine", g.user_id)
+        if store._recent(key, 60) >= 60:
+            return jsonify(error="too many requests, wait a minute"), 429
+        store._record(key)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 @app.post("/affordability")
+@store.login_required
+@_engine_limit
 def affordability():
     """Capstone endpoint: can this household afford a lifestyle change? Not part of the U-CS 37 contract."""
     try:
@@ -358,6 +377,8 @@ def affordability():
 
 
 @app.post("/budget")
+@store.login_required
+@_engine_limit
 def budget_route():
     """Capstone endpoint: a dynamic monthly budget per category. Not part of the U-CS 37 contract."""
     try:
@@ -367,6 +388,8 @@ def budget_route():
 
 
 @app.post("/commitments")
+@store.login_required
+@_engine_limit
 def commitments_route():
     """Capstone endpoint: obligations, debts and goals as monthly figures. Not part of the U-CS 37 contract."""
     try:

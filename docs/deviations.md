@@ -60,6 +60,10 @@ Status key used below:
   3 months 11,000 vs 11,791 (KES). Its 80% ranges hold 83–85% of months. Separate per-horizon models were tried and
   were no better (experiments, 5 Nov). Forecasts are for total spending; the category split comes from the
   household's own shares, not one forecast per category as the proposal described.
+- **Budget forecast (6 Nov):** the next three months set against the budget use the plain model, "at your usual
+  pace". The dashboard outlook pulls the forecast 75% towards a saved budget, and the app saves its own
+  recommended budget automatically, so that number partly repeats the app's advice; the held-out error above was
+  measured without a budget (experiments, 6 Nov).
 
 ### D3. Affordability score: Random Forest replaced by monotonic gradient boosting. Budget allocation stays Random Forest
 
@@ -83,6 +87,9 @@ Status key used below:
     money into savings.
   - The score is computed from the household's recent months and does not take the forecast as an input. The
     forecast is shown beside the score.
+  - The forecast feeds the budget (6 Nov): the budget forecast compares each everyday line with the usual pace
+    for the next three months, follows the savings month by month, and turns a coming short month (for example
+    January school fees) into an amount to put aside each month before it (`/me/budget-forecast`).
 
 ### D4. Verdict labels and the safety rule
 
@@ -159,8 +166,8 @@ Status key used below:
 | Proposal (3.4.1) | Built |
 |---|---|
 | bcrypt password hashes | Salted Werkzeug password hashes (scrypt, Werkzeug's default), a standard and comparable choice |
-| JSON Web Tokens | Signed, timed tokens (itsdangerous, 30 days), checked on every request. They play the same role and have no signing-algorithm choice to misconfigure |
-| Rate limiting | Built: registration limited per IP address; logins limited per IP address and failed logins per email |
+| JSON Web Tokens | Signed, timed tokens (itsdangerous, 14 days), checked on every request. They play the same role and have no signing-algorithm choice to misconfigure. Logging out revokes the token at once, and "log out everywhere" ends every session (6 Nov) |
+| Rate limiting | Built: registration limited per IP address; logins limited per IP address; wrong passwords counted per account and address, so a stranger cannot lock someone out. The address comes from Cloudflare's `CF-Connecting-IP`, which a client cannot fake (6 Nov) |
 | Input validation | Built: every endpoint validates input and returns plain 400 messages |
 | Role-based access | Built for two roles. Admin accounts are named in an environment variable (`ADMIN_EMAILS`) and never in code |
 | TLS | Provided by the hosting platforms (HTTPS on Render and Netlify) |
@@ -321,7 +328,7 @@ increments.
 | R12 | Expenditure forecast 1–3 months (3.2.3) | Changed (D2): boosted tree, 3 months with ranges | `outlook_for_user`, dashboard | Beats the median at 1, 2 and 3 months; experiments, 4–5 Nov |
 | R13 | Personalised budget allocation (3.2.3) | Built (Random Forest, half and half) | `backend/budget.py`, `/me/budget-plan`, `budget_screen.dart` | KES 7,021 against 7,295; experiments, 28 Oct |
 | R14 | 0–100 affordability score (3.2.3) | Changed (D3): monotonic gradient boosting | `affordability.assess` | 100% consistent; experiments, 22 Oct |
-| R15 | Scenario simulation with verdict (3.4.6) | Built; labels changed (D4) | `/me/afford`, `/me/scenarios`, `afford_screen.dart` | `tests/test_affordability.py` |
+| R15 | Scenario simulation with verdict (3.4.6) | Built; labels changed (D4). Current and projected budgets side by side (6 Nov) | `/me/afford`, `/me/scenarios`, `afford_screen.dart` | `tests/test_affordability.py`, `tests/test_store.py` |
 | R16 | SHAP explanations (3.5.7) | Changed (D13): exact grouped Shapley values | `affordability.explain`, `/me/explain`, `why_score_sheet.dart` | Matches shap to 3e-13; experiments, 5 Nov |
 | R17 | Obligations with frequency (3.4.5) | Built | `commitments.py`, `commitments_screen.dart` | `tests/test_commitments.py` |
 | R18 | Debts with a payoff timeline (3.4.5) | Built, extended | `commitments.simulate_debts` | `tests/test_commitments.py` |

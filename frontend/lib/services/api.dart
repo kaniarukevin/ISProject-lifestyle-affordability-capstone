@@ -90,6 +90,9 @@ class Api {
   /// Remove the account and all its data on the server.
   Future<void> deleteAccount() => delete('/me');
 
+  /// End this session on the server too (the token stops working at once); everywhere: every device.
+  Future<void> logout({bool everywhere = false}) => post('/auth/logout', {'everywhere': everywhere});
+
   Future<String> login(String email, String password) async {
     final d = await post('/auth/login', {'email': email, 'password': password});
     return token = d['token'] as String;

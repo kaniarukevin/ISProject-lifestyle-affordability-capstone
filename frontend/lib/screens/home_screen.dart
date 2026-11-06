@@ -58,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             tooltip: 'Log out',
             icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AppState>().signOut(),
+            onPressed: () => context.read<AppState>().logOut(),
           ),
         ],
       ),
