@@ -189,3 +189,15 @@ def test_a_small_cost_in_a_fragile_year_stays_affordable_when_the_average_month_
     assert big["verdict"] in ("Stretch", "Not affordable")
     if big["verdict"] == "Stretch":
         assert big["track_record"]["lowered_verdict"]
+
+
+def test_the_one_pass_timeline_matches_scoring_each_month_on_its_own():
+    import random
+    random.seed(3)
+    months = [{c: random.choice([0, 500, 3000, 8000]) for c in aff.CATS} | {"income_primary": random.choice([9000, 25000, 40000])}
+              for _ in range(12)]
+    for exact in (False, True):
+        fast = aff.timeline(months, 3, 1, exact)
+        slow = [aff.evaluate({"household": {"household_size": 3, "num_dependants": 1}, "months": months[:i + 1],
+                              "statement_safe": exact}) for i in range(12)]
+        assert [(r["state"], r["score"]) for r in fast] == [(r["state_now"], r["score_before"]) for r in slow]

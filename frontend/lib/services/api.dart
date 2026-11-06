@@ -84,6 +84,9 @@ class Api {
 
   Future<void> giveConsent(String version) => post('/me/consent', {'accept': true, 'version': version});
 
+  /// Everything the app keeps about this user (Data Protection Act: the right to a copy).
+  Future<Map<String, dynamic>> exportData() async => (await get('/me/export')) as Map<String, dynamic>;
+
   /// Remove the account and all its data on the server.
   Future<void> deleteAccount() => delete('/me');
 

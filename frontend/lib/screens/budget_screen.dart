@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'budget_warnings.dart';
 import 'profile_screen.dart' show kes;
 
 const _monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
@@ -112,6 +113,8 @@ class _BudgetScreenState extends State<BudgetScreen> {
                   Expanded(child: Text(n as String, style: theme.textTheme.bodySmall)),
                 ]),
               )),
+          if (((r!['warnings'] as List?) ?? []).isNotEmpty)
+            BudgetWarnings(warnings: (r!['warnings'] as List).cast<Map<String, dynamic>>()),
           if (r!['safe_per_day'] != null && (r!['days_left'] as num) > 0)
             Card(
               margin: const EdgeInsets.only(top: 12),

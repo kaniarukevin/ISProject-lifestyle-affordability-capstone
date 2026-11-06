@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import 'budget_warnings.dart';
 import 'profile_screen.dart' show kes;
 
 const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -102,6 +103,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(n as String, style: theme.textTheme.bodySmall),
               )),
+          if (((d['budget_warnings'] as List?) ?? []).isNotEmpty)
+            BudgetWarnings(warnings: (d['budget_warnings'] as List).cast<Map<String, dynamic>>()),
           if (((d['bills_due'] as List?) ?? []).isNotEmpty)
             _BillsDue(bills: (d['bills_due'] as List).cast<Map<String, dynamic>>(), onPaid: _paid),
           if (((d['timeline'] as List?) ?? []).length >= 2)

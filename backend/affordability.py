@@ -165,6 +165,21 @@ def _state(f, exact=False):
     return str(e["state_model"].predict(f[e["state_features"]])[0])
 
 
+def timeline(months, household_size, num_dependants, exact=False):
+    """State and score for every month, each using only the months up to it, in ONE pass. The features look only
+    backwards (rolling windows, running mean and spread), so row i of build_features(all months) equals the last
+    row of build_features(months[:i+1]); scoring all rows at once replaces 12 separate evaluations (the
+    dashboard's slowest part: about 0.5 s of 0.53 s, measured 5 Nov). tests/test_affordability.py checks it
+    matches the month-by-month answer exactly."""
+    e = engine()
+    f = build_features(months_frame(months, household_size, num_dependants))
+    scores = _score_rows(f[e["score_features"]])
+    model, feats = ((e["state_model_exact"], e["state_features_exact"]) if exact and "state_model_exact" in e
+                    else (e["state_model"], e["state_features"]))
+    states = model.predict(f[feats])
+    return [{"state": str(st), "score": int(round(float(sc)))} for st, sc in zip(states, scores)]
+
+
 def _verdict(score):
     cut = engine()["cutoffs"]
     return "Affordable" if score >= cut["affordable"] else ("Stretch" if score >= cut["stretch"] else "Not affordable")

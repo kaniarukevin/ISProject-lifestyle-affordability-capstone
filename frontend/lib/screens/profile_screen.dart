@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -31,6 +35,22 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _addIncome() async {
     final source = await showDialog<IncomeSource>(context: context, builder: (_) => const _IncomeDialog());
     if (source != null) setState(() => draft.incomes.add(source));
+  }
+
+  /// Save everything the app keeps about the user as a JSON file (downloads on the web, a save dialog on phones).
+  Future<void> _download() async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final data = await context.read<AppState>().api.exportData();
+      final now = DateTime.now();
+      final name = 'my-affordability-data-${now.year}-${now.month.toString().padLeft(2, '0')}-'
+          '${now.day.toString().padLeft(2, '0')}.json';
+      final bytes = Uint8List.fromList(utf8.encode(const JsonEncoder.withIndent('  ').convert(data)));
+      final saved = await FilePicker.saveFile(dialogTitle: 'Save your data', fileName: name, bytes: bytes);
+      if (saved != null) messenger.showSnackBar(SnackBar(content: Text('Saved $name')));
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
   }
 
   Future<void> _editIncome(int i) async {
@@ -176,6 +196,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
               leading: const Icon(Icons.lock_outline),
               title: const Text('Change password'),
               onTap: () => showDialog<void>(context: context, builder: (_) => const _PasswordDialog()),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.download_outlined),
+              title: const Text('Download my data'),
+              subtitle: const Text('Everything the app keeps about you, in one file'),
+              onTap: _download,
             ),
             ListTile(
               contentPadding: EdgeInsets.zero,

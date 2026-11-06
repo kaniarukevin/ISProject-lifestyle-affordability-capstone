@@ -22,6 +22,9 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Deviations from the proposal and requirements traceability (`docs/deviations.md`).
 - Privacy notice and recorded consent (Data Protection Act 2019): shown at sign-up, asked once of older accounts, required before reading statements; "Delete my account" in Your household.
 - Spending screen loads a month summary and fetches a month's records only when opened (`/me/transactions/summary`, `?month=`).
+- Budget check: lines over budget, or 80%+ used well ahead of the calendar, with the month-end total at this pace (dashboard and budget screen).
+- Download my data: everything the app keeps about the user in one JSON file (Your household → Your account).
+- Dashboard about 5x faster: the month-by-month timeline is scored in one pass (511 ms to 100 ms on a year of records), with identical results.
 - Bills can have a next due date: "Coming up" on the dashboard (overdue, or due within 7 days) and a Paid button that moves the date on by the bill's frequency.
 - Goals at risk: flagged when the usual put-aside money cannot reach them in time, with a realistic time; goals now store a deadline month and count down.
 - "Your lifestyle" card: rent, loans and saving as shares of income against stated rules of thumb, plus food, transport, money sent and betting.

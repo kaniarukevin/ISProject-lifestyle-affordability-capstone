@@ -967,3 +967,43 @@ def test_lifestyle_shows_shares_of_income_with_simple_guides_and_betting(client,
     assert rows["housing"]["share"] == pytest.approx(4000 / 12000, abs=0.001) and rows["housing"]["status"] == "high"
     assert rows["savings"]["status"] == "low" and rows["savings"]["KES"] == 0
     assert rows["betting"]["KES"] == 300 and "loan_repayment" not in rows
+
+
+def test_budget_warnings_flag_lines_running_out_ahead_of_the_calendar():
+    cats = ["transport", "food_groceries", "entertainment", "airtime_data"]
+    limits = {"transport": 3000, "food_groceries": 10000, "entertainment": 1000, "airtime_data": 500}
+    spent = {"transport": 2550, "food_groceries": 5000, "entertainment": 1200, "airtime_data": 400}
+    w = store.budget_warnings(limits, spent, store.date(2026, 11, 14), cats)           # 14 of 30 days gone
+    assert [x["category"] for x in w] == ["entertainment", "transport", "airtime_data"]
+    assert w[0]["over"] and not w[1]["over"] and w[1]["days_left"] == 17
+    assert w[1]["pace_KES"] == round(2550 / (14 / 30))
+    late = store.budget_warnings(limits, spent, store.date(2026, 11, 28), cats)        # near month end: on track
+    assert [x["category"] for x in late] == ["entertainment"]
+
+
+def test_dashboard_and_budget_screen_show_budget_warnings(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 10))
+    h = _student(client)
+    client.put("/me/budgets/2026/11", headers=h, json={"budget": {"transport": 1000, "food_groceries": 4000}})
+    client.post("/me/transactions", headers=h, json=[{"date": "2026-11-03", "amount": 950, "category": "transport"}])
+    o = client.get("/me/overview", headers=h).get_json()
+    assert [w["category"] for w in o["budget_warnings"]] == ["transport"]
+    plan = client.get("/me/budget-plan", headers=h).get_json()
+    assert "warnings" in plan and [w["category"] for w in plan["warnings"]] == ["transport"]
+
+
+def test_download_my_data_has_everything_and_only_mine(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    other = signup(client, "someone@example.com")
+    client.post("/me/transactions", headers=other, json=[{"date": "2026-10-01", "amount": 77777, "category": "transport"}])
+    client.put("/me/commitments", headers=h, json={"obligations": [{"name": "Rent", "amount": 4000, "category": "housing"}],
+                                                   "debts": [], "goals": []})
+    client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "entertainment", "amount": 500})
+    d = client.get("/me/export", headers=h).get_json()
+    assert d["account"]["email"] == "kevin@example.com" and d["account"]["privacy_notice_agreed"]
+    assert d["household"]["household_size"] == 1 and d["income_sources"][0]["amount"] == 12000
+    assert len(d["spending"]) == 9 and all(t["amount"] != 77777 for t in d["spending"])
+    assert d["commitments"]["obligations"][0]["name"] == "Rent" and len(d["affordability_checks"]) == 1
+    assert "password" not in str(d).lower().replace("passwords are", "")

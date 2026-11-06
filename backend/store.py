@@ -1043,16 +1043,15 @@ def overview():
         outlook = outlook_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month)
         fc = outlook[0]
         betting = _betting(s, g.user_id, pic["scored"])
+        saved_budget = _saved_budget(s, g.user_id, pic["today"].year, pic["today"].month)
     health = aff.evaluate({"household": {"household_size": profile.household_size,
                                          "num_dependants": profile.dependants},
                            "months": pic["scored"], "statement_safe": pic["statement_safe"]})
     # Month by month: each completed month scored with only the data up to then (how things were at the time).
     timeline = []
-    for i in range(len(pic["scored"])):
-        mo = pic["scored"][i]
-        r = aff.evaluate({"household": {"household_size": profile.household_size, "num_dependants": profile.dependants},
-                          "months": pic["scored"][:i + 1], "statement_safe": pic["statement_safe"]})
-        timeline.append({"year": mo["year"], "month": mo["month"], "state": r["state_now"], "score": r["score_before"],
+    by_month = aff.timeline(pic["scored"], profile.household_size, profile.dependants, pic["statement_safe"])
+    for mo, r in zip(pic["scored"], by_month):
+        timeline.append({"year": mo["year"], "month": mo["month"], "state": r["state"], "score": r["score"],
                          "spent": round(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings")),
                          "saved": round(mo["savings"]), "income": round(mo["income_primary"]),
                          "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"]})
@@ -1105,6 +1104,11 @@ def overview():
                      f"income" + (f", including about KES {fees:,} in school fees" if fees else "") +
                      ". Setting a little aside now will help.")
     due = _bills_due(pic)
+    warnings = []
+    if saved_budget and current is not None:
+        import budget as bud
+        warnings = budget_warnings(saved_budget, {c: v for c, v in _known(current).items()}, pic["today"],
+                                   bud.model()["variable"])
     at_risk = _goals_at_risk(pic)
     if at_risk:
         r = at_risk[0]
@@ -1135,7 +1139,7 @@ def overview():
                    forecast=fc, outlook=[{k: f[k] for k in ("year", "month", "total", "range", "ahead")
                                           if k in f} | {"school_fees": f["breakdown"].get("school_fees", 0)}
                                          for f in outlook],
-                   notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk,
+                   notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk, budget_warnings=warnings,
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record)
 
 
@@ -1207,7 +1211,27 @@ def budget_plan():
     left = sum(float(limits.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday + OUTSIDE)
     days_left = calendar.monthrange(y, m)[1] - pic["today"].day + 1
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data, auto_saved=auto_saved,
-                   everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left))
+                   everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left),
+                   warnings=budget_warnings(limits, spent, pic["today"], everyday))
+
+
+def budget_warnings(limits, spent, today, categories):
+    """Budget lines running out this month: over the limit, or 80%+ used while well ahead of the calendar (more
+    than 15 points ahead of the share of the month gone). Each says the amount left and, at this pace, the
+    month-end total. limits/spent: {category: KES}; categories: the everyday lines the budget sets."""
+    days = calendar.monthrange(today.year, today.month)[1]
+    gone = today.day / days
+    out = []
+    for cat in categories:
+        limit, used = float(limits.get(cat, 0) or 0), float(spent.get(cat, 0) or 0)
+        if limit <= 0 or used <= 0:
+            continue
+        share = used / limit
+        if share >= 1 or (share >= 0.8 and share > gone + 0.15):
+            out.append({"category": cat, "limit_KES": round(limit), "spent_KES": round(used),
+                        "share": round(share, 2), "over": share >= 1, "days_left": days - today.day + 1,
+                        "pace_KES": round(used / gone)})
+    return sorted(out, key=lambda w: -w["share"])
 
 
 PRESETS = ("move_house", "new_expense", "new_baby", "purchase", "loan", "savings_goal", "income_change")
@@ -2104,6 +2128,41 @@ def admin_overview():
         recent_users=[{"id": u.id, "email": _mask(u.email), "joined": u.created_at.date().isoformat(),
                        "household": u.id in profiles, "records": counts.get(u.id, 0),
                        "statement": u.id in statement_users, "checks": checks.get(u.id, 0)} for u in users[:50]]), 200
+
+
+@bp.get("/me/export")
+@login_required
+def export_my_data():
+    """Everything the app keeps about the user, in one JSON file (Data Protection Act 2019: the right to a copy
+    of one's data). Statement files were never kept, so they are not in it."""
+    def rows(s, model, order):
+        return list(s.scalars(select(model).where(model.user_id == g.user_id).order_by(order)))
+    with session() as s:
+        user, profile, c = s.get(User, g.user_id), s.get(Profile, g.user_id), s.get(Commitments, g.user_id)
+        data = {
+            "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "about": "Everything Lifestyle Affordability keeps about you. Uploaded statement files and passwords are "
+                     "never kept, so they are not here.",
+            "account": {"email": user.email, "created_at": user.created_at.isoformat() if user.created_at else None,
+                        "privacy_notice_agreed": user.consent_version,
+                        "agreed_at": user.consent_at.isoformat() if user.consent_at else None},
+            "household": None if profile is None else {
+                "household_size": profile.household_size, "dependants": profile.dependants,
+                "urban_rural": profile.urban_rural, "formal_job": profile.formal_job,
+                "pays_own_fees": profile.pays_own_fees, "savings_balance": profile.savings_balance,
+                "usual_month_estimates": profile.estimates},
+            "income_sources": [{"name": i.name, "amount": i.amount, "frequency": i.frequency}
+                               for i in rows(s, IncomeSource, IncomeSource.id)],
+            "spending": [_tx_json(t) for t in rows(s, Transaction, Transaction.day)],
+            "money_in": [{"date": m.day.isoformat(), "amount": m.amount, "kind": m.kind, "payee": m.payee,
+                          "label": m.label, "description": m.description} for m in rows(s, MoneyIn, MoneyIn.day)],
+            "commitments": c.data if c else None,
+            "budgets": [{"year": b.year, "month": b.month, "budget": b.data} for b in rows(s, Budget, Budget.id)],
+            "affordability_checks": [{"created_at": sc.created_at.isoformat(), "asked": sc.request, "answer": sc.result}
+                                     for sc in rows(s, Scenario, Scenario.id)],
+            "payee_tags": [{"payee": r.key, "tag": r.choice} for r in rows(s, StatementRule, StatementRule.id)],
+        }
+    return jsonify(data), 200
 
 
 @bp.delete("/me")
