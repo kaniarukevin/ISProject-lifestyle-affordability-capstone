@@ -257,3 +257,24 @@ def test_a_reversed_charge_is_not_counted_as_a_charge():
     rows = mpesa.understand(_rows(("TK00000001", "2026-10-02", "Customer Transfer of Funds Charge", -13.0),
                                   ("TK00000002", "2026-10-02", "Reversal of Customer Transfer of Funds Charge", 13.0)))
     assert rows[1]["kind"] != "spend" and rows[0]["kind"] == "ignore"
+
+
+def test_pasted_messages_of_every_common_kind():
+    text = ("TK53AB2C3F Confirmed. Ksh2,000.00 sent to KPLC PREPAID for account 37123456789 on 6/11/26 at 9:30 PM "
+            "New M-PESA balance is Ksh680.50. Transaction cost, Ksh23.00. "
+            "TK54AB2C3G Confirmed.You have received Ksh1,000.00 from JANE WANJIKU 0722000111 on 7/11/26 at 10:00 AM "
+            "New M-PESA balance is Ksh1,680.50. "
+            "TK55AB2C3H confirmed.You bought Ksh100.00 of airtime on 7/11/26 at 10:05 AM.New M-PESA balance is "
+            "Ksh1,580.50. "
+            "TK56AB2C3J Confirmed.on 7/11/26 at 11:15 AMWithdraw Ksh500.00 from 123456 - MAMA PIMA SHOP New M-PESA "
+            "balance is Ksh1,051.00. Transaction cost, Ksh29.00. "
+            "TK57AB2C3K Confirmed. Ksh250.00 sent to MARY KITUKU on 7/11/26 at 1:00 PM. New M-PESA balance is Ksh801.00. "
+            "TK58AB2C3L Confirmed. Ksh 151.50 from your M-PESA has been used to fully pay your outstanding Fuliza M-PESA.")
+    info = mpesa.read_messages(text)
+    got = {(r["mpesa_type"], r["category"], r["amount"]) for r in info["rows"]}
+    assert ("pay_bill", "utilities", -2000.0) in got and ("charges", "charges", -23.0) in got
+    assert ("money_in", None, 1000.0) in got and ("airtime", "airtime_data", -100.0) in got
+    assert ("cash", "unsorted", -500.0) in got and ("pochi", "unsorted", -250.0) in got
+    sent = next(r for r in info["rows"] if r["mpesa_type"] == "money_in")
+    assert sent["payee_key"] == "in:person:0722***111:JANE WANJIKU"          # masked like the statement
+    assert info["skipped"] == [{"message": info["skipped"][0]["message"], "reason": "no date"}]   # never guessed

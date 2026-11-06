@@ -454,3 +454,153 @@ def read_statement(data, password=None, remembered=None):
     rows = understand(info["rows"], remembered)
     info.update(summarise(rows))
     return info
+
+
+# ---------------------------------------------------------------- 3. pasted M-PESA messages (6 Nov)
+# After a statement ends, the household keeps spending. Every M-PESA payment sends an SMS confirmation; pasting
+# them in keeps the picture current until the next statement. Each message becomes a row shaped like a
+# statement row, so the same reading (M-PESA types, Kenyan directory, payee tags, reversals) applies. The receipt
+# number is the same as on the statement, so a later statement skips these rows as duplicates.
+# Formats follow Safaricom's confirmation messages. A message that does not match is listed back, never guessed.
+
+SMS_START = re.compile(r"\b([A-Z0-9]{10})\s+[Cc]onfirmed\b")
+SMS_WHEN = re.compile(r"\bon\s+(\d{1,2})/(\d{1,2})/(\d{2,4})\s+at\s+(\d{1,2}):(\d{2})\s*([AP]M)", re.I)
+SMS_KSH = r"Ksh\s?([\d,]+\.\d\d)"
+SMS_COST = re.compile(r"Transaction cost,?\s*" + SMS_KSH, re.I)
+SMS_BAL = re.compile(r"(?:New )?M-PESA balance is\s*" + SMS_KSH, re.I)
+SMS_PHONE = re.compile(r"\s(?:\+?254|0)(\d{9})\b")
+SMS_FORMS = [
+    # (kind, pattern); the groups are amount, then a name or details where there is one
+    ("paybill", re.compile(SMS_KSH + r"\s+sent to\s+(.+?)\s+for account\s+(\S+?)\.?\s+on\s", re.I)),
+    ("sent", re.compile(SMS_KSH + r"\s+sent to\s+(.+?)\s+on\s+\d", re.I)),
+    ("buy_goods", re.compile(SMS_KSH + r"\s+paid to\s+(.+?)\.?\s+on\s+\d", re.I)),
+    ("received", re.compile(r"You have received\s+" + SMS_KSH + r"\s+from\s+(.+?)\s+on\s+\d", re.I)),
+    ("airtime", re.compile(r"You bought\s+" + SMS_KSH + r"\s+of airtime", re.I)),
+    ("withdraw", re.compile(r"Withdraw\s+" + SMS_KSH + r"\s+from\s+(.+?)\s+New M-PESA", re.I)),
+    ("deposit", re.compile(r"Give\s+" + SMS_KSH + r"\s+cash to\s+(.+?)\s+New M-PESA", re.I)),
+    ("mshwari_in", re.compile(SMS_KSH + r"\s+transferred to M-?Shwari", re.I)),
+    ("mshwari_out", re.compile(SMS_KSH + r"\s+transferred from M-?Shwari", re.I)),
+    ("fuliza_repay", re.compile(r"Ksh\s?([\d,]+\.\d\d)\s+from your M-PESA has been used to (?:fully |partially )?pay "
+                                r"your outstanding Fuliza", re.I)),
+    ("fuliza", re.compile(r"Fuliza M-PESA amount is\s*" + SMS_KSH, re.I)),
+]
+
+
+def _sms_number(name):
+    """SMS confirmations name the till or paybill but not its number. A stable 9-digit stand-in per name (real
+    numbers have at most 7 digits) keeps payees apart, so tagging one shop never tags another."""
+    import zlib
+    return "9" + str(zlib.crc32(name.strip().lower().encode()) % 10 ** 8).zfill(8)
+
+
+def _sms_masked(digits9):
+    """0712345678 -> '0712***678', the statement's masking, so a person is the same payee in both."""
+    full = "0" + digits9
+    return f"{full[:4]}***{full[-3:]}"
+
+
+def _sms_row(msg):
+    m = SMS_START.search(msg)
+    when = SMS_WHEN.search(msg)
+    if not m:
+        return None, "no receipt number"
+    receipt = m.group(1)
+    for kind, pat in SMS_FORMS:
+        f = pat.search(msg)
+        if not f:
+            continue
+        amount = _money(f.group(1))
+        if kind == "fuliza":
+            details, amount = "Overdraft of Credit Party", amount                     # borrowed into M-PESA
+        elif kind == "fuliza_repay":
+            details, amount = "OD Loan Repayment to 232323 - M-PESA Overdraw", -amount
+        elif kind == "paybill":
+            name, acc = f.group(2).strip(), f.group(3).strip()
+            details, amount = f"Pay Bill Online to {_sms_number(name)} - {name} Acc. {acc}", -amount
+        elif kind == "sent":
+            who = f.group(2).strip()
+            ph = SMS_PHONE.search(" " + who)
+            if ph:
+                name = SMS_PHONE.sub("", " " + who).strip()
+                details = f"Customer Transfer to - {_sms_masked(ph.group(1))} {name.upper()}"
+            else:                                   # no phone number: a Pochi la Biashara payment
+                details = f"Customer Payment to Small Business to - {who.upper()}"
+            amount = -amount
+        elif kind == "buy_goods":
+            name = f.group(2).strip()
+            details, amount = f"Merchant Payment Online to {_sms_number(name)} - {name}", -amount
+        elif kind == "received":
+            who = f.group(2).strip()
+            ph = SMS_PHONE.search(" " + who)
+            if ph:
+                name = SMS_PHONE.sub("", " " + who).strip()
+                details = f"Funds received from - {_sms_masked(ph.group(1))} {name.upper()}"
+            else:                                   # a bank or a business paying you
+                details = f"Business Payment from {_sms_number(who)} - {who}"
+        elif kind == "airtime":
+            details, amount = "Airtime Purchase", -amount
+        elif kind == "withdraw":
+            details, amount = f"Customer Withdrawal At Agent Till {f.group(2).strip()}", -amount
+        elif kind == "deposit":
+            details = f"Deposit of Funds at Agent Till {f.group(2).strip()}"
+        elif kind == "mshwari_in":
+            details, amount = "M-Shwari Deposit", -amount
+        else:                                       # mshwari_out
+            details = "M-Shwari Withdraw"
+        if not when:
+            return None, "no date"
+        d, mo, y, hh, mm, ap = when.groups()
+        y = int(y) + (2000 if len(y) == 2 else 0)
+        hour = int(hh) % 12 + (12 if ap.upper() == "PM" else 0)
+        try:
+            time = datetime(y, int(mo), int(d), hour, int(mm)).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None, "the date is not a real date"
+        bal = SMS_BAL.search(msg)
+        row = {"receipt": receipt, "time": time, "details": details, "amount": amount,
+               "balance": _money(bal.group(1)) if bal else None}
+        rows = [row]
+        cost = SMS_COST.search(msg)
+        if cost and _money(cost.group(1)) > 0:
+            rows.append({"receipt": receipt, "time": time, "details": "Transaction Charge",
+                         "amount": -_money(cost.group(1)), "balance": row["balance"]})
+        return rows, None
+    return None, "not a payment message this app reads"
+
+
+def parse_messages(text, limit=500):
+    """Pasted M-PESA messages -> rows like a statement's, oldest first, plus the messages that were not read."""
+    text = re.sub(r"\s+", " ", text or "").strip()
+    starts = [m.start() for m in SMS_START.finditer(text)]
+    if not starts:
+        raise StatementError("No M-PESA messages were found. Paste messages that start with a code like "
+                             "TK12AB3CD4 Confirmed.")
+    if len(starts) > limit:
+        raise StatementError(f"Paste at most {limit} messages at a time.")
+    rows, skipped, seen = [], [], set()
+    for a, b in zip(starts, starts[1:] + [len(text)]):
+        msg = text[a:b].strip()
+        got, why = _sms_row(msg)
+        if got is None:
+            skipped.append({"message": msg[:80], "reason": why})
+            continue
+        if got[0]["receipt"] in seen:                # the same message pasted twice
+            continue
+        seen.add(got[0]["receipt"])
+        rows += got
+    if not rows:
+        raise StatementError("None of these messages could be read. " +
+                             (skipped[0]["reason"].capitalize() + "." if skipped else ""))
+    rows.sort(key=lambda r: r["time"])
+    for i, r in enumerate(rows):
+        r["n"] = i
+    return {"period": None, "rows": rows, "skipped": skipped,
+            "checks": {"ok": True, "rows": len(rows), "from": "messages"}}
+
+
+def read_messages(text, remembered=None):
+    """Everything the review screen needs from pasted messages. Nothing is saved here."""
+    info = parse_messages(text)
+    rows = understand(info["rows"], remembered)
+    info.update(summarise(rows))
+    return info

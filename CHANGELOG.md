@@ -4,6 +4,12 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
 ### Added
+- "Plan a change": one check for a whole decision, with an upfront cost (savings or instalments), monthly, termly or yearly costs, money it brings in and a duration; checked while paying instalments and after; can be applied.
+- Low-month check: when income varies, every check and the budget forecast are repeated on a low month (from pay that arrived, or the setup answer `incomeLow`).
+- Borrowing warning: Fuliza uses and mobile-lender repayments over the last 3 months, by a stated rule; shown beside the score, never in it.
+- Goals tracked from savings: money saved since each goal was set counts towards it after one confirmation (`/me/goals/track`), earliest deadline first.
+- Paste M-PESA messages (`/me/messages/preview`, then the usual import with `"origin": "messages"`); "up to date until" (`records_until`) on the dashboard.
+- Forecast check: each month's forecast is kept before the month begins and compared with what was spent; pooled real-month accuracy in the admin view.
 - Budget forecast (`/me/budget-forecast`): the next three months against the budget at the usual pace, the savings path, the first short month with an amount to put aside before it, the lines likely to run over and goals at risk; works on setup estimates on day one.
 - "Can I afford it?" shows the recommended budget now and after the change, side by side (proposal 3.4.6).
 - Log out really logs out: the token is revoked at once, and "log out everywhere" ends every session; tokens last 14 days instead of 30 (audit A-08).
@@ -37,6 +43,7 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Production safety: the hosted server refuses to start without a real `SECRET_KEY`; every error is plain JSON; uploads over 11 MB are refused before reading.
 
 ### Fixed
+- A Fuliza draw was counted as money taken out of savings, lowering that month's saving.
 - Rate limits read the caller's address from Cloudflare's `CF-Connecting-IP`, which cannot be faked; the admin overview shows which source is used (audit A-04). Wrong passwords are counted per account and address, so a stranger cannot lock someone out (A-05).
 - The engine endpoints `/affordability`, `/budget` and `/commitments` need a login and allow 60 calls a minute; `/forecast` and `/health` for Web Masters are unchanged (A-06).
 - Bad input can no longer break an account (audit P0, 6 Nov): NaN, Infinity and amounts above KES 100 million are refused everywhere (A-01); saved budgets are checked, and old bad ones are ignored (A-02); a statement import only accepts rows the preview read and signed for that user (A-03); spending dates must be within the last 5 years and not in the future, at most 2,000 records per request (A-07).

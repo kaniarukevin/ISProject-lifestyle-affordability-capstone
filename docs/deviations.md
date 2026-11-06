@@ -122,6 +122,10 @@ Status key used below:
     - avoids double counting by skipping repeated receipt numbers.
   - **Bank PDFs and CSV:** these were cut for time. The import endpoint accepts transactions in a format that a
     CSV reader could feed later.
+- **Added (6 Nov): pasted M-PESA messages.** A statement covers the past only. Between statements the user
+  pastes M-PESA SMS confirmations; each becomes a row shaped like a statement row and is read the same way. The
+  receipt number matches the statement's, so a later statement skips them, and replaces their savings with its
+  exact monthly figure. Screens say how far the records go ("up to date until").
 - **Not built:** bank PDF statements, CSV upload, and a sandbox connection for household users.
 
 ### D6. Transaction categorisation: Kenyan directory and remembered user tags instead of a trained text classifier
@@ -209,7 +213,7 @@ Status key used below:
 | Obligations with frequency | Built: weekly, monthly, termly, semester and yearly, converted to monthly amounts |
 | Debt payoff timeline, cost to the score | Built, and extended: an avalanche or snowball plan, the debt-free date, total interest, savings from extra payments, and a warning when a payment does not cover the interest |
 | Goals with a required monthly amount | Built |
-| Goal progress tracked automatically from transactions | **Partly built.** The user enters the amount saved. A statement purchase that matches a goal marks the goal done and takes the money out of savings |
+| Goal progress tracked automatically from transactions | **Built (6 Nov).** Each goal remembers the month it was set; money that went into savings since then (M-Shwari, KCB M-PESA, lock savings, unit trusts, a bank, or savings typed in) counts towards it once the user agrees, shared by earliest deadline and counted once. A statement purchase that matches a goal marks it done |
 | Alerts when a goal is at risk | **Built (5 Nov), in the app.** A goal is flagged when the money usually left over (last 3 months) cannot cover it and the goals due before it, with how long it would really take. Goals now store a deadline month, so the months left count down |
 | Payment status per month, reminders before due dates | **Partly built (5 Nov).** Bills can have a next due date; the dashboard lists bills overdue or due within 7 days, and "Paid" records the day and moves the date on by the bill's frequency. Reminders are in the app only: push notifications were cut for time |
 
@@ -301,6 +305,18 @@ Status key used below:
 - **Money in from statements:** who pays you, with income, mixed and own-account tags, so moving your own money is
   not counted as income.
 - **Month-by-month timeline:** the financial state per month, scored only with data up to that month.
+- **Plan a change (6 Nov):** one check for a whole decision: an upfront cost (from savings or in instalments),
+  monthly costs paid monthly, termly or yearly, money it brings in, and how long it lasts. With instalments it is
+  checked while paying and after, and the harder period decides. Covers moving (deposit and rent), a car, a boda
+  boda that earns, a baby, boarding school.
+- **Low month (6 Nov):** when income varies (the lowest of the last 6 months of pay that arrived is below 85% of
+  usual, or the user says so at setup), every check and the budget forecast are repeated on a low month.
+- **Borrowing to get through the month (6 Nov):** Fuliza uses (counted from its automatic repayments) and
+  mobile-lender repayments; flagged by a stated rule (2 of the last 3 months, or Fuliza 4+ times in a month). It
+  never changes the score.
+- **Forecast check (6 Nov):** the forecast for each month is kept from before the month begins and compared with
+  what was spent once the month is recorded. Pooled over users (no one's figures shown) it gives the forecast's
+  accuracy on real households, which the synthetic test set cannot.
 
 ### D18. Process
 
@@ -333,7 +349,7 @@ increments.
 | R17 | Obligations with frequency (3.4.5) | Built | `commitments.py`, `commitments_screen.dart` | `tests/test_commitments.py` |
 | R18 | Debts with a payoff timeline (3.4.5) | Built, extended | `commitments.simulate_debts` | `tests/test_commitments.py` |
 | R19 | Goals with the monthly amount needed (3.4.5) | Built | `commitments.evaluate` | `tests/test_commitments.py` |
-| R20 | Automatic goal progress and at-risk alerts (3.4.5) | Partly built (D10): at-risk alerts built; progress entered by the user | `_complete_goals`, `_goals_at_risk` | `tests/test_store.py` |
+| R20 | Automatic goal progress and at-risk alerts (3.4.5) | Built (D10): savings since the goal was set, after one confirmation; at-risk alerts | `_tracked_goals`, `/me/goals/track`, `_goals_at_risk` | `tests/test_store.py` |
 | R21 | Obligation payment status and reminders (3.4.5) | Partly built (D10): due dates, paid status, in-app "Coming up"; no push | `commitments.due_status`, `/me/commitments/paid`, dashboard | `tests/test_commitments.py`, `tests/test_store.py` |
 | R22 | Lifestyle tracking over time (3.4.6) | Built | Month-by-month state timeline; "Your lifestyle" card: rent, loans and saving against stated rules of thumb, food, transport, money sent and betting as shares of income | `tests/test_store.py` |
 | R23 | Dashboard (3.4.3) | Built | `/me/overview`, `dashboard_screen.dart` | — |
@@ -344,7 +360,7 @@ increments.
 | R28 | Synthetic dataset for a cold start (1.5) | Built | KIHBS-informed, 300 households × 12 months, 2025 KES; plus setup estimates | Experiments E2–E4 |
 | R29 | Android and iOS app (3.4) | Planned (D14) | Flutter | — |
 | R30 | Cloud backend and PostgreSQL (3.3.6) | Built (Neon); hosting update planned | Render, Neon | — |
-| R31 | Real-user validation with consent (3.2.4) | Partly built: 1 statement; volunteers planned (D15) | — | Experiments, 4 Nov |
+| R31 | Real-user validation with consent (3.2.4) | Partly built: 1 statement; volunteers planned (D15). The forecast check pools real-month accuracy as volunteers add data | Admin overview, `forecast_on_real_months` | Experiments, 4 and 6 Nov |
 | R32 | Plain-language outputs (3.3.1) | Built | Reasons, notes and info dialogs on every screen | — |
 | R33 | Handles malformed input without failure (3.3.1) | Built | Plain 400 errors; a statement that fails the checks is refused | `tests/` |
 

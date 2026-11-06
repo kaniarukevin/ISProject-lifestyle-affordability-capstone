@@ -410,3 +410,16 @@ Also built for "Can I afford it?": the recommended budget now and after the chan
 
 Open decision for the redesign: show the plain forecast on the dashboard as well, so every screen uses the validated number, or keep the blend there and label it.
 
+## 2026-11-06: Covering Kenyan households - plans, low months, borrowing, goals, messages, forecast check
+
+Review against the people the app is for (students and people on allowances, employed, business owners and hustlers, young families, wider households). The single checks covered one cost at a time; most real decisions are an upfront cost plus a monthly change, some bring money in, school fees come by term, and income is often irregular. Statements also stop at their last day.
+
+- Plan a change: one check with an upfront cost (savings or instalments), monthly costs (monthly, termly, semester or yearly), money it brings in and a duration. Test household (KES 45,000, rent 12,000, KES 60,000 saved): moving to KES 22,000 rent with a 44,000 deposit from savings: Stretch 97 -> 50, short 3,500 a month; a KES 160,000 boda boda over 18 months at 14% with KES 6,000 fuel and KES 18,000 earnings: Affordable while paying (87) and after (100); a baby with KES 35,000 delivery and KES 16,500 a month: Not affordable (49), savings cover about 5 months; boarding fees of KES 28,000 a term: Affordable (59) with "put aside about KES 7,000 a month"; a KES 900,000 car from 60,000 savings: Not affordable before scoring.
+- Low month: the lowest of the last 6 months of pay that actually arrived (tagged in Who pays you), or the user's answer at setup; used only below 85% of usual. Test: pay of 45,000 with one month at 27,000; moving to KES 18,000 rent is checked again on "a month like September 2026" and leaves less each month.
+- Borrowing: Fuliza is cleared by an automatic "OD Loan Repayment", so its repayments count its uses; repayments to M-Shwari and KCB M-PESA loans, Tala, Branch, Zenka, Okash, Hustler Fund and Timiza count the rest (whole words: "NATALIA" is not Tala). Found while building it: a Fuliza draw was read as money taken out of savings, lowering the month's saving; fixed.
+- Goals: savings since each goal was set, counted once the user agrees, earliest deadline first, each deposit once. The app may save goals back without the new fields, so they are carried over by name (tested).
+- Pasted messages: Safaricom SMS confirmations become statement-shaped rows (buy goods, send money with the number masked as on statements, Pochi, paybill, money received, airtime, agent withdrawal and deposit, M-Shwari, Fuliza repayment, transaction cost). Tills and paybills have no number in an SMS, so each name gets a stable 9-digit stand-in (real ones have at most 7 digits). A message without a date or in an unknown format is listed back, never guessed. Still to check against real messages from volunteers.
+- Forecast check: the plain forecast for each month is kept before the month begins and compared with what was spent once recorded; pooled in the admin view as months, users, MAE, WAPE and the share inside the 80% range.
+
+Speed after these: dashboard 151 ms on 13 months and 1,092 records (was 100 ms), budget forecast 81 ms.
+
