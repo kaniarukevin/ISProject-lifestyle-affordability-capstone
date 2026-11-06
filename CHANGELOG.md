@@ -4,6 +4,10 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
 ### Added
+- Budget forecast (`/me/budget-forecast`): the next three months against the budget at the usual pace, the savings path, the first short month with an amount to put aside before it, the lines likely to run over and goals at risk; works on setup estimates on day one.
+- "Can I afford it?" shows the recommended budget now and after the change, side by side (proposal 3.4.6).
+- Log out really logs out: the token is revoked at once, and "log out everywhere" ends every session; tokens last 14 days instead of 30 (audit A-08).
+- Continuous testing: a GitHub Actions workflow runs every test on each push and pull request; `backend/requirements-dev.txt`; the HMM baseline tests skip cleanly on a fresh clone (audit A-17, A-18). Root README.
 - Unit tests for HMM state detection (`tests/test_hmm.py`).
 - Experiment log (`docs/experiments.md`).
 - Financial state detection: Random Forest (held-out accuracy 0.799) replaces the HMM (0.531) (#46).
@@ -33,6 +37,8 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 - Production safety: the hosted server refuses to start without a real `SECRET_KEY`; every error is plain JSON; uploads over 11 MB are refused before reading.
 
 ### Fixed
+- Rate limits read the caller's address from Cloudflare's `CF-Connecting-IP`, which cannot be faked; the admin overview shows which source is used (audit A-04). Wrong passwords are counted per account and address, so a stranger cannot lock someone out (A-05).
+- The engine endpoints `/affordability`, `/budget` and `/commitments` need a login and allow 60 calls a minute; `/forecast` and `/health` for Web Masters are unchanged (A-06).
 - Bad input can no longer break an account (audit P0, 6 Nov): NaN, Infinity and amounts above KES 100 million are refused everywhere (A-01); saved budgets are checked, and old bad ones are ignored (A-02); a statement import only accepts rows the preview read and signed for that user (A-03); spending dates must be within the last 5 years and not in the future, at most 2,000 records per request (A-07).
 - M-PESA reversals: the reversed payment (and its charge) is now left out of spending as well as the refund; previously the refund was counted as money received and the payment stayed as spending. A reversal of a charge is no longer counted as a charge.
 - Reached goals no longer come back: the app dropped the goal's `done` flag when saving Commitments, and matched goals to the server's figures by position (wrong once a goal was reached).

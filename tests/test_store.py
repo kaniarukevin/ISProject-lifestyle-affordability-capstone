@@ -67,7 +67,7 @@ def test_monthly_summary_feeds_the_engines(client):
     months = client.get("/me/months", headers=h).get_json()["months"]
     assert [(m["year"], m["month"]) for m in months] == [(2026, 9), (2026, 10)]
     assert months[1]["transport"] == 900 and months[1]["income_primary"] == 12000
-    r = client.post("/affordability", json={"household": {"household_size": 1}, "months": months})
+    r = client.post("/affordability", headers=h, json={"household": {"household_size": 1}, "months": months})
     assert r.status_code == 200 and "score_before" in r.get_json()
 
 
@@ -1062,3 +1062,84 @@ def test_only_rows_read_from_the_statement_can_be_imported(client, monkeypatch):
     rows = [dict(t, one_off=True) if i == 0 else t for i, t in enumerate(prev["transactions"])]
     assert client.post("/me/statements/import", headers=h, json={"transactions": rows,
                                                                  "period": prev["period"]}).status_code == 200
+
+
+# ---------- sessions and lockout (audit A-05, A-06, A-08) ----------
+
+def test_logging_out_stops_that_token_and_everywhere_stops_all(client):
+    phone = signup(client)
+    r = client.post("/auth/login", json={"email": "kevin@example.com", "password": "strong-pass-1"})
+    laptop = {"Authorization": f"Bearer {r.get_json()['token']}"}
+    assert client.post("/auth/logout", headers=phone).status_code == 200
+    assert client.get("/me/profile", headers=phone).status_code == 401          # this device: logged out
+    assert client.get("/me/profile", headers=laptop).status_code != 401         # the other: still in
+    assert client.post("/auth/logout", headers=laptop, json={"everywhere": True}).status_code == 200
+    assert client.get("/me/profile", headers=laptop).status_code == 401
+
+
+def test_a_stranger_cannot_lock_someone_out(client):
+    signup(client)
+    stranger = {"CF-Connecting-IP": "203.0.113.9"}
+    for _ in range(6):
+        client.post("/auth/login", headers=stranger, json={"email": "kevin@example.com", "password": "guess"})
+    owner = client.post("/auth/login", headers={"CF-Connecting-IP": "198.51.100.4"},
+                        json={"email": "kevin@example.com", "password": "strong-pass-1"})
+    assert owner.status_code == 200
+
+
+def test_engine_endpoints_need_a_login(client):
+    assert client.post("/affordability", json={}).status_code == 401
+    assert client.post("/budget", json={}).status_code == 401
+    assert client.post("/commitments", json={}).status_code == 401
+
+
+# ---------- budget forecast: the next three months against the budget ----------
+
+def _fees_household(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "dependants": 1, "savingsBalance": 4000,
+                                               "incomes": [{"name": "Pay", "amount": 30000}]})
+    client.put("/me/commitments", headers=h, json={"obligations": [
+        {"name": "Rent", "category": "housing", "amount": 12000, "frequency": "monthly"},
+        {"name": "School fees", "category": "school_fees", "amount": 15000, "frequency": "termly"}]})
+    rows = [{"date": f"2026-{mo:02d}-05", "amount": amt, "category": cat} for mo in (8, 9, 10)
+            for cat, amt in (("housing", 12000), ("food_groceries", 7500), ("transport", 4200),
+                             ("utilities", 1800), ("entertainment", 1500))]
+    client.post("/me/transactions", headers=h, json=rows + [{"date": "2026-09-03", "amount": 15000,
+                                                             "category": "school_fees"}])
+    return h
+
+
+def test_budget_forecast_follows_the_money_for_three_months(client, monkeypatch):
+    d = client.get("/me/budget-forecast", headers=_fees_household(client, monkeypatch)).get_json()
+    assert [(m["year"], m["month"]) for m in d["months"]] == [(2026, 11), (2026, 12), (2027, 1)]
+    assert d["months"][2]["school_fees"] > 0                    # January is a fee month
+    assert d["based_on"] == "records" and d["status"] in ("fine", "tight", "runs_out")
+    for m, p in zip(d["months"], d["savings_path"]):            # the path adds up month by month
+        assert m["left_over"] == m["income"] - m["spending"]
+    assert d["savings_path"][0]["usual_pace"] == 4000 + d["months"][0]["left_over"]
+    if d["status"] == "runs_out":
+        assert "runs out" in d["notes"][0]
+
+
+def test_budget_forecast_works_on_day_one_and_says_so(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 45000}],
+                                               "estimates": {"housing": 15000, "food_groceries": 8000}})
+    d = client.get("/me/budget-forecast", headers=h).get_json()
+    assert d["has_data"] and d["based_on"] == "setup" and len(d["months"]) == 3
+    assert any("setup" in n for n in d["notes"])
+
+
+def test_a_check_shows_the_budget_now_and_after_side_by_side(client, monkeypatch):
+    h = _fees_household(client, monkeypatch)
+    r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 18000}).get_json()
+    lines = {x["category"]: x for x in r["budgets"]["lines"]}
+    assert lines["housing"]["now"] == 12000 and lines["housing"]["after"] == 18000
+    assert sum(x["now"] for x in lines.values()) == sum(x["after"] for x in lines.values()) == 30000
+    r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "transport", "amount": 2000})
+    lines = {x["category"]: x for x in r.get_json()["budgets"]["lines"]}
+    assert lines["transport"]["after"] > lines["transport"]["now"] + 1000          # the new cost has its own line
+    assert all(x["after"] > 0 for x in lines.values() if x["now"] > 0)            # no other line is wiped out

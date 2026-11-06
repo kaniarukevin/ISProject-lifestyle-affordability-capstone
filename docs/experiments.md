@@ -395,3 +395,18 @@ Decision: one model for all three months, with the range widened per horizon (st
 ## 2026-11-05: Dashboard speed
 
 Measured on a realistic user (13 months, 1,092 transactions, a bill, a debt and a goal; SQLite, so database time excluded): GET /me/overview took 511 ms and 18 queries; every other screen 2-170 ms. A profile showed 95% of the time in the month-by-month timeline, which ran the full affordability evaluation 12 times. The features only look backwards (rolling windows, running mean and spread), so they are now built once for all months and the state and score models score every month in one call (`affordability.timeline`). Result: 100 ms, with states and scores identical to the month-by-month version (test `test_the_one_pass_timeline_matches_scoring_each_month_on_its_own`). Database queries are cheap only when the server and database are close: Render and Neon should be in the same region (from Nairobi to the database each query is a long round trip, which is why local runs felt slow).
+
+## 2026-11-06: Budget forecast, and the budget pull in the dashboard forecast
+
+Question from the redesign: does the app show how the budget will look in the coming months? It did not. The dashboard showed three monthly totals, and the budget covered the current month only; the two were not connected, although the proposal's pipeline has the forecast feeding the recommendation.
+
+Finding while building it: for app users, `forecast_for_user` blends 0.75 x the month's saved budget with 0.25 x the model (the U-CS 37 result, where the budget carried most of the signal). But the app saves its own recommended budget the first time the Budget screen opens, so on the dashboard "likely spending" is mostly the app's own advice. The held-out error for app users (KES 9,967 at one month) was measured on the plain model, without any budget.
+
+Built: `GET /me/budget-forecast`, using the plain model ("at your usual pace") for this month and the next two. For each month: money in, spending at the usual pace with its 80% range, what is left, school fees, and each everyday budget line against the usual pace. Then it follows the money month by month from the savings balance, at the usual pace and on budget, and gives one of three answers: fine, tight (one month is short but what is left before it covers it, with the amount to put aside each month), or runs out (with whether keeping to the budget gets the household through). Lines more than KES 500 and 10% over their budget are listed. It works on the setup estimates on day one and says so.
+
+Test case (KES 30,000, rent 12,000, school fees 15,000 a term in January, 4,000 saved, three months of records spending about 29,000): at the usual pace the money runs out in December, and January is KES 14,400 short; on the recommended budget the savings path stays positive (11,140 / 16,111 / 8,283), so the answer is "keeping to your budget gets you through: about KES 7,700 a month less on everyday spending".
+
+Also built for "Can I afford it?": the recommended budget now and after the change, side by side (proposal 3.4.6). The same recommendation runs again with the change; a new everyday cost is set aside first and shown on its own line. A first version put it under "other commitments", which the budget treats as family support and took out of "money sent", wiping that line; caught by checking every scenario's lines and fixed before saving.
+
+Open decision for the redesign: show the plain forecast on the dashboard as well, so every screen uses the validated number, or keep the blend there and label it.
+

@@ -88,7 +88,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
               const SizedBox(height: 16),
               FilledButton(onPressed: _busy ? null : () => _agree(notice['version'] as String),
                   child: const Text('I agree')),
-              TextButton(onPressed: () => context.read<AppState>().signOut(), child: const Text('No thanks, log out')),
+              TextButton(onPressed: () => context.read<AppState>().logOut(), child: const Text('No thanks, log out')),
             ]);
           },
         ),

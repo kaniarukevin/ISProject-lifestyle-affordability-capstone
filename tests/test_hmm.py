@@ -13,6 +13,12 @@ PROC = ROOT / "data" / "processed"
 SYN = ROOT / "data" / "synthetic"
 STATES = ["Stable", "Strained", "Critical"]
 
+# The HMM is the replaced baseline (docs/deviations.md D1). On a fresh clone it needs the dev requirements and the
+# features that 07_feature_engineering.py regenerates (git-ignored), so skip cleanly instead of erroring (audit A-17).
+pytest.importorskip("hmmlearn", reason="the HMM baseline needs hmmlearn: pip install -r backend/requirements-dev.txt")
+if not (PROC / "engineered_features_raw.csv").exists():
+    pytest.skip("run data_generation/07_feature_engineering.py first (its output is git-ignored)", allow_module_level=True)
+
 
 def _load_08():
     spec = importlib.util.spec_from_file_location("hmm08", ROOT / "data_generation" / "08_train_hmm.py")

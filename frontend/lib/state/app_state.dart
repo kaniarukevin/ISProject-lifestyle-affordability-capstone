@@ -79,6 +79,17 @@ class AppState extends ChangeNotifier {
     await signOut();
   }
 
+  /// The Log out button: tell the server, then forget the account here. If the server cannot be reached the
+  /// device still logs out; the token then simply expires.
+  Future<void> logOut({bool everywhere = false}) async {
+    try {
+      await api.logout(everywhere: everywhere);
+    } catch (_) {
+      // Offline or the server is asleep: this device still logs out, and the token expires on its own.
+    }
+    await signOut();
+  }
+
   Future<void> signOut() async {
     api.token = null;
     profile = null;
