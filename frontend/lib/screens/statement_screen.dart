@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../widgets/busy_words.dart';
+import '../widgets/panel.dart';
 import 'payees_screen.dart' show TagChips;
 import 'profile_screen.dart' show kes;
 
@@ -115,7 +117,7 @@ class _StatementScreenState extends State<StatementScreen> {
             Expanded(child: Text((p['payee'] ?? p['label']) as String, style: const TextStyle(fontWeight: FontWeight.w600))),
             Text(kes(p['total'] as num), style: const TextStyle(fontWeight: FontWeight.w600)),
           ]),
-          Text('${p['type_label']} · ${p['count']} payment(s) · now: '
+          Text('${p['type_label']} · ${p['count']} payment(s) · sorted as: '
               '${p['direction'] == 'in' ? (inTagLabels[p['category']] ?? p['category']) : categoryLabel(p['category'] as String)}',
               style: theme.textTheme.bodySmall),
           // People remember when and how much, not account numbers.
@@ -147,7 +149,7 @@ class _StatementScreenState extends State<StatementScreen> {
     final p = preview;
     return Scaffold(
       appBar: AppBar(title: const Text('M-PESA statement')),
-      body: ListView(
+      body: PageWidth(child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           if (p == null) ...[
@@ -173,7 +175,7 @@ class _StatementScreenState extends State<StatementScreen> {
             FilledButton(
               onPressed: busy || bytes == null ? null : _read,
               child: busy
-                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const BusyWords(lines: statementWords)
                   : const Text('Read statement'),
             ),
           ] else ...[
@@ -208,11 +210,11 @@ class _StatementScreenState extends State<StatementScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Sorted for certain: ${((1 - (((p['coverage'] as Map)['unsorted'] ?? 0) as num)) * 100).round()}% '
-                      'of your spending', style: theme.textTheme.titleSmall),
+                  Text('${((1 - (((p['coverage'] as Map)['unsorted'] ?? 0) as num)) * 100).round()}% of your spending '
+                      'is already sorted', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 4),
-                  Text('Known shops, bills and M-PESA types are sorted automatically. Payments the app is not sure '
-                      'about stay "Not sorted yet" (they still count in your totals): nothing is guessed.',
+                  Text('Shops, bills and M-PESA types Tosha knows are sorted for you. Anything it is not sure about '
+                      'stays "Not sorted yet": it still counts in your totals, and nothing is guessed.',
                       style: theme.textTheme.bodySmall),
                 ]),
               ),
@@ -224,9 +226,9 @@ class _StatementScreenState extends State<StatementScreen> {
               return [
                 if (pay.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  Text('Who you pay (optional)', style: theme.textTheme.titleMedium),
-                  Text('The highlighted choice is what each one is now. Tap to change it, once; it is remembered '
-                      'for every future statement. Skip any you do not recognise.', style: theme.textTheme.bodySmall),
+                  Text('Who you pay', style: theme.textTheme.titleMedium),
+                  Text('Optional. The highlighted choice is what each one is now. Change it once and Tosha remembers '
+                      'it for every statement. Skip any you do not recognise.', style: theme.textTheme.bodySmall),
                   ...pay.take(10).map(_payee),
                   if (pay.length > 10)
                     ExpansionTile(
@@ -237,9 +239,10 @@ class _StatementScreenState extends State<StatementScreen> {
                 ],
                 if (paidBy.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  Text('Who pays you (optional)', style: theme.textTheme.titleMedium),
-                  Text('A bank transfer to your M-PESA could be your allowance or salary, or your own money. If '
-                      'you say, your score uses the money that actually arrived each month.',
+                  Text('Who pays you', style: theme.textTheme.titleMedium),
+                  Text('Optional, but it makes your score real. Money from a bank could be your pay or allowance, '
+                      'or your own money moving. If one source sends both (your salary and your own savings from '
+                      'NCBA, say), change single payments later in Who you pay and who pays you.',
                       style: theme.textTheme.bodySmall),
                   ...paidBy.map(_payee),
                 ],
@@ -300,7 +303,7 @@ class _StatementScreenState extends State<StatementScreen> {
               child: Text(error!, style: TextStyle(color: theme.colorScheme.error)),
             ),
         ],
-      ),
+      )),
     );
   }
 }

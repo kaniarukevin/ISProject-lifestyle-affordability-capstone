@@ -4,9 +4,14 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
 ### Fixed
+- Screens load faster: Overview needs 15 database queries instead of 36, the budget forecast 12 instead of 21; the last figures show at once while fresh ones load, and are removed at log out.
+- A statement month where the tagged pay did not arrive but money came in from your own accounts or from people is no longer scored as no income; it counts up to your usual income.
 - Past months keep the income they were lived on: raising your income no longer turns earlier months Stable. Saving a new income asks whether it changed or a mistake is being corrected.
 
 ### Added
+- Privacy notice redesigned: one card per section, "What we never keep" highlighted, Download my data and Delete my account inside Your rights; "I agree" stays at the bottom of the consent screen. Notice version 2026-11-07 (asks once to agree again).
+- Money coming in: "Bonus or one-off" (never counted as usual income) and "Change one payment" for a source that sends more than one kind of money (a salary and your own savings from the same bank).
+- Search your records (payee, category or amount); Records one tap from Overview, Forecast and You.
 - Profile: first name, how money comes in (pick all that apply), studying, children in school; the email is returned with the profile.
 
 ### Fixed

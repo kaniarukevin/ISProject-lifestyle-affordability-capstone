@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 
 /// "Why this score?" (SHAP). With no [choice] it explains the dashboard score; with a 'Can I afford it?' choice
 /// it also shows the score after it and which parts moved. Loaded only when asked: each explanation takes the
@@ -74,7 +75,7 @@ class _WhyBody extends StatelessWidget {
                   Expanded(child: Text(p['label'] as String)),
                   Text('${(p['points'] as num) > 0 ? '+' : ''}${(p['points'] as num).round()} points',
                       style: TextStyle(fontWeight: FontWeight.w600,
-                          color: (p['points'] as num) < 0 ? theme.colorScheme.error : Colors.green.shade700)),
+                          color: (p['points'] as num) < 0 ? AppColors.of(context).warn : theme.colorScheme.onSurface)),
                 ]),
               )),
         ],
@@ -104,7 +105,7 @@ class _PartBar extends StatelessWidget {
     final up = points >= 0;
     // Under half a point rounds to 0: show it as neutral, with no bar (a red "0" read as a problem).
     final zero = points.round() == 0;
-    final color = zero ? theme.disabledColor : (up ? Colors.green.shade700 : theme.colorScheme.error);
+    final color = zero ? theme.disabledColor : (up ? AppColors.of(context).lime : AppColors.of(context).warn);
     final share = zero ? 0.0 : (points.abs() / max).clamp(0.0, 1.0);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),

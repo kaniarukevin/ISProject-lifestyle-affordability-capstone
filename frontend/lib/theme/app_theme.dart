@@ -112,6 +112,7 @@ class AppTheme {
     final ink = isDark ? const Color(0xFFF4F4F0) : const Color(0xFF111111);
     final card = isDark ? const Color(0xFF1A1A18) : Colors.white;
     final page = isDark ? const Color(0xFF0B0B0A) : const Color(0xFFF2F2EE);
+    final fieldLine = isDark ? const Color(0xFF4A4A45) : const Color(0xFFCFCFC8);
 
     final scheme = ColorScheme(
       brightness: b,
@@ -123,6 +124,16 @@ class AppTheme {
       onTertiary: isDark ? const Color(0xFF111111) : Colors.white,
       error: c.warn,
       onError: isDark ? const Color(0xFF111111) : Colors.white,
+      // Containers: a soft fill that ordinary text reads on in light and dark (the old screens use these for
+      // highlighted cards; left unset, Flutter filled them with near-white in dark mode and hid the text).
+      primaryContainer: c.field,
+      onPrimaryContainer: ink,
+      secondaryContainer: c.field,
+      onSecondaryContainer: ink,
+      tertiaryContainer: c.warnBg,
+      onTertiaryContainer: c.warn,
+      errorContainer: c.warnBg,
+      onErrorContainer: c.warn,
       surface: card,
       onSurface: ink,
       onSurfaceVariant: c.muted,
@@ -189,21 +200,34 @@ class AppTheme {
         ),
       ),
       iconButtonTheme: IconButtonThemeData(style: IconButton.styleFrom(minimumSize: const Size(44, 44))),
+      // Fields: the card colour with a thin visible outline, black (white in dark) while typing. A fill with no
+      // outline vanished on the stone background of sign-in and onboarding (found 7 Nov).
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: c.field,
+        fillColor: card,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: fieldLine)),
+        enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: fieldLine, width: 1.2)),
         focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: ink, width: 1.5)),
+            borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: ink, width: 1.8)),
+        errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: c.warn, width: 1.5)),
+        focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16), borderSide: BorderSide(color: c.warn, width: 1.8)),
         labelStyle: TextStyle(color: c.muted),
+        floatingLabelStyle: TextStyle(color: ink, fontWeight: FontWeight.w600),
         hintStyle: TextStyle(color: c.muted),
+        prefixStyle: TextStyle(color: ink, fontWeight: FontWeight.w600),
+        helperStyle: TextStyle(color: c.muted),
+      ),
+      dropdownMenuTheme: DropdownMenuThemeData(
+        menuStyle: MenuStyle(backgroundColor: WidgetStatePropertyAll(card)),
       ),
       chipTheme: base.chipTheme.copyWith(
         shape: pill,
         side: BorderSide.none,
-        backgroundColor: card,
+        backgroundColor: c.field,
         selectedColor: ink,
         labelStyle: text.labelLarge?.copyWith(fontWeight: FontWeight.w600),
         secondaryLabelStyle: text.labelLarge?.copyWith(fontWeight: FontWeight.w600, color: scheme.onPrimary),

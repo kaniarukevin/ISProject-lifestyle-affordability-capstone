@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../widgets/panel.dart';
 import 'profile_screen.dart' show kes;
 
 /// One-tap choices for what a payee or payment is. [selected] is highlighted; [suggested] gets a hint mark.
@@ -178,6 +179,68 @@ class _PayeesScreenState extends State<PayeesScreen> {
     }
   }
 
+  /// This payment only: list a source's payments coming in and change one (salary and own money from one bank).
+  Future<void> _payments(Map<String, dynamic> p) async {
+    List<Map<String, dynamic>> list;
+    try {
+      list = await api.moneyIn(p['key'] as String);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    }
+    if (!mounted) return;
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        builder: (ctx, scroll) => ListView(
+          controller: scroll,
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+          children: [
+            Text((p['payee'] ?? 'Payments') as String, style: Theme.of(ctx).textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text('Tap a payment to say what it was. The rest keep the source\'s tag.',
+                style: Theme.of(ctx).textTheme.bodyMedium),
+            const SizedBox(height: 8),
+            for (final m in list)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('${kes(m['amount'] as num)} on ${m['date']}'),
+                subtitle: Text('${inTagLabels[m['kind']] ?? m['kind']}${m['pinned'] == true ? ' · changed on its own' : ''}'),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () async {
+                  final kind = await showModalBottomSheet<String>(
+                    context: ctx,
+                    builder: (c2) => Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${kes(m['amount'] as num)} on ${m['date']} was…', style: Theme.of(c2).textTheme.titleMedium),
+                        const SizedBox(height: 10),
+                        TagChips(moneyIn: true, selected: m['kind'] as String?, onPick: (k) => Navigator.pop(c2, k)),
+                      ]),
+                    ),
+                  );
+                  if (kind == null || kind == m['kind']) return;
+                  try {
+                    await api.changeMoneyIn(m['id'] as int, kind);
+                    if (ctx.mounted) Navigator.pop(ctx, true);
+                  } on ApiException catch (e) {
+                    if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(e.message)));
+                  }
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+    if (changed == true) {
+      await _load();
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Changed that payment only.')));
+    }
+  }
+
   Future<void> _untag(Map<String, dynamic> p) async {
     await api.untagPayee(p['key'] as String);
     await _load();
@@ -214,21 +277,21 @@ class _PayeesScreenState extends State<PayeesScreen> {
     final pay = shown.where((p) => p['direction'] != 'in').toList();
     final paidBy = shown.where((p) => p['direction'] == 'in').toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Who you pay'), actions: [
+      appBar: AppBar(title: const Text('Who you pay and who pays you'), actions: [
         PopupMenuButton<String>(
           onSelected: (_) => _undoImports(),
           itemBuilder: (_) => [const PopupMenuItem(value: 'undo', child: Text('Remove imported statements'))],
         ),
       ]),
-      body: data == null
+      body: PageWidth(child: data == null
           ? Center(child: error != null ? Text(error!) : const CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  Text('Tell the app who people and businesses are, once. It applies to every past and future '
-                      'payment to them.', style: theme.textTheme.bodySmall),
+                  Text('Tell Tosha who people and businesses are, once. It applies to every past and future '
+                      'payment.', style: theme.textTheme.bodySmall),
                   const SizedBox(height: 8),
                   Text('${((data!['sorted_share'] as num) * 100).round()}% of your statement money is sorted',
                       style: theme.textTheme.titleSmall),
@@ -253,18 +316,22 @@ class _PayeesScreenState extends State<PayeesScreen> {
                   if (paidBy.isNotEmpty) ...[
                     const SizedBox(height: 20),
                     Text('Who pays you', style: theme.textTheme.titleMedium),
-                    Text('A bank transfer to your M-PESA could be your allowance or salary, or your own savings. '
-                        'Tell the app once; your score then uses the money that actually arrived.',
+                    Text('Money from a bank could be your pay or allowance, or your own money moving. If your '
+                        'allowance or salary is paid into your bank and you then move it to M-PESA, choose "My bank". '
+                        'It counts up to your usual income, so moving savings never inflates it. Money from family '
+                        'or friends for something specific is "Paid back or a gift". Church, chama and harambee count '
+                        'under "Family, friends and giving".',
                         style: theme.textTheme.bodySmall),
                     ...paidBy.map((p) => _PayeeCard(
                           payee: p,
                           onTag: (tag) => _tag(p, tag),
                           onUntag: p['tag'] == null ? null : () => _untag(p),
+                          onPayments: () => _payments(p),
                         )),
                   ],
                 ],
               ),
-            ),
+            )),
     );
   }
 }
@@ -276,10 +343,11 @@ String _now(Map<String, dynamic> p, String? tag) {
 }
 
 class _PayeeCard extends StatelessWidget {
-  const _PayeeCard({required this.payee, required this.onTag, this.onUntag});
+  const _PayeeCard({required this.payee, required this.onTag, this.onUntag, this.onPayments});
   final Map<String, dynamic> payee;
   final void Function(String tag) onTag;
   final VoidCallback? onUntag;
+  final VoidCallback? onPayments;   // money coming in: change one payment on its own
 
   @override
   Widget build(BuildContext context) {
@@ -299,7 +367,7 @@ class _PayeeCard extends StatelessWidget {
             Text(kes(payee['total'] as num), style: const TextStyle(fontWeight: FontWeight.w600)),
           ]),
           Text('${payee['type_label'] ?? ''} · ${payee['count']} payment(s) · last ${payee['last']}'
-              ' · now: ${_now(payee, tag)}',
+              ' · sorted as: ${_now(payee, tag)}',
               style: theme.textTheme.bodySmall),
           if (s != null)
             Padding(
@@ -318,8 +386,12 @@ class _PayeeCard extends StatelessWidget {
             moneyIn: payee['direction'] == 'in',
             onPick: onTag,
           ),
-          if (onUntag != null)
-            TextButton(onPressed: onUntag, child: const Text('Undo: go back to how the statement sorted it')),
+          Wrap(spacing: 4, children: [
+            if (onPayments != null && (payee['count'] as num) > 1)
+              TextButton(onPressed: onPayments, child: const Text('Change one payment')),
+            if (onUntag != null)
+              TextButton(onPressed: onUntag, child: const Text('Undo: back to how the statement sorted it')),
+          ]),
         ]),
       ),
     );

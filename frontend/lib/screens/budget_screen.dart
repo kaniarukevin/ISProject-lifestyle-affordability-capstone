@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import 'budget_warnings.dart';
 import 'profile_screen.dart' show kes;
 
@@ -11,10 +12,10 @@ const _monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
   'October', 'November', 'December'];
 
 const _fixedLabels = {
-  'housing': 'Rent and housing',
-  'school_fees': 'School or university fees',
+  'housing': 'Rent',
+  'school_fees': 'School fees',
   'loan_repayment': 'Loan repayments',
-  'other_commitments': 'Other commitments',
+  'other_commitments': 'Other bills (chama, insurance, support)',
 };
 
 /// Step 5 of the journey: how should I spend this month? Limits from the /budget engine, against what has
@@ -217,7 +218,7 @@ class _Limit extends StatelessWidget {
         : ratio > 1
             ? theme.colorScheme.error
             : ratio > 0.85
-                ? Colors.orange.shade800
+                ? AppColors.of(context).warn
                 : theme.colorScheme.primary;
     final status = spent == null
         ? kes(limit)

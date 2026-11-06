@@ -2,14 +2,14 @@
 library;
 
 const Map<String, String> spendingCategories = {
-  'food_groceries': 'Food and groceries',
-  'transport': 'Transport (matatu, fuel, boda)',
+  'food_groceries': 'Food',
+  'transport': 'Transport',
   'airtime_data': 'Airtime and data',
   'entertainment': 'Eating out and fun',
-  'utilities': 'Electricity, water, gas',
-  'housing': 'Rent and housing',
-  'mobile_money_transfers': 'Money sent to family or friends',
-  'school_fees': 'School or university fees',
+  'utilities': 'Power, water and internet',
+  'housing': 'Rent',
+  'mobile_money_transfers': 'Family, friends and giving',
+  'school_fees': 'School fees',
   'loan_repayment': 'Loan repayments',
   'savings': 'Savings',
 };
@@ -23,6 +23,7 @@ const Map<String, String> extraCategories = {
   'charges': 'M-PESA charges',
   'unsorted': 'Not sorted yet',
   'own_account': 'My own account (not spending)',
+  'one_off': 'Bonus or one-off',
 };
 
 /// Spending with no budget line of its own (shopping, health, personal care, other, not sorted yet).
@@ -30,10 +31,11 @@ const List<String> outsideCategories = ['charges', 'shopping', 'health', 'person
 
 /// What money coming in can be (the statement cannot tell your own bank transfer from someone paying you).
 const Map<String, String> inTagLabels = {
-  'income': 'All my pay or allowance',
-  'mixed': 'A mix of pay and my own money',
-  'own_account': 'My own money moving',
-  'received': 'Someone paying me back or a gift',
+  'income': 'Pay or allowance',
+  'mixed': 'My bank: my pay or allowance arrives here first',
+  'own_account': 'My own money',
+  'received': 'Paid back or a gift',
+  'one_off': 'Bonus or one-off',
 };
 
 /// The label for any category key, including 'unsorted' (statement payments the app was not sure about).
@@ -44,18 +46,18 @@ const Map<String, String> tagLabels = {
   'housing': 'Rent',
   'food_groceries': 'Food',
   'transport': 'Transport',
-  'utilities': 'Bills (power, water, internet)',
-  'airtime_data': 'Airtime & data',
-  'mobile_money_transfers': 'Family & friends',
+  'utilities': 'Power, water and internet',
+  'airtime_data': 'Airtime and data',
+  'mobile_money_transfers': 'Family, friends and giving',
   'school_fees': 'School fees',
-  'loan_repayment': 'Loan',
-  'entertainment': 'Eating out & fun',
+  'loan_repayment': 'Loan repayments',
+  'entertainment': 'Eating out and fun',
   'shopping': 'Shopping',
   'health': 'Health',
   'personal_care': 'Personal care',
   'other': 'Other',
   'own_account': 'My own account',
-  'unsorted': 'Leave unsorted',
+  'unsorted': 'Not sorted yet',
 };
 
 /// M-PESA's own transaction types (always right, because Safaricom writes them on the statement).

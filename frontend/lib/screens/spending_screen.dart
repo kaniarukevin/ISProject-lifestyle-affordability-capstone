@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../widgets/panel.dart';
 import 'profile_screen.dart' show kes;
 import 'payees_screen.dart';
 import 'statement_screen.dart';
@@ -25,6 +26,26 @@ class _SpendingScreenState extends State<SpendingScreen> {
   // A month's records are fetched when its card is opened, once (a year of statements is 1,000+ records).
   final Map<String, Future<List<Txn>>> _items = {};
   String? error;
+  final _search = TextEditingController();
+  String _query = '';
+  Future<List<Txn>>? _all;              // every record, fetched once, the first time you search
+  Future<List<Txn>>? _found;            // the current search
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Records matching the search: payee, label, statement text, category, or an amount like 1240 or 1,240.
+  Future<List<Txn>> _matches() async {
+    final all = await (_all ??= api.getTransactions());
+    final q = _query.toLowerCase().replaceAll(',', '').trim();
+    return all.where((t) {
+      final text = '${t.title} ${t.payee ?? ''} ${t.description} ${categoryLabel(t.category)}'.toLowerCase();
+      return text.contains(q) || t.amount.round().toString().contains(q);
+    }).take(200).toList();
+  }
 
   Api get api => context.read<AppState>().api;
 
@@ -42,6 +63,7 @@ class _SpendingScreenState extends State<SpendingScreen> {
         months = ((s['months'] as List?) ?? []).cast<Map<String, dynamic>>();
         hasStatement = s['has_statement'] == true;
         _items.clear();
+        _all = null;
         error = null;
       });
     } on ApiException catch (e) {
@@ -94,18 +116,67 @@ class _SpendingScreenState extends State<SpendingScreen> {
     if (months == null) return const Center(child: CircularProgressIndicator());
     final groups = months!;
     return Scaffold(
+      appBar: AppBar(title: const Text('Your records')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _add,
         icon: const Icon(Icons.add),
         label: const Text('Add spending'),
       ),
-      body: RefreshIndicator(
+      body: PageWidth(child: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
           children: [
-            Text('Your spending', style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 4),
+            TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Search: Naivas, rent, 1,240…',
+                prefixIcon: const Icon(Icons.search_rounded),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.close_rounded),
+                        onPressed: () => setState(() {
+                          _search.clear();
+                          _query = '';
+                        }),
+                      ),
+              ),
+              onChanged: (v) => setState(() {
+                _query = v;
+                _found = v.trim().isEmpty ? null : _matches();
+              }),
+            ),
+            const SizedBox(height: 12),
+            if (_query.trim().isNotEmpty)
+              FutureBuilder<List<Txn>>(
+                future: _found,
+                builder: (context, snap) {
+                  if (snap.hasError) return const Padding(padding: EdgeInsets.all(16), child: Text('Could not search. Pull down to retry.'));
+                  if (!snap.hasData) return const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()));
+                  final found = snap.data!;
+                  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    Text(found.isEmpty ? 'Nothing matches "$_query".'
+                        : '${found.length}${found.length == 200 ? '+' : ''} record(s) · total ${kes(found.fold<double>(0, (a, t) => a + t.amount))}',
+                        style: theme.textTheme.bodyMedium),
+                    for (final t in found)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(t.title),
+                        subtitle: Text('${t.date.day} ${_monthNames[t.date.month - 1]} ${t.date.year} · ${categoryLabel(t.category)}'
+                            '${t.oneOff ? ' · one-off' : ''}'),
+                        trailing: Text(kes(t.amount), style: const TextStyle(fontWeight: FontWeight.w600)),
+                        onTap: () async {
+                          if (t.source != 'mpesa') return _edit(t);
+                          if (await showCorrectSheet(context, t)) _load();
+                        },
+                      ),
+                  ]);
+                },
+              )
+            else ...[
             Text('Upload your M-PESA statement to bring in months of spending at once, or add spending by hand.',
                 style: theme.textTheme.bodySmall),
             const SizedBox(height: 8),
@@ -154,9 +225,10 @@ class _SpendingScreenState extends State<SpendingScreen> {
                     if (await showCorrectSheet(context, t)) _load();
                   },
                 )),
+            ],
           ],
         ),
-      ),
+      )),
     );
   }
 }
@@ -273,7 +345,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
   Widget build(BuildContext context) => AlertDialog(
         title: Text(widget.initial == null ? 'Add spending' : 'Change this record'),
         content: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, spacing: 12, children: [
             TextField(controller: amount, autofocus: true, keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Amount (KES)')),
             DropdownButtonFormField<String>(

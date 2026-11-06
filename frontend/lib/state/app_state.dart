@@ -92,6 +92,20 @@ class AppState extends ChangeNotifier {
     await signOut();
   }
 
+  // ---- last figures, shown at once while fresh ones load (cleared on log out) ----
+  static const _cachePrefix = 'cache_v1_';
+
+  /// The last answer kept for a screen ([key] like 'overview'), or null.
+  Future<Map<String, dynamic>?> cached(String key) async {
+    final s = (await SharedPreferences.getInstance()).getString('$_cachePrefix$key');
+    return s == null ? null : jsonDecode(s) as Map<String, dynamic>;
+  }
+
+  Future<void> keep(String key, Map<String, dynamic>? value) async {
+    final prefs = await SharedPreferences.getInstance();
+    value == null ? await prefs.remove('$_cachePrefix$key') : await prefs.setString('$_cachePrefix$key', jsonEncode(value));
+  }
+
   Future<void> signOut() async {
     api.token = null;
     profile = null;
@@ -99,6 +113,9 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
     await prefs.remove(_profileKey);
+    for (final k in prefs.getKeys().where((k) => k.startsWith(_cachePrefix)).toList()) {
+      await prefs.remove(k);                       // another person on this device must never see these figures
+    }
     notifyListeners();
   }
 

@@ -4,7 +4,10 @@ import 'package:provider/provider.dart';
 import '../models/commitments.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
-import 'profile_screen.dart' show kes;
+import '../theme/app_theme.dart';
+import '../widgets/choice_sheet.dart';
+import '../widgets/format.dart';
+import '../widgets/panel.dart';
 
 /// Step 2 of the journey: rent, fees, debts and goals, turned into monthly figures by the /commitments engine.
 class CommitmentsScreen extends StatefulWidget {
@@ -107,186 +110,268 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
     _save(quiet: true);
   }
 
+  /// Delete after asking, so a mis-tap does not lose a bill, debt or goal.
+  Future<void> _confirmRemove(String what, VoidCallback removal) async {
+    final sure = await showChoiceSheet<bool>(context,
+        title: 'Remove $what?',
+        message: 'It is taken out of your plans and your budget stops setting money aside for it.',
+        choices: const [SheetChoice('Remove', true, primary: true)]);
+    if (sure == true) _remove(removal);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (c == null) return const Center(child: CircularProgressIndicator());
     final theme = Theme.of(context);
+    final col = AppColors.of(context);
     final s = summary;
     final fixed = (s?['for_budget']?['fixed'] as Map?)?.cast<String, dynamic>() ?? {};
     final monthlyTotal = fixed.values.fold<num>(0, (a, v) => a + (v as num));
+    final goalsMonthly = (s?['for_budget']?['goal_per_month'] ?? 0) as num;
     final debts = s?['debts'] as Map<String, dynamic>?;
+    final owed = c!.debts.fold<double>(0, (a, d) => a + d.balance);
+    final warnings = ((s?['warnings'] as List?) ?? []).cast<String>();
+    final muted = theme.textTheme.bodyMedium?.copyWith(color: col.muted);
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text('Your commitments', style: theme.textTheme.headlineSmall),
-        const SizedBox(height: 4),
-        Text('What you must pay and what you are saving for. Everything is turned into a monthly amount '
-            'so your budget can set it aside.', style: theme.textTheme.bodySmall),
-        if (error != null) Padding(
-          padding: const EdgeInsets.only(top: 8),
-          child: Text(error!, style: TextStyle(color: theme.colorScheme.error)),
-        ),
-        if (s != null) Card(
-          margin: const EdgeInsets.symmetric(vertical: 12),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Committed every month', style: theme.textTheme.titleSmall),
-              Text(kes(monthlyTotal), style: theme.textTheme.headlineMedium),
-              if ((s['for_budget']?['goal_per_month'] ?? 0) > 0)
-                Text('Plus ${kes(s['for_budget']['goal_per_month'] as num)} a month towards your goals'),
-              if (debts != null) ...[
-                const Divider(),
-                Text(debts['as_planned']['debt_free_by'] != null
-                    ? 'Debt-free by ${debts['as_planned']['debt_free_by']}, paying '
-                        '${kes(debts['as_planned']['total_interest_KES'] as num)} in interest'
-                    : 'At these payments some debts will never be cleared.'),
-                if (debts['extra_saves'] != null)
-                  Text('Paying ${kes(c!.extraPerMonth)} extra a month saves '
-                      '${debts['extra_saves']['months']} months and ${kes(debts['extra_saves']['interest_KES'] as num)}.',
-                      style: TextStyle(color: theme.colorScheme.primary)),
-              ],
-              ...((s['warnings'] as List?) ?? []).map((w) => Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text('⚠ $w', style: TextStyle(color: theme.colorScheme.error)),
-                  )),
-            ]),
-          ),
-        ),
-        _Section(
-          title: 'Bills and obligations',
-          empty: 'Rent, school fees, chama, insurance…',
-          onAdd: () => _add('obligation'),
-          children: c!.obligations.asMap().entries.map((e) {
-            final row = (s?['obligations'] as List?)?.elementAtOrNull(e.key) as Map?;
-            final status = row?['status'] as String?;
-            final days = row?['due_in_days'] as int?;
-            final dueText = e.value.nextDue == null
-                ? ''
-                : status == 'overdue'
-                    ? ' · overdue since ${_day(e.value.nextDue!)}'
-                    : status == 'due_soon'
-                        ? ' · due ${days == 0 ? 'today' : 'in $days day(s)'}'
-                        : ' · next due ${_day(e.value.nextDue!)}';
-            return _Row(
-              title: e.value.name,
-              subtitle: '${kes(e.value.amount)} ${obligationFrequencies[e.value.frequency]} · '
-                  '${obligationCategories[e.value.category]}$dueText',
-              subtitleColor: status == 'overdue' ? theme.colorScheme.error : null,
-              onDelete: () => _remove(() => c!.obligations.removeAt(e.key)),
-              onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
-              extra: e.value.nextDue == null
-                  ? null
-                  : IconButton(tooltip: 'Mark paid', icon: const Icon(Icons.check_circle_outline),
-                      onPressed: busy ? null : () => _markPaid(e.key)),
-            );
-          }).toList(),
-        ),
-        _Section(
-          title: 'Debts',
-          empty: 'Fuliza, M-Shwari, SACCO or bank loan, phone on credit…',
-          onAdd: () => _add('debt'),
-          children: [
-            ...c!.debts.asMap().entries.map((e) {
-              final plan = (debts?['as_planned']?['debts'] as List?)?.elementAtOrNull(e.key) as Map?;
-              return _Row(
-                title: e.value.name,
-                subtitle: '${kes(e.value.balance)} owed · ${e.value.annualRate}% a year · '
-                    '${kes(e.value.monthlyPayment)} a month'
-                    '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}',
-                onDelete: () => _remove(() => c!.debts.removeAt(e.key)),
-                onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
-              );
-            }),
-            if (c!.debts.isNotEmpty)
-              Row(children: [
-                const Expanded(child: Text('What if I pay extra each month?')),
-                SizedBox(
-                  width: 110,
-                  child: TextFormField(
-                    initialValue: c!.extraPerMonth == 0 ? '' : c!.extraPerMonth.round().toString(),
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(prefixText: 'KES '),
-                    onFieldSubmitted: (v) {
-                      c!.extraPerMonth = double.tryParse(v.replaceAll(',', '')) ?? 0;
-                      _save(quiet: true);
-                    },
+    Widget stat(String label, String value, [String? note]) => Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(label, style: muted),
+            const SizedBox(height: 4),
+            Text(value, style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
+            if (note != null) ...[const SizedBox(height: 4), Text(note, style: theme.textTheme.bodySmall?.copyWith(color: col.muted))],
+          ]),
+        );
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          Text('Your bills, debts and goals. They are taken out first when your budget is built.', style: muted),
+          if (busy) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
+          if (error != null)
+            Padding(padding: const EdgeInsets.only(top: 10), child: Text(error!, style: TextStyle(color: col.warn))),
+          const SizedBox(height: 16),
+          CardRow(minWidth: 220, children: [
+            stat('Bills and debts each month', 'KES ${money(monthlyTotal)}'),
+            stat('Debts left', 'KES ${money(owed)}',
+                debts == null ? null : debts['as_planned']['debt_free_by'] != null
+                    ? 'Debt-free by ${debts['as_planned']['debt_free_by']}'
+                    : 'Some debts are never cleared at these payments'),
+            stat('Towards goals each month', 'KES ${money(goalsMonthly)}'),
+          ]),
+          if (warnings.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Panel(
+              color: col.warnBg,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                for (final w in warnings)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Text(w, style: theme.textTheme.bodyMedium?.copyWith(color: col.warn, fontWeight: FontWeight.w600)),
                   ),
-                ),
               ]),
+            ),
           ],
-        ),
-        _Section(
-          title: 'Savings goals',
-          empty: 'A new phone, an emergency fund, a trip…',
-          onAdd: () => _add('goal'),
-          children: c!.goals.asMap().entries.map((e) {
-            // Matched by name: the server's list leaves reached goals out, so positions differ.
-            final g = ((s?['goals'] as List?) ?? []).cast<Map>().where((x) => x['name'] == e.value.name).firstOrNull;
-            if (e.value.done) {
-              // Reached: shown, nothing more is set aside for it, nothing to edit.
-              return _Row(
-                title: '✓ ${e.value.name}',
-                subtitle: 'Reached${e.value.doneOn != null ? ' on ${e.value.doneOn}' : ''} · ${kes(e.value.target)}',
-                onDelete: () => _remove(() => c!.goals.removeAt(e.key)),
-              );
-            }
-            return _Row(
-              title: e.value.name,
-              subtitle: '${kes(e.value.target)} in ${e.value.monthsLeft} months'
-                  '${g != null ? ' · save ${kes(g['monthly_needed_KES'] as num)} a month' : ''}',
-              onDelete: () => _remove(() => c!.goals.removeAt(e.key)),
-              onTap: () => _edit('goal', e.value, (x) => c!.goals[e.key] = x as Goal),
-            );
-          }).toList(),
-        ),
-        if (busy) const LinearProgressIndicator(),
-      ],
+          const SizedBox(height: 20),
+          CardRow(minWidth: 300, children: [
+            _Section(
+              title: 'Bills',
+              note: 'Rent, school fees, chama, insurance',
+              empty: 'No bills yet.',
+              onAdd: () => _add('obligation'),
+              children: c!.obligations.asMap().entries.map((e) {
+                final row = (s?['obligations'] as List?)?.elementAtOrNull(e.key) as Map?;
+                final status = row?['status'] as String?;
+                final days = row?['due_in_days'] as int?;
+                final due = e.value.nextDue == null
+                    ? ''
+                    : status == 'overdue'
+                        ? ' · late since ${_day(e.value.nextDue!)}'
+                        : status == 'due_soon'
+                            ? ' · due ${days == 0 ? 'today' : 'in $days day(s)'}'
+                            : ' · next ${_day(e.value.nextDue!)}';
+                return _Row(
+                  title: e.value.name,
+                  amount: money(e.value.amount),
+                  subtitle: '${_capital(obligationFrequencies[e.value.frequency] ?? '')}$due',
+                  subtitleColor: status == 'overdue' ? col.warn : null,
+                  onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
+                  onDelete: () => _confirmRemove(e.value.name, () => c!.obligations.removeAt(e.key)),
+                  extra: e.value.nextDue == null
+                      ? null
+                      : TextButton(onPressed: busy ? null : () => _markPaid(e.key), child: const Text('Paid')),
+                );
+              }).toList(),
+            ),
+            _Section(
+              title: 'Debts',
+              note: 'Fuliza, M-Shwari, SACCO or bank loan, phone on credit',
+              empty: 'No debts. Good.',
+              onAdd: () => _add('debt'),
+              children: [
+                ...c!.debts.asMap().entries.map((e) {
+                  final plan = (debts?['as_planned']?['debts'] as List?)?.elementAtOrNull(e.key) as Map?;
+                  return _Row(
+                    title: e.value.name,
+                    amount: '${money(e.value.monthlyPayment)} a month',
+                    subtitle: 'KES ${money(e.value.balance)} left · ${e.value.annualRate}% a year'
+                        '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}',
+                    onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
+                    onDelete: () => _confirmRemove(e.value.name, () => c!.debts.removeAt(e.key)),
+                  );
+                }),
+                if (c!.debts.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: col.field, borderRadius: BorderRadius.circular(20)),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Text('What if I pay more each month?', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      TextFormField(
+                        initialValue: c!.extraPerMonth == 0 ? '' : c!.extraPerMonth.round().toString(),
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(prefixText: 'KES ', hintText: '1,000',
+                            fillColor: theme.colorScheme.surface),
+                        onFieldSubmitted: (v) {
+                          final x = double.tryParse(v.replaceAll(',', ''));
+                          c!.extraPerMonth = x != null && x.isFinite && x >= 0 && x < 100000000 ? x : 0;
+                          _save(quiet: true);
+                        },
+                      ),
+                      if (debts?['extra_saves'] != null) ...[
+                        const SizedBox(height: 8),
+                        Text('Debt-free ${debts!['extra_saves']['months']} month(s) sooner, '
+                            'KES ${money(debts['extra_saves']['interest_KES'] as num)} less interest.',
+                            style: theme.textTheme.bodyMedium),
+                      ],
+                    ]),
+                  ),
+                ],
+              ],
+            ),
+            _Section(
+              title: 'Goals',
+              note: 'An emergency fund, a plot, a trip',
+              empty: 'No goals yet.',
+              onAdd: () => _add('goal'),
+              children: c!.goals.asMap().entries.map((e) {
+                // Matched by name: the server's list leaves reached goals out, so positions differ.
+                final g = ((s?['goals'] as List?) ?? []).cast<Map>().where((x) => x['name'] == e.value.name).firstOrNull;
+                final share = e.value.target <= 0 ? 0.0 : (e.value.saved / e.value.target).clamp(0, 1).toDouble();
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: e.value.done ? null : () => _edit('goal', e.value, (x) => c!.goals[e.key] = x as Goal),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Row(children: [
+                        Expanded(child: Text(e.value.name, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600))),
+                        if (e.value.done)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(color: col.lime, borderRadius: BorderRadius.circular(12)),
+                            child: const Text('Reached', style: TextStyle(color: Color(0xFF111111), fontWeight: FontWeight.w600, fontSize: 13)),
+                          ),
+                        IconButton(
+                          tooltip: 'Remove ${e.value.name}',
+                          icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                          onPressed: () => _confirmRemove(e.value.name, () => c!.goals.removeAt(e.key)),
+                        ),
+                      ]),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: LinearProgressIndicator(value: e.value.done ? 1 : share, minHeight: 10),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        e.value.done
+                            ? 'KES ${money(e.value.target)}${e.value.doneOn != null ? ' · reached ${e.value.doneOn}' : ''}'
+                            : '${money(e.value.saved)} of ${money(e.value.target)} · ${e.value.monthsLeft} month(s) left'
+                                '${g != null ? ' · KES ${money(g['monthly_needed_KES'] as num)} a month' : ''}',
+                        style: theme.textTheme.bodySmall?.copyWith(color: col.muted),
+                      ),
+                    ]),
+                  ),
+                );
+              }).toList(),
+            ),
+          ]),
+        ],
+      ),
     );
   }
 }
 
+String _capital(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.empty, required this.onAdd, required this.children});
-  final String title, empty;
+  const _Section({required this.title, required this.note, required this.empty, required this.onAdd, required this.children});
+  final String title, note, empty;
   final VoidCallback onAdd;
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(top: 16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(title, style: Theme.of(context).textTheme.titleMedium)),
-            TextButton.icon(onPressed: onAdd, icon: const Icon(Icons.add), label: const Text('Add')),
-          ]),
-          if (children.isEmpty) Text(empty, style: Theme.of(context).textTheme.bodySmall),
-          ...children,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final col = AppColors.of(context);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: theme.textTheme.titleLarge),
+              Text(note, style: theme.textTheme.bodySmall?.copyWith(color: col.muted)),
+            ]),
+          ),
+          IconButton.filledTonal(
+            tooltip: 'Add to $title',
+            style: IconButton.styleFrom(backgroundColor: col.field, foregroundColor: theme.colorScheme.onSurface),
+            onPressed: onAdd,
+            icon: const Icon(Icons.add_rounded),
+          ),
         ]),
-      );
+        const SizedBox(height: 14),
+        if (children.isEmpty) Text(empty, style: theme.textTheme.bodyMedium?.copyWith(color: col.muted)),
+        ...children,
+      ]),
+    );
+  }
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.title, required this.subtitle, required this.onDelete, this.onTap, this.extra,
-      this.subtitleColor});
-  final String title, subtitle;
+  const _Row({required this.title, required this.amount, required this.subtitle, required this.onDelete, this.onTap,
+      this.extra, this.subtitleColor});
+  final String title, amount, subtitle;
   final VoidCallback onDelete;
   final VoidCallback? onTap;      // change it
-  final Widget? extra;            // e.g. "Mark paid"
+  final Widget? extra;            // e.g. "Paid"
   final Color? subtitleColor;
 
   @override
-  Widget build(BuildContext context) => ListTile(
-        contentPadding: EdgeInsets.zero,
-        onTap: onTap,
-        title: Text(title),
-        subtitle: Text(subtitle, style: subtitleColor == null ? null : TextStyle(color: subtitleColor)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final col = AppColors.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(children: [
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+              Text(subtitle, style: theme.textTheme.bodySmall?.copyWith(color: subtitleColor ?? col.muted)),
+            ]),
+          ),
+          Text(amount, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
           ?extra,
-          IconButton(icon: const Icon(Icons.delete_outline), onPressed: onDelete),
+          IconButton(tooltip: 'Remove $title', icon: const Icon(Icons.delete_outline_rounded, size: 20), onPressed: onDelete),
         ]),
-      );
+      ),
+    );
+  }
 }
 
 const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -395,7 +480,7 @@ class _AddDialogState extends State<_AddDialog> {
       title: Text('${widget.initial == null ? 'Add' : 'Change'} '
           '${k == 'obligation' ? 'a bill or obligation' : k == 'debt' ? 'a debt' : 'a savings goal'}'),
       content: SingleChildScrollView(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
+        child: Column(mainAxisSize: MainAxisSize.min, spacing: 12, children: [
           _field(name, 'Name', number: false,
               hint: k == 'obligation' ? 'e.g. Rent, School fees, Chama' : k == 'debt' ? 'e.g. Fuliza, SACCO loan' : 'e.g. New phone'),
           if (k == 'obligation') ...[

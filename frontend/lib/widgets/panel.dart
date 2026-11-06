@@ -56,3 +56,16 @@ class CardRow extends StatelessWidget {
         ]);
       });
 }
+
+/// A page opened on top (forms, lists): a comfortable reading width on big screens, full width on phones.
+class PageWidth extends StatelessWidget {
+  const PageWidth({super.key, required this.child, this.maxWidth = 760});
+  final Widget child;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context) => Align(
+        alignment: Alignment.topCenter,
+        child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
+      );
+}

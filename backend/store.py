@@ -230,6 +230,7 @@ class MoneyIn(Base):
     label: Mapped[str | None] = mapped_column(String(60), nullable=True)
     description: Mapped[str] = mapped_column(String(200), default="")
     ref: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)   # changed on its own: a source tag leaves it
 
 
 class StatementRule(Base):
@@ -283,6 +284,7 @@ def _upgrade(engine):
                                          "auto_category": "VARCHAR(40)",
                                          "pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "statement_rules": {"was": "VARCHAR(40)"},
+                        "money_in": {"pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "profiles": {"income_low": "FLOAT", "name": "VARCHAR(40)", "income_types": "JSON",
                                      "studying": f"BOOLEAN NOT NULL DEFAULT {false}",
                                      "children_in_school": "INTEGER NOT NULL DEFAULT 0"},
@@ -492,11 +494,11 @@ def register():
 # ---------------- privacy notice and consent (Kenya Data Protection Act 2019) ----------------
 
 PRIVACY = {
-    "version": "2026-11-05",
-    "title": "How this app uses your data",
+    "version": "2026-11-07",
+    "title": "How Tosha uses your data",
     "sections": [
         {"title": "Who runs this app",
-         "text": "This app is a final-year project by Kevin Kaniaru, a Computer Science student at Strathmore "
+         "text": "Tosha is a final-year project by Kevin Kaniaru, a Computer Science student at Strathmore "
                  "University, Nairobi. It is a study prototype, not a bank or a licensed financial adviser, and its "
                  "answers are guidance, not financial advice."},
         {"title": "What we keep",
@@ -519,7 +521,7 @@ PRIVACY = {
                  "not your transactions."},
         {"title": "Your rights",
          "text": "You can see everything the app keeps about you in the app, correct any entry, and delete your "
-                 "account at any time under Your household. Deleting removes all your data immediately and "
+                 "account at any time under You. Deleting removes all your data immediately and "
                  "permanently, which also withdraws this consent. For any question, contact the developer through "
                  "Strathmore University."},
         {"title": "How long",
@@ -825,9 +827,18 @@ def delete_transaction(tx_id):
     return (jsonify(deleted=True), 200) if n else (jsonify(error="not found"), 404)
 
 
+def _all_txs(s, user_id):
+    """All of a user's records, read once per request and shared by the helpers that used to query them one by
+    one (the dashboard read the transactions table 5 times, found 7 Nov)."""
+    memo = s.info.setdefault("txs", {})
+    if user_id not in memo:
+        memo[user_id] = s.scalars(select(Transaction).where(Transaction.user_id == user_id)).all()
+    return memo[user_id]
+
+
 def _user_months(s, user_id):
     """Spending per category per month (oldest first), with monthly income from the profile."""
-    txs = s.scalars(select(Transaction).where(Transaction.user_id == user_id)).all()
+    txs = _all_txs(s, user_id)
     incomes = s.scalars(select(IncomeSource).where(IncomeSource.user_id == user_id)).all()
     income = sum(i.amount * FREQUENCIES[i.frequency] / 12 for i in incomes)
     history = sorted(s.scalars(select(IncomeHistory).where(IncomeHistory.user_id == user_id)).all(),
@@ -844,7 +855,7 @@ def _user_months(s, user_id):
     # the months a statement covers, that replaces the profile figure (a late or short allowance then shows);
     # other months keep the profile income.
     ins = s.scalars(select(MoneyIn).where(MoneyIn.user_id == user_id)).all()
-    actual, mixed, covered = {}, {}, set()
+    actual, mixed, other, covered = {}, {}, {}, set()
     for x in ins:
         key = (x.day.year, x.day.month)
         covered.add(key)
@@ -852,6 +863,8 @@ def _user_months(s, user_id):
             actual[key] = actual.get(key, 0.0) + x.amount
         elif x.kind == "mixed":                      # pay and the user's own money together
             mixed[key] = mixed.get(key, 0.0) + x.amount
+        elif x.kind in ("own_account", "received"):  # own money moved in, or money from someone
+            other[key] = other.get(key, 0.0) + x.amount
     # Only once the user has tagged a source as their pay or allowance: salary lines alone would ignore an
     # allowance that arrives by bank transfer and make income look far too low.
     tags_in = set(s.scalars(select(StatementRule.choice).where(StatementRule.user_id == user_id,
@@ -862,7 +875,14 @@ def _user_months(s, user_id):
         # "A mix": the profile income stays the plan, but a month where less arrived uses the lower amount
         # (a late or short allowance shows; moving one's own savings never inflates income).
         got = actual.get(key, 0.0)
-        return min(income_at(key), got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
+        paid = min(income_at(key), got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
+        if paid == 0 and other.get(key, 0.0) > 0:
+            # The tagged pay did not come this month, but money did, from the user's own accounts or from
+            # people. An allowance paid into a bank and moved to M-PESA looks exactly like that, so the month
+            # is not scored as "nothing came in": it counts up to the usual income (found on a real statement,
+            # 7 Nov: five months scored with no income although 20,000-30,000 arrived each month).
+            return min(income_at(key), other[key])
+        return paid
     by_month, outside, one_offs = {}, {}, {}
     for t in txs:
         key = (t.day.year, t.day.month)
@@ -933,8 +953,21 @@ def _budget_lines(data):
             if c in BUDGET_LINES and limits.is_real(v)}
 
 
+def _commitments_row(s, user_id):
+    """The user's Commitments row, read once per request. s.get() alone went back to the database every time,
+    because the session forgets objects nothing holds on to: 13 reads in one dashboard load (found 7 Nov)."""
+    memo = s.info.setdefault("commitments", {})
+    if user_id not in memo:
+        memo[user_id] = s.get(Commitments, user_id)
+    return memo[user_id]
+
+
 def _saved_budget(s, user_id, year, month):
-    b = s.scalar(select(Budget).where(Budget.user_id == user_id, Budget.year == year, Budget.month == month))
+    memo = s.info.setdefault("budgets", {})
+    if (user_id, year, month) not in memo:
+        memo[(user_id, year, month)] = s.scalar(select(Budget).where(Budget.user_id == user_id, Budget.year == year,
+                                                                      Budget.month == month))
+    b = memo[(user_id, year, month)]
     lines = _budget_lines(b.data) if b else None
     return {c: lines.get(c, 0.0) for c in SPENDING_CATEGORIES} if lines is not None else None
 
@@ -1007,7 +1040,7 @@ def _commitment_changes(s, user_id, hist):
     """Rent or loan repayments entered under Commitments that differ from what history shows (a move, a new
     loan after "I'm doing this"). Known exactly, so added as they are rather than waiting for history."""
     import commitments as cm
-    c = s.get(Commitments, user_id)
+    c = _commitments_row(s, user_id)
     if not (c and c.data):
         return {}
     fixed = cm.evaluate(c.data, _today())["for_budget"]["fixed"]
@@ -1025,7 +1058,7 @@ def _pays_fees(s, user_id, hist, profile):
     "I pay my own fees"."""
     if any(m.get("school_fees", 0) > 0 for m in hist) or (profile is not None and profile.pays_own_fees):
         return True
-    c = s.get(Commitments, user_id)
+    c = _commitments_row(s, user_id)
     return bool(c and c.data and any(o.get("category") == "school_fees" for o in c.data.get("obligations", [])))
 
 
@@ -1137,7 +1170,7 @@ def household_picture(s, user_id):
                      "income_primary": round(income, 2)}]
         estimated = True
     fixed, goal, summary = {}, 0, None
-    c = s.get(Commitments, user_id)
+    c = _commitments_row(s, user_id)
     tracked = []
     if c and c.data:
         effective, tracked = _tracked_goals(s, user_id, c.data)
@@ -1219,8 +1252,7 @@ def _borrowing(s, user_id, pic):
     if not recent:
         return None
     first = date(recent[0][0], recent[0][1], 1)
-    rows = s.scalars(select(Transaction).where(Transaction.user_id == user_id, Transaction.day >= first,
-                                               Transaction.category == "loan_repayment")).all()
+    rows = [t for t in _all_txs(s, user_id) if t.day >= first and t.category == "loan_repayment"]
     per = {k: {"fuliza": 0, "fuliza_KES": 0.0, "lenders_KES": 0.0} for k in recent}
     lenders = Counter()
     for t in rows:
@@ -1286,8 +1318,7 @@ def _tracked_goals(s, user_id, data):
     start = min(str(gl.get("tracking_from") or f"{_today():%Y-%m}") for gl in goals)
     first = date(int(start[:4]), int(start[5:7]), 1)
     deposits = [[t.day, float(t.amount)] for t in sorted(
-        s.scalars(select(Transaction).where(Transaction.user_id == user_id, Transaction.category == "savings",
-                                            Transaction.day >= first, Transaction.one_off.is_(False))).all(),
+        (t for t in _all_txs(s, user_id) if t.category == "savings" and t.day >= first and not t.one_off),
         key=lambda t: t.day)]
     order = sorted(goals, key=lambda gl: (str(gl.get("deadline") or "9999"), float(gl.get("months_left") or 999)))
     progress = []
@@ -1313,8 +1344,7 @@ def _tracked_goals(s, user_id, data):
 def _records_until(s, user_id):
     """The last day anything was recorded (statement, message or typed in), so screens can say "Up to date
     until 31 Oct" and ask for the rest, instead of quietly going stale."""
-    last = s.scalar(select(Transaction.day).where(Transaction.user_id == user_id).order_by(Transaction.day.desc())
-                    .limit(1))
+    last = max((t.day for t in _all_txs(s, user_id)), default=None)
     return last.isoformat() if last else None
 
 
@@ -1322,23 +1352,34 @@ def _snapshot(s, user_id, plain, today, estimated):
     """Keep what the plain forecast says about each coming month. A month that has not begun is updated until it
     begins (the latest forecast made before it); the month in progress is only recorded if nothing was kept
     before it began, and marked as made during the month."""
+    # One read for all the months, and a write only when something changed (it ran on every dashboard load:
+    # 7 queries each time, found 7 Nov).
+    keys = {(f["year"], f["month"]) for f in plain}
+    have = {(r.year, r.month): r for r in s.scalars(select(ForecastSnapshot).where(ForecastSnapshot.user_id == user_id))
+            if (r.year, r.month) in keys}
+    changed = False
     for f in plain:
         y, m = f["year"], f["month"]
         sav = f["breakdown"].get("savings", 0)
         spending = f["total"] - sav
         rng = f.get("range") or {}
-        row = s.scalar(select(ForecastSnapshot).where(ForecastSnapshot.user_id == user_id,
-                                                      ForecastSnapshot.year == y, ForecastSnapshot.month == m))
+        row = have.get((y, m))
         before = (y, m) > (today.year, today.month)
         if row is not None and not before:
             continue                                  # frozen once the month has begun
+        low = float(rng["low"] - sav) if rng else None
+        high = float(rng["high"] - sav) if rng else None
+        basis = "setup" if estimated else "records"
+        if row is not None and (row.spending, row.made_on, row.low, row.high, row.basis) == \
+                (float(spending), today, low, high, basis):
+            continue                                  # already kept today, nothing new
         row = row or ForecastSnapshot(user_id=user_id, year=y, month=m)
         row.spending, row.made_on, row.made_before = float(spending), today, before
-        row.low = float(rng["low"] - sav) if rng else None
-        row.high = float(rng["high"] - sav) if rng else None
-        row.basis = "setup" if estimated else "records"
+        row.low, row.high, row.basis = low, high, basis
         s.add(row)
-    s.commit()
+        changed = True
+    if changed:
+        s.commit()
 
 
 def _forecast_checks(s, user_id, pic):
@@ -1461,9 +1502,8 @@ def _betting(s, user_id, scored):
     first = date(recent[0]["year"], recent[0]["month"], 1)
     last = recent[-1]
     after = date(last["year"] + last["month"] // 12, last["month"] % 12 + 1, 1)
-    total = s.scalar(select(func.coalesce(func.sum(Transaction.amount), 0.0)).where(
-        Transaction.user_id == user_id, Transaction.label == "Betting", Transaction.one_off.is_(False),
-        Transaction.day >= first, Transaction.day < after)) or 0.0
+    total = sum(t.amount for t in _all_txs(s, user_id)
+                if t.label == "Betting" and not t.one_off and first <= t.day < after)
     return float(total) / len(recent)
 
 
@@ -1688,7 +1728,7 @@ def budget_plan():
 
 
 NOTE_LABELS = {"food_groceries": "food", "transport": "transport", "utilities": "power, water and gas",
-               "airtime_data": "airtime and data", "mobile_money_transfers": "money sent to others",
+               "airtime_data": "airtime and data", "mobile_money_transfers": "family, friends and giving",
                "entertainment": "going out and fun"}
 WATCH_MIN_KES = 500          # a gap smaller than this is noise, not advice
 WATCH_SHARE = 0.10           # ...and so is one under 10% of the budget line
@@ -1811,7 +1851,11 @@ def budget_forecast():
     if pic["estimated"]:
         notes.append("Based on the rough figures you gave at setup. Upload a statement or record spending and "
                      "your own pattern takes over.")
-    return jsonify(has_data=True, based_on=based_on, months_used=outlook[0]["months_used"],
+    first = (rows[0]["year"], rows[0]["month"]) if rows else (9999, 1)
+    history = [{"year": m["year"], "month": m["month"],
+                "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings"))}
+               for m in pic["months"] if (m["year"], m["month"]) < first][-5:]
+    return jsonify(has_data=True, based_on=based_on, months_used=outlook[0]["months_used"], history=history,
                    budget_source="saved" if chosen else "recommended", status=status, months=rows,
                    savings_path=path, savings_now=round(pic["savings_balance"]), put_aside=put_aside,
                    income_pattern=low["status"], low_month=(dict(low, path=low_path) if low_path else None),
@@ -2905,12 +2949,14 @@ def tag_payee():
         raise InputError("choose what this payee is")
     if key.startswith("in:"):                         # money coming in: pay or allowance, own account, received
         if tag not in mpesa.IN_TAGS:
-            raise InputError("money coming in can be your pay or allowance, a mix, your own money, or someone paying you")
+            raise InputError("money coming in can be your pay or allowance, a mix, your own money, paid back or a "
+                             "gift, or a bonus or one-off")
         with session() as s:
             xs = s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key == key)).all()
             _save_rule(s, g.user_id, key, tag, xs[0].auto_kind if xs else None)
             for x in xs:
-                x.kind = tag
+                if not x.pinned:                      # a payment changed on its own keeps its own answer
+                    x.kind = tag
             s.commit()
         return jsonify(updated=len(xs), offer=None), 200
     with session() as s:
@@ -2934,10 +2980,45 @@ def untag_payee():
         s.execute(delete(StatementRule).where(StatementRule.user_id == g.user_id, StatementRule.key == key))
         n = _retag(s, g.user_id, key, None)
         for x in s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key == key)):
-            x.kind = x.auto_kind or x.kind
-            n += 1
+            if not x.pinned:
+                x.kind = x.auto_kind or x.kind
+                n += 1
         s.commit()
     return jsonify(updated=n), 200
+
+
+@bp.get("/me/money-in")
+@login_required
+def list_money_in():
+    """The payments from one source of money coming in (?key=), newest first, so one can be changed on its own
+    (NCBA paying a salary and the user moving their own money from NCBA look the same on a statement)."""
+    key = request.args.get("key")
+    if not key:
+        raise InputError("send the source key")
+    with session() as s:
+        xs = s.scalars(select(MoneyIn).where(MoneyIn.user_id == g.user_id, MoneyIn.payee_key == key)
+                       .order_by(MoneyIn.day.desc())).all()
+        return jsonify(payments=[{"id": x.id, "date": x.day.isoformat(), "amount": x.amount, "kind": x.kind,
+                                  "pinned": bool(x.pinned)} for x in xs]), 200
+
+
+@bp.patch("/me/money-in/<int:mid>")
+@login_required
+def change_money_in(mid):
+    """This payment only: what one payment coming in was (pay, own money, a bonus...). The source's tag leaves
+    it alone from now on."""
+    import mpesa
+    kind = _body().get("kind")
+    if kind not in mpesa.IN_TAGS:
+        raise InputError("money coming in can be your pay or allowance, a mix, your own money, paid back or a "
+                         "gift, or a bonus or one-off")
+    with session() as s:
+        x = s.get(MoneyIn, mid)
+        if x is None or x.user_id != g.user_id:
+            return jsonify(error="not found"), 404
+        x.kind, x.pinned = kind, True
+        s.commit()
+    return jsonify(changed=True), 200
 
 
 @bp.post("/me/payees/commitment")

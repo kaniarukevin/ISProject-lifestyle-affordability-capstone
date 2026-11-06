@@ -448,3 +448,29 @@ Changed: a new table `income_history` keeps "from this month the income is X" wh
 
 Also added to the profile, for the new onboarding: a first name, how money comes in (pick all that apply: salary, casual work, business, farming, support from family or HELB, pension, not earning), studying, and children in school; the email is returned with the profile. Only "salary" reaches the models, as the existing formal-job input (the formal/informal split the training data was built on), so no model was retrained or re-tested.
 
+## 2026-11-07: A month without the tagged pay is not "no income"
+
+Found on Kevin's own statement (new account, Nov 2025 to Nov 2026, profile income KES 27,000, one source tagged as pay or allowance). Once a source is tagged as income, statement months use only what that source paid. It paid January to July; in November and December 2025 and August to October 2026 it paid nothing, while KES 15,700-27,050 a month came in from his own accounts plus 2,500-17,000 from people. Those five months were scored with income 0, so they came out Critical and the score collapsed.
+
+The app cannot tell an allowance paid into a bank and moved to M-PESA from living on savings. Scoring a month as "nothing came in" while 20,000-30,000 arrived is the worse error, so the rule is now: when the tagged pay is missing in a statement month but money came in from the user's own accounts or from people, that money counts as income up to the usual (profile) income. A month with no money in at all still shows 0, so a late allowance still shows. For this statement the five months become 24,002 / 27,000 / 27,000 / 18,420 / 27,000 instead of 0. Test: `test_a_month_without_the_tagged_pay_is_not_scored_as_no_income` (fails on the old rule).
+
+Limitation to state: someone genuinely living on savings now looks as if their usual income arrived. The note on Overview and the tags in Who pays you remain the way to correct it.
+
+
+## 2026-11-07: Faster screens - fewer database queries per request
+
+**Why.** Opening Overview took several seconds against the cloud database (Neon, US East). Each query is a round trip, so the number of queries per request decides the wait more than the work done in them.
+
+**Cause.** Two things. The SQLAlchemy session keeps loaded rows only while something holds them (a weak identity map), so `s.get()` for the same commitments row went back to the database every time a helper asked for it. And every Overview and forecast load rewrote the month snapshots, changed or not.
+
+**Change.** Within one request: the commitments row, each month's saved budget and the user's transactions are loaded once and reused (`_commitments_row`, `_saved_budget`, `_all_txs`, kept in `s.info`, which ends with the request). Snapshots are read in one query and only changed months are written; nothing is committed when nothing changed. On the phone and web app, Overview's requests run in parallel, tabs are built the first time they are opened, the last figures are shown at once while fresh ones load (kept on the device, removed at log out), and grey placeholder cards replace the bare spinner on the first load.
+
+**Result** (queries per request, same test account):
+
+| Request | Before | After |
+|---|---|---|
+| Overview (`/me/dashboard`) | 36 | 15 |
+| Budget forecast | 21 | 12 |
+| Afford check | 13 | 11 |
+
+Local times after: Overview 123 ms, budget forecast 79 ms, afford 150 ms. All tests pass unchanged; the answers are the same, only fetched fewer times.
