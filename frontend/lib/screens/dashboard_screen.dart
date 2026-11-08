@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/rating_row.dart';
 import '../widgets/verdict.dart';
 import 'why_score_sheet.dart';
 
@@ -163,6 +164,8 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               ]),
             ),
           ],
+          const SizedBox(height: 20),
+          const RatingCard(where: 'overview', question: 'Does this overview match your real finances?'),
         ],
       ),
     );

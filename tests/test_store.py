@@ -1425,3 +1425,41 @@ def test_a_forecast_made_before_the_month_is_checked_once_it_is_recorded(client,
     assert any(n.startswith("November: we expected") for n in ov["notes"])
     with store.session() as s:                                          # pooled for the admin view
         assert s.scalar(store.select(store.ForecastSnapshot).where(store.ForecastSnapshot.month == 11)).actual == 28000
+
+
+def test_forgot_password_emails_a_code_that_resets_once(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(store.mailer, "send", lambda to, subject, text: sent.append((to, text)) or True)
+    old = signup(client)
+    same = client.post("/auth/forgot", json={"email": "nobody@example.com"}).get_json()
+    assert client.post("/auth/forgot", json={"email": "kevin@example.com"}).get_json() == same   # no hint who exists
+    assert len(sent) == 1 and sent[0][0] == "kevin@example.com"
+    code = store.re.search(r"\b(\d{6})\b", sent[0][1]).group(1)
+    bad = "000000" if code != "000000" else "111111"
+    reset = {"email": "kevin@example.com", "new": "a-new-pass-2"}
+    assert client.post("/auth/reset", json={**reset, "code": bad}).status_code == 400
+    r = client.post("/auth/reset", json={**reset, "code": code})
+    assert r.status_code == 200 and r.get_json()["token"]
+    assert client.post("/auth/reset", json={**reset, "code": code}).status_code == 400           # works once
+    assert client.get("/me/profile", headers=old).status_code == 401                           # old devices out
+    assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "a-new-pass-2"}).status_code == 200
+
+
+def test_admin_can_pause_an_account_and_sees_ratings_and_sorting(client, monkeypatch):
+    monkeypatch.setenv("ADMIN_EMAILS", "boss@example.com")
+    user = _student(client)
+    assert client.post("/me/ratings", headers=user, json={"where": "overview", "score": 6}).status_code == 400
+    assert client.post("/me/ratings", headers=user, json={"where": "overview", "score": 4}).status_code == 201
+    boss = signup(client, "boss@example.com")
+    kid = next(u["id"] for u in client.get("/admin/overview", headers=boss).get_json()["recent_users"]
+               if not u["admin"])
+    assert client.post(f"/admin/users/{kid}/block", headers=boss, json={"blocked": True}).status_code == 200
+    assert client.get("/me/profile", headers=user).status_code == 401
+    assert client.post("/auth/login", json={"email": "kevin@example.com", "password": "strong-pass-1"}).status_code == 403
+    assert client.post(f"/admin/users/{kid}/block", headers=boss, json={"blocked": False}).status_code == 200
+    assert client.get("/me/profile", headers=user).status_code == 200
+    v = client.get("/admin/validation", headers=boss).get_json()
+    assert v["ratings"]["overview"] == {"count": 1, "people": 1, "mean": 4, "spread": {"1": 0, "2": 0, "3": 0,
+                                                                                    "4": 1, "5": 0}}
+    assert [a["action"] for a in v["admin_actions"]] == ["unblock", "block"]
+    assert "kevin@example.com" not in client.get("/admin/validation", headers=boss).get_data(as_text=True)

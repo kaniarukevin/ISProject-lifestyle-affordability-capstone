@@ -16,6 +16,7 @@ import 'privacy_screen.dart';
 const _dests = [
   NavDest('Overview', 'Overview', Icons.home_rounded),
   NavDest('Models', 'Models', Icons.insights_rounded),
+  NavDest('Real use: ratings, sorting, usage', 'Real use', Icons.fact_check_rounded),
   NavDest('Performance and logs', 'Performance and logs', Icons.speed_rounded),
   NavDest('Datasets', 'Datasets', Icons.dataset_rounded),
   NavDest('Users', 'Users', Icons.group_rounded),
@@ -24,9 +25,9 @@ const _dests = [
 
 /// The admin console (proposal 3.4.1, the System Administrator): its own frame with the same rail and pill bar
 /// as the household app. Overview (is it working, how many people use it), Models (each model against its
-/// baseline, and the forecast on real months), Performance and logs (response times, database time, errors,
-/// events), Datasets, Users (masked; an account can be removed) and Settings. Figures come from /admin/overview,
-/// /admin/reports and /admin/performance; nothing is typed into the app.
+/// baseline on held-out data), Real use (ratings, sorting kept or corrected, the forecast on real months, feature
+/// use), Performance and logs, Datasets, Users (masked; pause or delete, with a permanent record of admin
+/// actions) and Settings. Figures come from the /admin endpoints; nothing is typed into the app.
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
 
@@ -39,6 +40,7 @@ class _AdminScreenState extends State<AdminScreen> {
   Map<String, dynamic>? overview;
   Map<String, dynamic>? reports;
   Map<String, dynamic>? perf;
+  Map<String, dynamic>? valid;
   String? error;
   int _busy = 0;               // requests in flight; the page stays on screen with a thin bar while > 0
   DateTime? _updated;
@@ -51,8 +53,9 @@ class _AdminScreenState extends State<AdminScreen> {
     // Live figures (health, users, performance) refresh by themselves every 30 s while the console is open,
     // quietly and only the part that changes. Model results and datasets do not change while running.
     _timer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_tab == 0 || _tab == 4) _fetch('overview', quiet: true);
-      if (_tab == 0 || _tab == 2) _fetch('perf', quiet: true);
+      if (_tab == 0 || _tab == 5) _fetch('overview', quiet: true);
+      if (_tab == 0 || _tab == 3) _fetch('perf', quiet: true);
+      if (_tab == 2 || _tab == 5) _fetch('valid', quiet: true);
     });
   }
 
@@ -65,14 +68,16 @@ class _AdminScreenState extends State<AdminScreen> {
   /// What each page needs: only that is fetched when it is refreshed.
   static const _needs = {
     0: ['overview', 'perf'],
-    1: ['reports', 'overview'],
-    2: ['perf'],
-    3: ['reports'],
-    4: ['overview'],
-    5: <String>[],
+    1: ['reports'],
+    2: ['valid', 'overview'],
+    3: ['perf'],
+    4: ['reports'],
+    5: ['overview', 'valid'],
+    6: <String>[],
   };
 
-  Future<void> _refreshAll() => Future.wait([_fetch('overview'), _fetch('reports'), _fetch('perf')]);
+  Future<void> _refreshAll() =>
+      Future.wait([_fetch('overview'), _fetch('reports'), _fetch('perf'), _fetch('valid')]);
 
   Future<void> _refreshPage() => Future.wait([for (final k in _needs[_tab]!) _fetch(k)]);
 
@@ -83,6 +88,7 @@ class _AdminScreenState extends State<AdminScreen> {
       final d = await switch (what) {
         'overview' => api.adminOverview(),
         'reports' => api.adminReports(),
+        'valid' => api.adminValidation(),
         _ => api.adminPerformance(),
       };
       if (!mounted) return;
@@ -92,6 +98,8 @@ class _AdminScreenState extends State<AdminScreen> {
             overview = d;
           case 'reports':
             reports = d;
+          case 'valid':
+            valid = d;
           default:
             perf = d;
         }
@@ -107,11 +115,12 @@ class _AdminScreenState extends State<AdminScreen> {
 
   void _go(int i) {
     setState(() => _tab = i);
-    if (i == 2) _fetch('perf', quiet: true);       // the newest timings whenever the page is opened
+    if (i == 3) _fetch('perf', quiet: true);       // the newest timings whenever the page is opened
+    if (i == 2) _fetch('valid', quiet: true);
   }
 
   Widget _body() {
-    if (overview == null || reports == null || perf == null) {
+    if (overview == null || reports == null || perf == null || valid == null) {
       return Center(
         child: error != null
             ? Column(mainAxisSize: MainAxisSize.min, children: [
@@ -124,14 +133,15 @@ class _AdminScreenState extends State<AdminScreen> {
     }
     final page = switch (_tab) {
       0 => _OverviewPage(d: overview!, perf: perf!, onOpen: _go),
-      1 => _ModelsPage(
-          models: _list(reports!['models']), real: overview!['forecast_on_real_months'] as Map<String, dynamic>?),
-      2 => _PerformancePage(p: perf!),
-      3 => _DatasetsPage(sets: _list(reports!['datasets'])),
-      4 => _UsersPage(
+      1 => _ModelsPage(models: _list(reports!['models'])),
+      2 => _RealUsePage(v: valid!, real: overview!['forecast_on_real_months'] as Map<String, dynamic>?),
+      3 => _PerformancePage(p: perf!),
+      4 => _DatasetsPage(sets: _list(reports!['datasets'])),
+      5 => _UsersPage(
           users: _list(overview!['recent_users']),
           total: (overview!['users'] as Map)['total'] as int,
-          onChanged: () => _fetch('overview')),
+          actions: _list(valid!['admin_actions']),
+          onChanged: () => Future.wait([_fetch('overview'), _fetch('valid')])),
       _ => const _SettingsPage(),
     };
     return RefreshIndicator(onRefresh: _refreshPage, child: page);
@@ -159,6 +169,11 @@ class _AdminScreenState extends State<AdminScreen> {
                     Text(_dests[_tab].title, style: wide ? theme.textTheme.headlineMedium : theme.textTheme.headlineSmall),
                   ]),
                 ),
+                if (!wide) ...[
+                  IconButton.filledTonal(
+                      tooltip: 'Settings', onPressed: () => _go(6), icon: const Icon(Icons.settings_rounded)),
+                  const SizedBox(width: 8),
+                ],
                 IconButton.filledTonal(
                     tooltip: 'Refresh this page', onPressed: _busy > 0 ? null : _refreshPage,
                     icon: const Icon(Icons.refresh_rounded)),
@@ -190,7 +205,8 @@ class _AdminScreenState extends State<AdminScreen> {
               left: 0,
               right: 0,
               bottom: 22 + MediaQuery.paddingOf(context).bottom,
-              child: Center(child: PillNav(dests: _dests, selected: _tab, onSelect: _go)),
+              child: Center(
+                  child: PillNav(dests: _dests.sublist(0, 6), selected: _tab < 6 ? _tab : -1, onSelect: _go)),
             ),
           ]),
         );
@@ -328,6 +344,7 @@ class _OverviewPage extends StatelessWidget {
             _Line('Database', '${s['database']}', ok: true),
             _Line('Models present', '$present of ${models.length}', ok: present == models.length),
             _Line('Web Masters data', dataOk ? 'loaded' : 'not loaded', ok: dataOk),
+            _Line('Email (password resets)', s['email'] == true ? 'set up' : 'not set up', ok: s['email'] == true),
             _Line('Database round trip', '${perf['db_round_trip_ms']} ms',
                 ok: (perf['db_round_trip_ms'] as num) < 20),
             if (perf['median_ms'] != null) _Line('Typical response', '${perf['median_ms']} ms'),
@@ -359,8 +376,9 @@ class _OverviewPage extends StatelessWidget {
       ]),
       Wrap(spacing: 10, runSpacing: 10, children: [
         FilledButton.icon(onPressed: () => onOpen(1), icon: const Icon(Icons.insights_rounded), label: const Text('See the models')),
-        FilledButton.tonal(onPressed: () => onOpen(2), child: const Text('Performance and logs')),
-        FilledButton.tonal(onPressed: () => onOpen(3), child: const Text('See the datasets')),
+        FilledButton.tonal(onPressed: () => onOpen(2), child: const Text('Real use')),
+        FilledButton.tonal(onPressed: () => onOpen(3), child: const Text('Performance and logs')),
+        FilledButton.tonal(onPressed: () => onOpen(4), child: const Text('See the datasets')),
       ]),
     ]);
   }
@@ -369,9 +387,8 @@ class _OverviewPage extends StatelessWidget {
 // ---------------- Models ----------------
 
 class _ModelsPage extends StatelessWidget {
-  const _ModelsPage({required this.models, required this.real});
+  const _ModelsPage({required this.models});
   final List<Map<String, dynamic>> models;
-  final Map<String, dynamic>? real;
 
   @override
   Widget build(BuildContext context) => _Scroll(children: [
@@ -380,7 +397,6 @@ class _ModelsPage extends StatelessWidget {
                 'Figures from docs/experiments.md.'),
         _Scorecard(models: models),
         for (final m in models) _ModelCard(m: m),
-        ..._realMonths(context, real),
       ]);
 }
 
@@ -754,6 +770,130 @@ List<Widget> _realMonths(BuildContext context, Map<String, dynamic>? d) {
   ];
 }
 
+// ---------------- Real use ----------------
+
+/// Evidence from people using the app, pooled with no names: how they rate the outputs (deviation D16), how
+/// much of the statement reader's sorting they kept (audit A-14), the forecast on their real months, and what
+/// they use.
+class _RealUsePage extends StatelessWidget {
+  const _RealUsePage({required this.v, required this.real});
+  final Map<String, dynamic> v;
+  final Map<String, dynamic>? real;
+
+  static const _scale = ['1 Not at all', '2', '3', '4', '5 Exactly'];
+  static const _presetNames = {
+    'purchase': 'A purchase', 'loan': 'A loan', 'move': 'Moving house', 'baby': 'A new baby',
+    'savings_goal': 'A savings goal', 'income_change': 'An income change', 'plan': 'A custom plan',
+    'monthly_cost': 'A new monthly cost', 'fees': 'School fees', 'house_help': 'House help',
+    'family_support': 'Family support',
+  };
+
+  Widget _ratingPanel(BuildContext context, String title, Map<String, dynamic> r) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final spread = (r['spread'] as Map).cast<String, dynamic>();
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text(title, style: theme.textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text(r['mean'] == null ? 'No answers yet' : '${r['mean']} out of 5',
+            style: theme.textTheme.headlineMedium),
+        Text('${r['count']} answers from ${r['people']} people', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(height: 16),
+        BarChartCard(chart: {
+          'title': 'How the answers spread', 'unit': '', 'better': 'none',
+          'bars': [for (var i = 1; i <= 5; i++) {'label': _scale[i - 1], 'value': spread['$i'] ?? 0}],
+        }),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final ratings = (v['ratings'] as Map).cast<String, dynamic>();
+    final sorting = (v['sorting'] as Map?)?.cast<String, dynamic>();
+    final usage = (v['usage'] as Map).cast<String, dynamic>();
+    final presets = (usage['by_preset'] as Map).cast<String, dynamic>();
+    final sources = (usage['records_by_source'] as Map).cast<String, dynamic>();
+    String pct(num? x) => x == null ? '-' : '${(x * 100).round()}%';
+    final checks = usage['checks'] as num;
+    return _Scroll(children: [
+      const _Heading('Does Tosha match people\'s real finances?',
+          sub: 'Users answer on a 1 to 5 scale under the overview and under each affordability answer. This is '
+              'the test of the reworded hypothesis (deviation D16).'),
+      CardRow(minWidth: 320, children: [
+        _ratingPanel(context, 'Overview', (ratings['overview'] as Map).cast<String, dynamic>()),
+        _ratingPanel(context, '"Can I afford it?" answers', (ratings['afford'] as Map).cast<String, dynamic>()),
+      ]),
+      const _Heading('How well statements are sorted',
+          sub: 'Every payment the reader sorted by itself is counted right unless its owner changed it. Pooled '
+              'over everyone\'s statements; no names or amounts per person.'),
+      if (sorting == null)
+        Panel(
+          child: Text('No statements imported yet.', style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+        )
+      else ...[
+        CardRow(minWidth: 180, children: [
+          _Tile(pct(sorting['precision'] as num?), 'Sorted by the reader and kept'),
+          _Tile(pct(sorting['auto_share_by_money'] as num?), 'Of the money sorted with no help'),
+          _Tile('${sorting['payments']}', 'Payments from ${sorting['people']} people'),
+        ]),
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            BarChartCard(chart: {
+              'title': 'What happened to each payment', 'unit': '', 'better': 'none',
+              'bars': [
+                {'label': 'Sorted by the reader, kept', 'value': sorting['kept']},
+                {'label': 'Sorted by the reader, changed by the user', 'value': sorting['corrected']},
+                {'label': 'Left unsorted, then sorted by the user', 'value': sorting['sorted_by_user']},
+                {'label': 'Still unsorted', 'value': sorting['still_unsorted']},
+              ],
+            }),
+            const SizedBox(height: 10),
+            Text(
+                'Kept is an upper bound: a payment nobody checked counts as right. On the developer\'s own statement '
+                '41-43% of the money was sorted before any tagging, and 89% after tagging the top 10 payees '
+                '(experiments, 4 Nov).',
+                style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          ]),
+        ),
+      ],
+      ..._realMonths(context, real),
+      const _Heading('What people use'),
+      CardRow(minWidth: 180, children: [
+        _Tile('$checks', 'Affordability checks'),
+        _Tile('${usage['people_checking']}', 'People who checked'),
+        _Tile(checks == 0 ? '-' : '${((usage['applied'] as num) / checks * 100).round()}%',
+            'Checks followed by "I\'m doing this"'),
+        _Tile('${usage['ratings']}', 'Ratings given'),
+      ]),
+      if (presets.isNotEmpty || sources.isNotEmpty)
+        Panel(
+          child: LayoutBuilder(builder: (context, box) {
+            final charts = [
+              if (presets.isNotEmpty)
+                {'title': 'Checks by kind', 'unit': '', 'better': 'none',
+                 'bars': [for (final e in presets.entries) {'label': _presetNames[e.key] ?? e.key, 'value': e.value}]},
+              if (sources.isNotEmpty)
+                {'title': 'Records by how they came in', 'unit': '', 'better': 'none',
+                 'bars': [
+                   for (final e in sources.entries)
+                     {'label': switch (e.key) { 'mpesa' => 'M-PESA statement', 'manual' => 'Typed in', 'messages' => 'Pasted messages', _ => e.key }, 'value': e.value}
+                 ]},
+            ];
+            final cols = box.maxWidth >= 640 ? charts.length : 1;
+            final w = (box.maxWidth - 28 * (cols - 1)) / cols;
+            return Wrap(spacing: 28, runSpacing: 22, children: [
+              for (final ch in charts) SizedBox(width: w, child: BarChartCard(chart: ch)),
+            ]);
+          }),
+        ),
+    ]);
+  }
+}
+
 // ---------------- Performance and logs ----------------
 
 class _PerformancePage extends StatelessWidget {
@@ -938,9 +1078,10 @@ class _DatasetsPage extends StatelessWidget {
 // ---------------- Users ----------------
 
 class _UsersPage extends StatelessWidget {
-  const _UsersPage({required this.users, required this.total, required this.onChanged});
+  const _UsersPage({required this.users, required this.total, required this.actions, required this.onChanged});
   final List<Map<String, dynamic>> users;
   final int total;
+  final List<Map<String, dynamic>> actions;
   final Future<void> Function() onChanged;
 
   @override
@@ -967,6 +1108,28 @@ class _UsersPage extends StatelessWidget {
       }
     }
 
+    Future<void> pause(Map<String, dynamic> u) async {
+      final blocked = u['blocked'] == true;
+      final yes = await showChoiceSheet<bool>(
+        context,
+        title: blocked ? 'Let ${u['email']} back in?' : 'Pause ${u['email']}?',
+        message: blocked
+            ? 'They can log in and use Tosha again. Nothing was deleted while the account was paused.'
+            : 'They are logged out and cannot log in until you let them back in. Their data is kept.',
+        choices: [SheetChoice(blocked ? 'Let them back in' : 'Pause the account', true, primary: true)],
+      );
+      if (yes != true || !context.mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      try {
+        await context.read<AppState>().api.adminBlockUser(u['id'] as int, !blocked);
+        messenger.showSnackBar(SnackBar(content: Text(blocked ? 'Account let back in' : 'Account paused')));
+        await onChanged();
+      } on ApiException catch (e) {
+        messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+
+    const actionWords = {'delete': 'Deleted', 'block': 'Paused', 'unblock': 'Let back in'};
     return _Scroll(children: [
       _Heading('Accounts',
           sub: 'Masked emails and counts only. No one\'s spending, income or payees are shown. '
@@ -980,7 +1143,11 @@ class _UsersPage extends StatelessWidget {
                   Row(children: [
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${users[i]['email']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                        Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                          Text('${users[i]['email']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                          if (users[i]['admin'] == true) const _Chip('Admin', strong: true),
+                          if (users[i]['blocked'] == true) const _Chip('Paused'),
+                        ]),
                         Text('Joined ${users[i]['joined']}', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                       ]),
                     ),
@@ -993,11 +1160,36 @@ class _UsersPage extends StatelessWidget {
                       ].join(' · '),
                       style: theme.textTheme.bodySmall,
                     ),
-                    IconButton(
-                      tooltip: 'Delete this account',
-                      onPressed: () => remove(users[i]),
-                      icon: Icon(Icons.delete_rounded, color: c.warn),
-                    ),
+                    if (users[i]['admin'] != true) ...[
+                      IconButton(
+                        tooltip: users[i]['blocked'] == true ? 'Let this account back in' : 'Pause this account',
+                        onPressed: () => pause(users[i]),
+                        icon: Icon(users[i]['blocked'] == true ? Icons.lock_open_rounded : Icons.block_rounded),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete this account',
+                        onPressed: () => remove(users[i]),
+                        icon: Icon(Icons.delete_rounded, color: c.warn),
+                      ),
+                    ],
+                  ]),
+                ],
+              ]),
+      ),
+      const _Heading('Admin actions',
+          sub: 'A permanent record of accounts paused, let back in or deleted. Account numbers only, never emails.'),
+      Panel(
+        child: actions.isEmpty
+            ? const Text('No admin actions yet.')
+            : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                for (var i = 0; i < actions.length; i++) ...[
+                  if (i > 0) const Divider(height: 18),
+                  Row(children: [
+                    Expanded(
+                        child: Text('${actionWords[actions[i]['action']] ?? actions[i]['action']} '
+                            'account ${actions[i]['account']}')),
+                    Text('${actions[i]['at']}'.replaceFirst('T', ' '),
+                        style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                   ]),
                 ],
               ]),

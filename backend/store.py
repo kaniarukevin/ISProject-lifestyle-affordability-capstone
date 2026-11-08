@@ -31,6 +31,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import affordability as aff
 import limits
+import mailer
 import monitor
 from model_register import DATASETS, MODEL_REGISTER
 
@@ -97,6 +98,42 @@ class User(Base):
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Raised by "log out everywhere": every token carries the value it was issued with (audit A-08).
     session_epoch: Mapped[int] = mapped_column(Integer, default=0)
+    # Set when an admin pauses the account: it cannot log in or use the app, and its data is kept.
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Rating(Base):
+    """A user's answer to "Does this match your real finances?" (1 to 5), on the overview or on one
+    affordability result: the volunteers' judgement of the outputs that the proposal's validation asks for."""
+    __tablename__ = "ratings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    place: Mapped[str] = mapped_column(String(20))            # overview | afford ("where" is an SQL word)
+    score: Mapped[int] = mapped_column(Integer)
+    scenario_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class AdminAction(Base):
+    """A permanent record of what admins did to accounts (Data Protection Act 2019: accountability). Holds the
+    account number and the action only, never the email or any of the account's data."""
+    __tablename__ = "admin_actions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    admin_id: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(20))           # delete | block | unblock
+    target_id: Mapped[int] = mapped_column(Integer)
+
+
+class PasswordReset(Base):
+    """A 6-digit code emailed to reset a forgotten password. Only a keyed hash is stored; it lasts 30 minutes,
+    allows 5 tries and works once."""
+    __tablename__ = "password_resets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    tries: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ForecastSnapshot(Base):
@@ -291,7 +328,7 @@ def _upgrade(engine):
                                      "studying": f"BOOLEAN NOT NULL DEFAULT {false}",
                                      "children_in_school": "INTEGER NOT NULL DEFAULT 0"},
                         "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP",
-                                  "session_epoch": "INTEGER NOT NULL DEFAULT 0"}}.items():
+                                  "session_epoch": "INTEGER NOT NULL DEFAULT 0", "blocked_at": "TIMESTAMP"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
         for name, ddl in cols.items():
             if name not in have:
@@ -399,6 +436,9 @@ def _token(user):
                                 "j": secrets.token_hex(8)})
 
 
+BLOCKED = "This account is paused. Please contact the Tosha team."
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -418,6 +458,8 @@ def login_required(fn):
                 return jsonify(error="your password was changed or the account was removed, log in again"), 401
             if data.get("e", 0) != (user.session_epoch or 0) or s.get(RevokedToken, str(data["j"])) is not None:
                 return jsonify(error="you were logged out, log in again"), 401
+            if user.blocked_at is not None:        # 401: the app returns to the log-in screen, which explains
+                return jsonify(error=BLOCKED), 401
         g.user_id, g.token_id, g.token_issued = user.id, str(data["j"]), issued
         return fn(*args, **kwargs)
     return wrapper
@@ -588,7 +630,11 @@ def login():
         if not user or not check_password_hash(user.password_hash, str(b.get("password", ""))):
             _record(("login-fail", email, ip))
             _record(("login-fail", email))
-            return jsonify(error="wrong email or password"), 401
+            # One message for a wrong email and a wrong password: saying which would tell anyone who has a
+            # Tosha account (OWASP; banks do the same).
+            return jsonify(error="That email and password don't match. Check both, or reset your password."), 401
+        if user.blocked_at is not None:
+            return jsonify(error=BLOCKED), 403
         return jsonify(token=_token(user), user_id=user.id), 200
 
 
@@ -633,7 +679,106 @@ def change_password():
             raise InputError("the new password must be different from the current one")
         user.password_hash = generate_password_hash(new)
         s.commit()
+        mailer.send(user.email, "Your Tosha password was changed", _CHANGED_TEXT)
         return jsonify(token=_token(user), changed=True), 200
+
+
+_CHANGED_TEXT = ("Your Tosha password was just changed, and every other device was logged out.\n\n"
+                 "If this was you, there is nothing to do. If it was not, reset your password from the log-in "
+                 "screen with \"Forgot password?\" straight away.\n\nTosha")
+RESET_MINUTES = 30
+
+
+def _code_hash(code):
+    return hmac.new(secret_key().encode(), f"reset:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+@bp.post("/auth/forgot")
+def forgot_password():
+    """Account recovery, step 1: email a 6-digit code. The answer is the same whether or not the email has an
+    account, so this cannot be used to find out who uses Tosha."""
+    ip = _client_ip()
+    b = _body()
+    email = str(b.get("email", "")).strip().lower()
+    if _recent(("forgot-ip", ip), 3600) >= 10 or _recent(("forgot", email), 3600) >= 3:
+        return jsonify(error="too many reset requests, try again in an hour"), 429
+    _record(("forgot-ip", ip))
+    _record(("forgot", email))
+    answer = {"sent": True, "minutes": RESET_MINUTES,
+              "message": "If this email has a Tosha account, a 6-digit code is on its way. Check spam too."}
+    with session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        if user is None or user.blocked_at is not None:
+            return jsonify(answer), 200
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        s.execute(delete(PasswordReset).where(PasswordReset.user_id == user.id))
+        s.add(PasswordReset(user_id=user.id, code_hash=_code_hash(code),
+                            expires_at=datetime.fromtimestamp(time.time() + RESET_MINUTES * 60, timezone.utc)))
+        s.commit()
+    if not mailer.send(email, f"Your Tosha code: {code}",
+                       f"Your code to reset your Tosha password is {code}.\n\nIt works for {RESET_MINUTES} "
+                       "minutes. If you did not ask for it, ignore this email: your password stays the same.\n\n"
+                       "Tosha"):
+        return jsonify(error="email is not working right now, please try again later"), 503
+    return jsonify(answer), 200
+
+
+@bp.post("/auth/reset")
+def reset_password():
+    """Account recovery, step 2: the emailed code and a new password. Logs out every device (the token stamp
+    follows the password) and logs this one in."""
+    b = _body()
+    email = str(b.get("email", "")).strip().lower()
+    code, new = str(b.get("code", "")).strip(), str(b.get("new", ""))
+    if len(new) < 8:
+        raise InputError("the new password must be at least 8 characters")
+    wrong = jsonify(error="that code is not right or has expired; ask for a new one"), 400
+    with session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        row = s.scalar(select(PasswordReset).where(PasswordReset.user_id == user.id)) if user else None
+        if row is None:
+            return wrong
+        expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
+        if expires < _now() or row.tries >= 5:
+            s.delete(row)
+            s.commit()
+            return wrong
+        if not hmac.compare_digest(row.code_hash, _code_hash(code)):
+            row.tries += 1
+            s.commit()
+            return wrong
+        if user.blocked_at is not None:
+            return jsonify(error=BLOCKED), 403
+        user.password_hash = generate_password_hash(new)
+        s.delete(row)
+        s.commit()
+        token = _token(user)
+    mailer.send(email, "Your Tosha password was changed", _CHANGED_TEXT)
+    monitor.log_event("account", "Password reset by email")
+    return jsonify(token=token, user_id=user.id, reset=True), 200
+
+
+# ---------------- "Does this match your real finances?" ----------------
+
+@bp.post("/me/ratings")
+@login_required
+def add_rating():
+    b = _body()
+    where = b.get("where")
+    score = b.get("score")
+    if where not in ("overview", "afford"):
+        raise InputError("where must be overview or afford")
+    if not isinstance(score, int) or isinstance(score, bool) or not 1 <= score <= 5:
+        raise InputError("score must be a whole number from 1 to 5")
+    sid = b.get("scenario_id")
+    with session() as s:
+        if sid is not None:
+            sc = s.get(Scenario, sid) if isinstance(sid, int) and not isinstance(sid, bool) else None
+            if sc is None or sc.user_id != g.user_id:
+                raise InputError("no such check")
+        s.add(Rating(user_id=g.user_id, place=where, score=score, scenario_id=sid))
+        s.commit()
+    return jsonify(saved=True), 201
 
 
 # ---------------- profile ----------------
@@ -3121,7 +3266,8 @@ def admin_overview():
                          "updated": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).date().isoformat()
                          if f.exists() else None})
     return jsonify(
-        service={"status": "ok", "database": _DB["engine"].dialect.name, **SERVICE_STATUS["check"]()},
+        service={"status": "ok", "database": _DB["engine"].dialect.name, "email": mailer.configured(),
+                 **SERVICE_STATUS["check"]()},
         # Where rate limits read the caller's address (audit A-04); "CF-Connecting-IP" is the safe answer.
         client_ip_source=_client_ip_source()[1],
         users={"total": len(users), "with_household": len(profiles), "with_statement": len(statement_users),
@@ -3139,7 +3285,9 @@ def admin_overview():
                                   / len(fair), 3)},
         recent_users=[{"id": u.id, "email": _mask(u.email), "joined": u.created_at.date().isoformat(),
                        "household": u.id in profiles, "records": counts.get(u.id, 0),
-                       "statement": u.id in statement_users, "checks": checks.get(u.id, 0)} for u in users[:50]]), 200
+                       "statement": u.id in statement_users, "checks": checks.get(u.id, 0),
+                       "blocked": u.blocked_at is not None,
+                       "admin": u.email.lower() in _admin_emails()} for u in users[:50]]), 200
 
 
 @bp.get("/admin/reports")
@@ -3197,6 +3345,8 @@ def export_my_data():
             "affordability_checks": [{"created_at": sc.created_at.isoformat(), "asked": sc.request, "answer": sc.result}
                                      for sc in rows(s, Scenario, Scenario.id)],
             "payee_tags": [{"payee": r.key, "tag": r.choice} for r in rows(s, StatementRule, StatementRule.id)],
+            "ratings": [{"at": r.created_at.isoformat(), "where": r.place, "score": r.score}
+                        for r in rows(s, Rating, Rating.id)],
             "forecasts_kept": [{"year": f.year, "month": f.month, "expected_spending": f.spending,
                                 "made_on": f.made_on.isoformat(), "actual": f.actual}
                                for f in rows(s, ForecastSnapshot, ForecastSnapshot.id)],
@@ -3207,7 +3357,7 @@ def export_my_data():
 def _delete_user(s, user_id):
     """Remove a user and everything kept about them (used by the user themselves and by an admin)."""
     for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
-                  RevokedToken, ForecastSnapshot, IncomeHistory):
+                  RevokedToken, ForecastSnapshot, IncomeHistory, Rating, PasswordReset):
         s.execute(delete(table).where(table.user_id == user_id))
     s.execute(delete(User).where(User.id == user_id))
     s.commit()
@@ -3236,8 +3386,80 @@ def admin_delete_user(uid):
         if user.email.lower() in _admin_emails():
             return jsonify(error="admin accounts are removed by changing ADMIN_EMAILS, not here"), 400
         _delete_user(s, uid)
+        s.add(AdminAction(admin_id=g.user_id, action="delete", target_id=uid))
+        s.commit()
     monitor.log_event("account", "Account deleted by an admin")
     return jsonify(deleted=True), 200
+
+
+@bp.post("/admin/users/<int:uid>/block")
+@login_required
+def admin_block_user(uid):
+    """Manage user accounts: pause an account ({"blocked": true}) or let it back in ({"blocked": false}). A paused
+    account cannot log in or use the app; its data is kept. Admin accounts cannot be paused."""
+    b = _body()
+    blocked = b.get("blocked")
+    if not isinstance(blocked, bool):
+        raise InputError("blocked must be true or false")
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+        user = s.get(User, uid)
+        if user is None:
+            return jsonify(error="no such account"), 404
+        if user.email.lower() in _admin_emails():
+            return jsonify(error="admin accounts cannot be paused"), 400
+        user.blocked_at = _now() if blocked else None
+        s.add(AdminAction(admin_id=g.user_id, action="block" if blocked else "unblock", target_id=uid))
+        s.commit()
+    monitor.log_event("account", "Account paused by an admin" if blocked else "Account let back in by an admin")
+    return jsonify(blocked=blocked), 200
+
+
+@bp.get("/admin/validation")
+@login_required
+def admin_validation():
+    """Evidence from real use, pooled with no names or amounts per person: how users rate the outputs, how
+    often the statement reader's sorting was kept or corrected, which features are used, and admin actions."""
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+        ratings = s.scalars(select(Rating)).all()
+        txs = s.execute(select(Transaction.category, Transaction.auto_category, Transaction.amount,
+                               Transaction.user_id).where(Transaction.source == "mpesa")).all()
+        sources = Counter(src for (src,) in s.execute(select(Transaction.source)))
+        scen = s.execute(select(Scenario.request, Scenario.result, Scenario.user_id)).all()
+        actions = s.scalars(select(AdminAction).order_by(AdminAction.at.desc(), AdminAction.id.desc()).limit(50)).all()
+        statement_users = {u for *_, u in txs}
+
+    def rated(where):
+        xs = [r.score for r in ratings if r.place == where]
+        return {"count": len(xs), "people": len({r.user_id for r in ratings if r.place == where}),
+                "mean": round(statistics.mean(xs), 2) if xs else None,
+                "spread": {str(k): xs.count(k) for k in range(1, 6)}}
+
+    auto = [t for t in txs if t.auto_category and t.auto_category != UNSORTED]
+    kept = [t for t in auto if t.category == t.auto_category]
+    later = [t for t in txs if (t.auto_category in (None, UNSORTED)) and t.category != UNSORTED]
+    money = sum(t.amount for t in txs) or 1
+    presets = Counter((r or {}).get("preset", "other") for r, _, _ in scen)
+    applied = sum(1 for _, res, _ in scen if (res or {}).get("applied"))
+    return jsonify(
+        ratings={"overview": rated("overview"), "afford": rated("afford")},
+        sorting=None if not txs else {
+            "payments": len(txs), "people": len(statement_users),
+            "auto_sorted": len(auto), "kept": len(kept), "corrected": len(auto) - len(kept),
+            "precision": round(len(kept) / len(auto), 3) if auto else None,
+            "precision_by_money": round(sum(t.amount for t in kept) / (sum(t.amount for t in auto) or 1), 3)
+            if auto else None,
+            "auto_share_by_money": round(sum(t.amount for t in auto) / money, 3),
+            "sorted_by_user": len(later),
+            "still_unsorted": sum(1 for t in txs if t.category == UNSORTED)},
+        usage={"checks": len(scen), "people_checking": len({u for *_, u in scen}), "applied": applied,
+               "by_preset": dict(presets.most_common()), "records_by_source": dict(sources),
+               "ratings": len(ratings)},
+        admin_actions=[{"at": a.at.isoformat(timespec="minutes"), "action": a.action, "account": a.target_id}
+                       for a in actions]), 200
 
 
 @bp.get("/admin/performance")
