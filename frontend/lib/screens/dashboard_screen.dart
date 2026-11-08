@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
@@ -23,7 +24,10 @@ class DashboardScreen extends StatefulWidget {
   State<DashboardScreen> createState() => _DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
+  @override
+  Future<void> reloadQuietly() => _load();
+
   Map<String, dynamic>? o;          // GET /me/overview
   Map<String, dynamic>? bf;         // GET /me/budget-forecast (null if it cannot be worked out yet)
   Map<String, dynamic>? lastCheck;  // the latest "Can I afford it?" result
@@ -81,8 +85,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _paid(int index) async {
     try {
-      await context.read<AppState>().api.markPaid(index);
-      await _load();
+      await context.read<AppState>().api.markPaid(index);   // the overview reloads by itself after a change
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }

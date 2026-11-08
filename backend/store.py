@@ -31,6 +31,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import affordability as aff
 import limits
+import monitor
+from model_register import DATASETS, MODEL_REGISTER
 
 ROOT = Path(__file__).resolve().parent.parent
 TOKEN_DAYS = 14             # audit A-08: 30 days was long for a finance app; logging out now also revokes
@@ -2174,13 +2176,18 @@ def get_commitments():
     with session() as s:
         c = s.get(Commitments, g.user_id)
         data = copy.deepcopy(c.data) if c and c.data else {"obligations": [], "debts": [], "goals": []}
-        _, progress = _tracked_goals(s, g.user_id, data)
+        tracked, progress = _tracked_goals(s, g.user_id, data)
+    import commitments as cm
+    try:        # the same summary a save returns, so the app can show it without saving on every visit
+        summary = cm.evaluate(tracked, _today())
+    except cm.CommitmentsInputError:
+        summary = None
     by_name = {p["name"]: p for p in progress}
     for gl in data.get("goals", []):
         p = by_name.get(gl.get("name"))
         if p:   # 'saved' stays what the user typed; the app shows saved + counted_KES (saving it back is safe)
             gl.update(counted_KES=p["counted_KES"], found_KES=p["found_KES"])
-    return jsonify(data)
+    return jsonify({**data, "summary": summary})
 
 
 @bp.put("/me/commitments")
@@ -2188,6 +2195,7 @@ def get_commitments():
 def put_commitments():
     import commitments as cm
     b = _body()
+    b.pop("summary", None)                       # sent back by an app that saved what it read: not stored
     try:
         result = cm.evaluate(b, _today())          # validate with the same rules as /commitments before saving
     except cm.CommitmentsInputError as exc:
@@ -3066,30 +3074,6 @@ def _is_admin(s, user_id):
 
 SERVICE_STATUS = {"check": lambda: {}}    # app.py fills this in (the forecast service's data status)
 
-# What each model does and how it was chosen (docs/experiments.md). Shown on the admin page.
-MODEL_REGISTER = [
-    {"name": "Financial state (main)", "file": "affordability_engine.joblib", "kind": "Random Forest classifier",
-     "metric": "held-out accuracy 0.799 (HMM: 0.531)", "data": "KIHBS-informed synthetic, 240/60 households"},
-    {"name": "Financial state (statement-safe)", "file": "affordability_engine.joblib",
-     "kind": "Random Forest on exact figures only", "metric": "accuracy 0.750; state unchanged by mis-sorting (0/60)",
-     "data": "same"},
-    {"name": "Affordability score", "file": "affordability_engine.joblib", "kind": "Monotonic gradient boosting",
-     "metric": "bigger cost never raises the score (100% of households); accuracy 0.654", "data": "same"},
-    {"name": "Score explanations (SHAP)", "file": "affordability_engine.joblib",
-     "kind": "Exact Shapley values over 6 feature groups, 200-row background",
-     "metric": "matches the shap library to 3e-13 points; parts add up to the score exactly",
-     "data": "200 training household-months"},
-    {"name": "Budget split", "file": "budget_split.joblib", "kind": "Random Forest, half with the average split",
-     "metric": "KES 7,021 average error per category vs 7,295 one-size", "data": "974 Stable household-months"},
-    {"name": "App forecast", "file": "user_forecast.joblib", "kind": "Boosted tree with fee-month/December flags",
-     "metric": "test MAE vs median: 1 month 9,967 vs 10,719; 2 months 10,354 vs 11,738; 3 months 11,000 vs 11,791; "
-               "80% ranges hold 83-85%", "data": "KIHBS-informed synthetic"},
-    {"name": "Web Masters forecast (U-CS 37)", "file": "forecast_tree.joblib",
-     "kind": "Budget blend + boosted-tree split", "metric": "test MAE KES 7,931, WAPE 0.106",
-     "data": "Web Masters staging, 500 households"},
-]
-
-
 def _mask(email):
     name, _, domain = email.partition("@")
     return f"{name[:1]}***@{domain}"
@@ -3141,6 +3125,7 @@ def admin_overview():
         # Where rate limits read the caller's address (audit A-04); "CF-Connecting-IP" is the safe answer.
         client_ip_source=_client_ip_source()[1],
         users={"total": len(users), "with_household": len(profiles), "with_statement": len(statement_users),
+               "agreed_privacy": sum(1 for u in users if u.consent_version),
                "joined_7_days": sum(1 for j in joined if (now - j).days < 7),
                "records": n_tx, "affordability_checks": n_checks},
         models=register,
@@ -3155,6 +3140,26 @@ def admin_overview():
         recent_users=[{"id": u.id, "email": _mask(u.email), "joined": u.created_at.date().isoformat(),
                        "household": u.id in profiles, "records": counts.get(u.id, 0),
                        "statement": u.id in statement_users, "checks": checks.get(u.id, 0)} for u in users[:50]]), 200
+
+
+@bp.get("/admin/reports")
+@login_required
+def admin_reports():
+    """The examiner pages of the admin console: each model (what the proposal said, what was built, its result
+    against the baseline) and each dataset. Figures come from model_register.py, which copies them from
+    docs/experiments.md, so nothing is typed into the app."""
+    models_dir = Path(__file__).resolve().parent / "models"
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+    models = []
+    for m in MODEL_REGISTER:
+        f = models_dir / m["file"]
+        models.append({**m, "present": f.exists(),
+                       "size_mb": round(f.stat().st_size / 1e6, 1) if f.exists() else None,
+                       "updated": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).date().isoformat()
+                       if f.exists() else None})
+    return jsonify(models=models, datasets=DATASETS), 200
 
 
 @bp.get("/me/export")
@@ -3199,14 +3204,48 @@ def export_my_data():
     return jsonify(data), 200
 
 
+def _delete_user(s, user_id):
+    """Remove a user and everything kept about them (used by the user themselves and by an admin)."""
+    for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
+                  RevokedToken, ForecastSnapshot, IncomeHistory):
+        s.execute(delete(table).where(table.user_id == user_id))
+    s.execute(delete(User).where(User.id == user_id))
+    s.commit()
+
+
 @bp.delete("/me")
 @login_required
 def delete_account():
     """Privacy: a user (or a tester after the study) can remove everything about them."""
     with session() as s:
-        for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
-                      RevokedToken, ForecastSnapshot, IncomeHistory):
-            s.execute(delete(table).where(table.user_id == g.user_id))
-        s.execute(delete(User).where(User.id == g.user_id))
-        s.commit()
+        _delete_user(s, g.user_id)
     return jsonify(deleted=True), 200
+
+
+@bp.delete("/admin/users/<int:uid>")
+@login_required
+def admin_delete_user(uid):
+    """Manage user accounts (proposal 3.4.1): an admin can remove an account and all its data, for example a
+    volunteer's after the study. Admin accounts cannot be removed here, including one's own."""
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+        user = s.get(User, uid)
+        if user is None:
+            return jsonify(error="no such account"), 404
+        if user.email.lower() in _admin_emails():
+            return jsonify(error="admin accounts are removed by changing ADMIN_EMAILS, not here"), 400
+        _delete_user(s, uid)
+    monitor.log_event("account", "Account deleted by an admin")
+    return jsonify(deleted=True), 200
+
+
+@bp.get("/admin/performance")
+@login_required
+def admin_performance():
+    """Monitor system performance and view system logs (proposal 3.3 and 3.4.1): response times, database time
+    and queries per screen, error rates and recent events since the server started. No personal data."""
+    with session() as s:
+        if not _is_admin(s, g.user_id):
+            return jsonify(error="admins only"), 403
+    return jsonify(**monitor.summary(), db_round_trip_ms=monitor.db_round_trip_ms(_DB["engine"])), 200

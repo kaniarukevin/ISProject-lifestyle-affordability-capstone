@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Light, dark or follow the phone. Chosen on the You screen and remembered on this device.
+/// Light, dark or System (follow the device setting). Chosen on the You screen and remembered on this device.
 class ThemeController extends ChangeNotifier {
   static const _key = 'theme_mode_v1';
 

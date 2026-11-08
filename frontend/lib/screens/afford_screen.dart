@@ -6,6 +6,7 @@ import '../models/profile.dart';
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/busy_words.dart';
 import '../widgets/choice_sheet.dart';
@@ -36,7 +37,10 @@ List<Preset> suggestedPresets(Profile? p) {
   return [find('buy'), find('loan'), find('save'), find('move')];
 }
 
-class _AffordScreenState extends State<AffordScreen> {
+class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
+  @override
+  Future<void> reloadQuietly() => _loadHistory();
+
   List<Map<String, dynamic>> history = [];
   Preset? _preset;                    // the change being looked at (wide screens keep it open beside the answer)
   Map<String, dynamic>? _result;

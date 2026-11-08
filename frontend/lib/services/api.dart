@@ -32,6 +32,18 @@ class Api {
   /// so the app returns to the log-in screen instead of showing errors on every screen (audit A-16).
   void Function()? onUnauthorised;
 
+  /// Called after a request that changed the user's data succeeded (a record added, a plan saved, a check run),
+  /// so the screens showing that data refresh by themselves. Requests that change nothing are left out.
+  void Function(String path)? onWrite;
+
+  static bool _changesNothing(String path) =>
+      path.startsWith('/auth/') ||
+      path.startsWith('/me/explain') ||
+      path.startsWith('/me/statements/preview') ||
+      path.startsWith('/me/messages/preview') ||
+      path.startsWith('/me/password') ||
+      path.startsWith('/me/consent');
+
   // The free server can take up to a minute to wake up, so allow for it.
   static const _timeout = Duration(seconds: 60);
 
@@ -50,7 +62,9 @@ class Api {
     } catch (_) {
       throw ApiException('Could not reach the server. Check your internet connection and try again.');
     }
-    return _decode(r);
+    final data = _decode(r);
+    if (method != 'GET' && !_changesNothing(path)) onWrite?.call(path);
+    return data;
   }
 
   dynamic _decode(http.Response r) {
@@ -154,6 +168,15 @@ class Api {
 
   /// Service health, model register and users (admins only; no one's finances are included).
   Future<Map<String, dynamic>> adminOverview() async => (await get('/admin/overview')) as Map<String, dynamic>;
+
+  /// Each model and dataset with its results against the baseline (admins only; from model_register.py).
+  Future<Map<String, dynamic>> adminReports() async => (await get('/admin/reports')) as Map<String, dynamic>;
+
+  /// Response times, database time, errors and recent events since the server started (admins only).
+  Future<Map<String, dynamic>> adminPerformance() async => (await get('/admin/performance')) as Map<String, dynamic>;
+
+  /// Remove an account and all its data (admins only; admin accounts cannot be removed this way).
+  Future<void> adminDeleteUser(int id) => delete('/admin/users/$id');
 
   /// Everyone you pay (from statements), with their tags and suggestions.
   Future<Map<String, dynamic>> payees() async => (await get('/me/payees')) as Map<String, dynamic>;

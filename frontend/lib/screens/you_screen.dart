@@ -141,7 +141,7 @@ class YouScreen extends StatelessWidget {
                 segments: const [
                   ButtonSegment(value: ThemeMode.light, label: Text('Light')),
                   ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
-                  ButtonSegment(value: ThemeMode.system, label: Text('Phone')),
+                  ButtonSegment(value: ThemeMode.system, label: Text('System')),
                 ],
                 selected: {themes.mode},
                 onSelectionChanged: (s) => context.read<ThemeController>().set(s.first),

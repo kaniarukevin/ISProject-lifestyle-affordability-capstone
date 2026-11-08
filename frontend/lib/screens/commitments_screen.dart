@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/commitments.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
@@ -17,7 +18,10 @@ class CommitmentsScreen extends StatefulWidget {
   State<CommitmentsScreen> createState() => _CommitmentsScreenState();
 }
 
-class _CommitmentsScreenState extends State<CommitmentsScreen> {
+class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChange {
+  @override
+  Future<void> reloadQuietly() => _load();
+
   Commitments? c;
   Map<String, dynamic>? summary;
   bool busy = false;
@@ -34,12 +38,21 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> {
   Future<void> _load() async {
     try {
       final data = await api.getCommitments();
-      setState(() => c = Commitments.fromJson(data));
-      // Goals saved before deadlines existed get one now, so they start counting down.
+      if (!mounted) return;
+      setState(() {
+        c = Commitments.fromJson(data);
+        summary = (data['summary'] as Map?)?.cast<String, dynamic>() ?? summary;
+      });
+      // Goals saved before deadlines existed get one now, so they start counting down. Saved only when that
+      // changed something: saving on every load would make every screen reload after each visit here.
+      var filled = false;
       for (final g in c!.goals) {
-        if (g.deadline == null && !g.done) g.deadline = Goal.deadlineIn(g.monthsLeft);
+        if (g.deadline == null && !g.done) {
+          g.deadline = Goal.deadlineIn(g.monthsLeft);
+          filled = true;
+        }
       }
-      if (c!.obligations.isNotEmpty || c!.debts.isNotEmpty || c!.goals.isNotEmpty) await _save(quiet: true);
+      if (filled) await _save(quiet: true);
     } on ApiException catch (e) {
       setState(() {
         c = Commitments();
