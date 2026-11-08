@@ -3726,14 +3726,14 @@ def admin_validation():
         actions = s.scalars(select(AdminAction).order_by(AdminAction.at.desc(), AdminAction.id.desc()).limit(50)).all()
         # Budget lines kept in past months, pooled over everyone (no names, no amounts per person).
         today = _today()
-        kept = lines = budgeted_months = 0
+        b_kept = b_lines = b_months = 0
         for uid in set(s.scalars(select(Budget.user_id))):
             months = {(m["year"], m["month"]): m for m in _user_months(s, uid)[0]}
             for b in s.scalars(select(Budget).where(Budget.user_id == uid)):
                 if (b.year, b.month) >= (today.year, today.month) or (b.year, b.month) not in months:
                     continue
                 r = _budget_review(b.data, months[(b.year, b.month)])
-                kept, lines, budgeted_months = kept + r["kept"], lines + r["everyday_lines"], budgeted_months + 1
+                b_kept, b_lines, b_months = b_kept + r["kept"], b_lines + r["everyday_lines"], b_months + 1
         statement_users = {u for *_, u in txs}
 
     def rated(where):
@@ -3762,8 +3762,8 @@ def admin_validation():
         usage={"checks": len(scen), "people_checking": len({u for *_, u in scen}), "applied": applied,
                "by_preset": dict(presets.most_common()), "records_by_source": dict(sources),
                "ratings": len(ratings)},
-        budgets={"months": budgeted_months, "lines": lines, "kept": kept,
-                 "share_kept": round(kept / lines, 3) if lines else None},
+        budgets={"months": b_months, "lines": b_lines, "kept": b_kept,
+                 "share_kept": round(b_kept / b_lines, 3) if b_lines else None},
         admin_actions=[{"at": a.at.isoformat(timespec="minutes"), "action": a.action, "account": a.target_id}
                        for a in actions]), 200
 
