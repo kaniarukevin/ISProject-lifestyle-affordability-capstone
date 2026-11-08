@@ -12,19 +12,19 @@ import 'forecast_screen.dart';
 import 'spending_screen.dart';
 import 'you_screen.dart';
 
-class _Dest {
-  const _Dest(this.label, this.title, this.icon);
+class NavDest {
+  const NavDest(this.label, this.title, this.icon);
   final String label;   // read out by screen readers and shown as a tooltip
   final String title;   // the page heading
   final IconData icon;
 }
 
 const _dests = [
-  _Dest('Overview', 'Overview', Icons.home_rounded),
-  _Dest('Can I afford it?', 'Can I afford it?', Icons.verified_user_rounded),
-  _Dest('Forecast and budget', 'Forecast and budget', Icons.bar_chart_rounded),
-  _Dest('Plans: bills, debts and goals', 'Plans', Icons.calendar_month_rounded),
-  _Dest('You', 'You', Icons.person_rounded),
+  NavDest('Overview', 'Overview', Icons.home_rounded),
+  NavDest('Can I afford it?', 'Can I afford it?', Icons.verified_user_rounded),
+  NavDest('Forecast and budget', 'Forecast and budget', Icons.bar_chart_rounded),
+  NavDest('Plans: bills, debts and goals', 'Plans', Icons.calendar_month_rounded),
+  NavDest('You', 'You', Icons.person_rounded),
 ];
 
 /// Tosha's frame: five places, the same on every screen size. Under 600 px wide a floating black pill bar at the
@@ -41,16 +41,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
-  bool _admin = false;
   final _opened = <int>{0};   // tabs load the first time they are opened, not all five at start-up
-
-  @override
-  void initState() {
-    super.initState();
-    context.read<AppState>().api.isAdmin().then((a) {
-      if (mounted) setState(() => _admin = a);
-    }).catchError((_) {});
-  }
 
   void _go(int i) => setState(() {
         _tab = i;
@@ -65,7 +56,7 @@ class _HomeScreenState extends State<HomeScreen> {
       const AffordScreen(),
       const ForecastScreen(),
       const CommitmentsScreen(),
-      YouScreen(admin: _admin),
+      const YouScreen(),
     ];
     final body = IndexedStack(index: _tab, children: [
       for (var i = 0; i < pages.length; i++) _opened.contains(i) ? pages[i] : const SizedBox.shrink(),
@@ -89,7 +80,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                _Rail(selected: _tab, onSelect: _go),
+                NavRail(dests: _dests, selected: _tab, onSelect: _go),
                 const SizedBox(width: 16),
                 Expanded(child: page),
               ]),
@@ -104,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
             left: 0,
             right: 0,
             bottom: 22 + MediaQuery.paddingOf(context).bottom,
-            child: Center(child: _PillNav(selected: _tab, onSelect: _go)),
+            child: Center(child: PillNav(dests: _dests, selected: _tab, onSelect: _go)),
           ),
         ]),
       );
@@ -159,7 +150,7 @@ class _Page extends StatelessWidget {
 /// One round navigation button: lime when it is the current page.
 class _NavButton extends StatelessWidget {
   const _NavButton({required this.dest, required this.selected, required this.onTap, required this.size, required this.idle});
-  final _Dest dest;
+  final NavDest dest;
   final bool selected;
   final VoidCallback onTap;
   final double size;
@@ -192,8 +183,9 @@ class _NavButton extends StatelessWidget {
   }
 }
 
-class _Rail extends StatelessWidget {
-  const _Rail({required this.selected, required this.onSelect});
+class NavRail extends StatelessWidget {
+  const NavRail({super.key, required this.dests, required this.selected, required this.onSelect});
+  final List<NavDest> dests;   // the last one sits at the bottom of the rail
   final int selected;
   final ValueChanged<int> onSelect;
 
@@ -202,7 +194,7 @@ class _Rail extends StatelessWidget {
     final c = AppColors.of(context);
     Widget item(int i) => Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: _NavButton(dest: _dests[i], selected: i == selected, onTap: () => onSelect(i), size: 48, idle: c.navIcon),
+          child: _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 48, idle: c.navIcon),
         );
     return Container(
       width: 76,
@@ -211,16 +203,17 @@ class _Rail extends StatelessWidget {
       child: Column(children: [
         const ToshaLogo(size: 40),
         const SizedBox(height: 28),
-        for (var i = 0; i < 4; i++) item(i),
+        for (var i = 0; i < dests.length - 1; i++) item(i),
         const Spacer(),
-        item(4),
+        item(dests.length - 1),
       ]),
     );
   }
 }
 
-class _PillNav extends StatelessWidget {
-  const _PillNav({required this.selected, required this.onSelect});
+class PillNav extends StatelessWidget {
+  const PillNav({super.key, required this.dests, required this.selected, required this.onSelect});
+  final List<NavDest> dests;
   final int selected;
   final ValueChanged<int> onSelect;
 
@@ -235,9 +228,9 @@ class _PillNav extends StatelessWidget {
         boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 6))],
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        for (var i = 0; i < _dests.length; i++) ...[
+        for (var i = 0; i < dests.length; i++) ...[
           if (i > 0) const SizedBox(width: 6),
-          _NavButton(dest: _dests[i], selected: i == selected, onTap: () => onSelect(i), size: 52, idle: Colors.white),
+          _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 52, idle: Colors.white),
         ],
       ]),
     );

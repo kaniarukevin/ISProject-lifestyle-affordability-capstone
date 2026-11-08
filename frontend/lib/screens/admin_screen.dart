@@ -60,7 +60,9 @@ class _AdminScreenState extends State<AdminScreen> {
     final theme = Theme.of(context);
     if (d == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Admin')),
+        appBar: AppBar(title: const Text('Admin'), automaticallyImplyLeading: false, actions: [
+          TextButton(onPressed: () => context.read<AppState>().logOut(), child: const Text('Log out')),
+        ]),
         body: Center(child: error != null ? Text(error!) : const CircularProgressIndicator()),
       );
     }
@@ -70,7 +72,9 @@ class _AdminScreenState extends State<AdminScreen> {
     final users = (d!['recent_users'] as List).cast<Map<String, dynamic>>();
     final healthy = s['status'] == 'ok' && s['forecast_data_loaded'] != false && models.every((m) => m['present'] == true);
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin')),
+      appBar: AppBar(title: const Text('Admin'), automaticallyImplyLeading: false, actions: [
+          TextButton(onPressed: () => context.read<AppState>().logOut(), child: const Text('Log out')),
+        ]),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
