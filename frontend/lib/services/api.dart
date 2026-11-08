@@ -254,6 +254,10 @@ class Api {
       put('/me/months/$year/$month/income', {'amount': amount});
   Future<void> clearMonthIncome(int year, int month) => delete('/me/months/$year/$month/income');
 
+  /// Past months' budgets against what was really spent, newest first.
+  Future<List<Map<String, dynamic>>> budgetHistory() async =>
+      ((await get('/me/budgets/history') as Map<String, dynamic>)['months'] as List).cast<Map<String, dynamic>>();
+
   /// Forget the lines set by hand and go back to the recommended budget.
   Future<Map<String, dynamic>> resetBudget() async => (await post('/me/budget-plan/reset', {})) as Map<String, dynamic>;
 

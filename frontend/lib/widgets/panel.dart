@@ -57,6 +57,28 @@ class CardRow extends StatelessWidget {
       });
 }
 
+/// Cards side by side when there is room, stacked when not, each as tall as its own content. Use this instead
+/// of [CardRow] for cards holding charts: CardRow makes cards equal height by measuring them first, and charts
+/// that size themselves from the width they get cannot be measured that way (8 Nov: the budget page crashed).
+class CardColumns extends StatelessWidget {
+  const CardColumns({super.key, required this.children, this.minWidth = 290, this.gap = 20});
+  final List<Widget> children;
+  final double minWidth;
+  final double gap;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        final fit = ((box.maxWidth + gap) / (minWidth + gap)).floor().clamp(1, children.length);
+        if (fit == 1) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            for (var i = 0; i < children.length; i++) ...[if (i > 0) SizedBox(height: gap), children[i]],
+          ]);
+        }
+        final w = (box.maxWidth - gap * (fit - 1)) / fit;
+        return Wrap(spacing: gap, runSpacing: gap, children: [for (final c in children) SizedBox(width: w, child: c)]);
+      });
+}
+
 /// A page opened on top (forms, lists): a comfortable reading width on big screens, full width on phones.
 class PageWidth extends StatelessWidget {
   const PageWidth({super.key, required this.child, this.maxWidth = 760});

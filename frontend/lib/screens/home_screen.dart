@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -43,10 +44,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
   DateTime? _away;
 
+  // Where you were, so a reload opens the same place (cache_v1_ keys are wiped at log out, like the figures).
+  static const _placeKey = 'cache_v1_place';
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _restorePlace();
+  }
+
+  Future<void> _restorePlace() async {
+    final p = await SharedPreferences.getInstance();
+    final saved = p.getString(_placeKey);
+    if (saved == null || !mounted) return;
+    final parts = saved.split('|');
+    final tab = int.tryParse(parts.first) ?? 0;
+    setState(() {
+      _tab = tab.clamp(0, _dests.length - 1);
+      _opened.add(_tab);
+      _records = parts.length > 1 && parts[1] != '-' ? parts[1] : null;
+    });
+  }
+
+  Future<void> _savePlace() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_placeKey, '$_tab|${_records ?? '-'}');
   }
 
   @override
@@ -73,13 +96,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Records open inside the tab you are on (the nav stays); null when closed, '' for the newest month.
   String? _records;
 
-  void _go(int i) => setState(() {
-        _tab = i;
-        _opened.add(i);
-        _records = null;
-      });
+  void _go(int i) {
+    setState(() {
+      _tab = i;
+      _opened.add(i);
+      _records = null;
+    });
+    _savePlace();
+  }
 
-  void _openRecords([String month = '']) => setState(() => _records = month);
+  void _openRecords([String month = '']) {
+    setState(() => _records = month);
+    _savePlace();
+  }
+
+  void _closeRecords() {
+    setState(() => _records = null);
+    _savePlace();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +140,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         greeting: _tab == 0 && !inRecords
             ? 'Habari${(state.profile?.name ?? '').isNotEmpty ? ', ${state.profile!.name}' : ''}'
             : null,
-        onBack: inRecords ? () => setState(() => _records = null) : null,
+        onBack: inRecords ? _closeRecords : null,
         onAdd: _tab == 0 || inRecords ? () => showAddSheet(context) : null,
         onRecords: (_tab == 0 || _tab == 2) && !inRecords ? _openRecords : null,
         wide: wide,
