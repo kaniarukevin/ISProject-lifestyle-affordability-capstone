@@ -2,18 +2,20 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import '../widgets/busy_words.dart';
 import '../widgets/panel.dart';
-import 'payees_screen.dart' show TagChips;
+import 'payees_screen.dart' show PayeeCard;
 import 'profile_screen.dart' show kes;
 
 /// Bring in months of spending from an M-PESA statement: pick the PDF, check what was read, optionally say who
 /// unclear payees are, confirm one-off purchases, then import. Nothing is saved before Import.
 class StatementScreen extends StatefulWidget {
-  const StatementScreen({super.key});
+  const StatementScreen({super.key, this.messages = false});
+  /// Pasted M-PESA SMS instead of a PDF statement: keeps the figures current between statements.
+  final bool messages;
 
   @override
   State<StatementScreen> createState() => _StatementScreenState();
@@ -21,6 +23,7 @@ class StatementScreen extends StatefulWidget {
 
 class _StatementScreenState extends State<StatementScreen> {
   final _password = TextEditingController();
+  final _text = TextEditingController();
   List<int>? bytes;
   String? filename;
   bool busy = false;
@@ -30,12 +33,14 @@ class _StatementScreenState extends State<StatementScreen> {
   final oneOff = <int, bool>{};
   final goalsDone = <String>{};
   bool replaceManual = true;
+  bool _showAll = false;
 
   Api get api => context.read<AppState>().api;
 
   @override
   void dispose() {
     _password.dispose();
+    _text.dispose();
     super.dispose();
   }
 
@@ -58,7 +63,9 @@ class _StatementScreenState extends State<StatementScreen> {
       error = null;
     });
     try {
-      final p = await api.previewStatement(bytes!, filename ?? 'statement.pdf', _password.text.trim());
+      final p = widget.messages
+          ? await api.previewMessages(_text.text)
+          : await api.previewStatement(bytes!, filename ?? 'statement.pdf', _password.text.trim());
       setState(() {
         preview = p;
         for (final t in (p['transactions'] as List).cast<Map<String, dynamic>>()) {
@@ -85,6 +92,7 @@ class _StatementScreenState extends State<StatementScreen> {
         'period': preview!['period'],
         'completed_goals': goalsDone.toList(),
         'replace_manual': replaceManual,
+        'origin': preview!['origin'] ?? 'statement',
       });
       if (!mounted) return;
       final notes = ((r['notes'] as List?) ?? []).cast<String>();
@@ -105,39 +113,275 @@ class _StatementScreenState extends State<StatementScreen> {
     }
   }
 
-  Widget _payee(Map<String, dynamic> p) {
+  Widget _payee(Map<String, dynamic> p) => PayeeCard(
+        payee: p,
+        picked: tags[p['key']],
+        onTag: (tag) => setState(() => tags[p['key'] as String] = tag),
+      );
+
+  Widget _pasteStep(BuildContext context) {
     final theme = Theme.of(context);
-    final s = p['suggestion'] as Map<String, dynamic>?;
-    return Card(
-      margin: const EdgeInsets.only(top: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text((p['payee'] ?? p['label']) as String, style: const TextStyle(fontWeight: FontWeight.w600))),
-            Text(kes(p['total'] as num), style: const TextStyle(fontWeight: FontWeight.w600)),
+    final c = AppColors.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Paste your M-PESA messages', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 6),
+          Text('Keeps your figures current between statements. In your messages app, press and hold an M-PESA '
+              'confirmation, copy it, and paste it here. Paste as many as you like, one after another.',
+              style: TextStyle(color: c.muted)),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      TextField(
+        controller: _text,
+        minLines: 8,
+        maxLines: 16,
+        keyboardType: TextInputType.multiline,
+        onChanged: (_) => setState(() {}),
+        decoration: const InputDecoration(
+          labelText: 'M-PESA messages',
+          alignLabelWithHint: true,
+          hintText: 'TK12AB3CD4 Confirmed. Ksh1,240.00 paid to NAIVAS…',
+        ),
+      ),
+      if (error != null) _Problem(error!),
+      const SizedBox(height: 18),
+      FilledButton(
+        style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
+        onPressed: busy || _text.text.trim().isEmpty ? null : _read,
+        child: busy
+            ? const BusyWords(lines: ['Reading your messages…', 'Sorting shops and bills…', 'Skipping ones already in…'])
+            : const Text('Read messages'),
+      ),
+      const SizedBox(height: 12),
+      Row(children: [
+        Icon(Icons.lock_rounded, size: 16, color: c.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Only payments are kept, and only after you check them. Messages already in the app are '
+              'skipped, so pasting one twice is safe.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ),
+      ]),
+    ]);
+  }
+
+  Widget _pickStep(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    Widget step(String n, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(radius: 12, backgroundColor: c.field,
+                child: Text(n, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface))),
+            const SizedBox(width: 12),
+            Expanded(child: Padding(padding: const EdgeInsets.only(top: 2), child: Text(text))),
           ]),
-          Text('${p['type_label']} · ${p['count']} payment(s) · sorted as: '
-              '${p['direction'] == 'in' ? (inTagLabels[p['category']] ?? p['category']) : categoryLabel(p['category'] as String)}',
-              style: theme.textTheme.bodySmall),
-          // People remember when and how much, not account numbers.
-          ...((p['recent'] as List?) ?? []).cast<Map<String, dynamic>>().map((pm) =>
-              Text('• ${kes(pm['amount'] as num)} on ${pm['date']}', style: theme.textTheme.bodySmall)),
-          ...[if (s != null) s['why'] as String, ...((p['hints'] as List?) ?? []).cast<String>()].map((h) => Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(Icons.lightbulb_outline, size: 16, color: theme.colorScheme.primary),
-                  const SizedBox(width: 4),
-                  Expanded(child: Text(h, style: theme.textTheme.bodySmall)),
-                ]),
-              )),
-          const SizedBox(height: 8),
-          TagChips(
-            selected: tags[p['key']] ?? p['category'] as String?,   // the current category, highlighted
-            suggested: s?['tag'] as String?,
-            moneyIn: p['direction'] == 'in',
-            onPick: (tag) => setState(() => tags[p['key'] as String] = tag),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('Bring in months of spending at once', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 6),
+          Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about. '
+              'You see everything before anything is saved.', style: TextStyle(color: c.muted)),
+          const SizedBox(height: 18),
+          step('1', 'In the M-PESA app: Statements, then Request full statement (or dial *334#).'),
+          step('2', 'Safaricom emails you a PDF and texts you its password.'),
+          step('3', 'Choose the PDF here and type the password.'),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      Material(
+        color: bytes == null ? c.field : c.lime.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(24),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: busy ? null : _pick,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+            child: Column(children: [
+              Icon(bytes == null ? Icons.upload_file_rounded : Icons.picture_as_pdf_rounded, size: 36,
+                  color: theme.colorScheme.onSurface),
+              const SizedBox(height: 8),
+              Text(filename ?? 'Choose your statement (PDF)', textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(bytes == null ? 'Tap to pick the file' : 'Tap to choose a different file',
+                  style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+            ]),
           ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _password,
+        obscureText: true,
+        decoration: const InputDecoration(
+            labelText: 'Password (if the PDF is locked)', helperText: 'The code Safaricom sent you by SMS'),
+      ),
+      if (error != null) _Problem(error!),
+      const SizedBox(height: 18),
+      FilledButton(
+        style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
+        onPressed: busy || bytes == null ? null : _read,
+        child: busy ? const BusyWords(lines: statementWords) : const Text('Read statement'),
+      ),
+      const SizedBox(height: 12),
+      Row(children: [
+        Icon(Icons.lock_rounded, size: 16, color: c.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('The file and its password are only used to read it, then thrown away. They are never stored.',
+              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ),
+      ]),
+    ]);
+  }
+
+  Widget _reviewStep(BuildContext context, Map<String, dynamic> p) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final unsorted = (((p['coverage'] as Map)['unsorted'] ?? 0) as num).toDouble();
+    final all = (p['payees'] as List).cast<Map<String, dynamic>>();
+    final pay = all.where((x) => x['direction'] != 'in').toList();
+    final paidBy = all.where((x) => x['direction'] == 'in').toList();
+    final big = (p['transactions'] as List).cast<Map<String, dynamic>>().where((t) => t['one_off'] == true).toList();
+    final overlap = (p['manual_overlap'] as Map?)?.cast<String, dynamic>();
+    final fromMessages = p['origin'] == 'messages';
+    final notRead = ((p['not_read'] as List?) ?? []).cast<Map<String, dynamic>>();
+    Widget section(String title, String help) => Padding(
+          padding: const EdgeInsets.only(top: 24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(help, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+          ]),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Panel(
+        color: c.lime,
+        child: Row(children: [
+          Icon(Icons.verified_rounded, color: c.onLime, size: 32),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(fromMessages ? 'Read ${p['checks']['rows']} payment message(s)' : 'All ${p['checks']['rows']} transactions read',
+                  style: theme.textTheme.titleLarge?.copyWith(color: c.onLime)),
+              Text(fromMessages
+                  ? 'Check them below, then import. Anything you typed in by hand is kept.'
+                  : '${(p['period'] as List?)?.join(' to ') ?? ''}. Every total matches your statement, so nothing '
+                      'was missed.', style: TextStyle(color: c.onLime)),
+            ]),
+          ),
+        ]),
+      ),
+      if (notRead.isNotEmpty)
+        Container(
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(16)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${notRead.length} message(s) not read', style: TextStyle(color: c.warn, fontWeight: FontWeight.w700)),
+            for (final m in notRead.take(5))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('"${m['message']}…": ${m['reason']}', style: TextStyle(color: c.warn)),
+              ),
+          ]),
+        ),
+      const SizedBox(height: 16),
+      CardRow(minWidth: 200, children: [
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${p['new']}', style: theme.textTheme.headlineMedium),
+            Text(p['new'] == 0 ? 'Everything is already in the app' : 'New payments to bring in',
+                style: TextStyle(color: c.muted)),
+          ]),
+        ),
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${((1 - unsorted) * 100).round()}%', style: theme.textTheme.headlineMedium),
+            Text('of the money sorted already', style: TextStyle(color: c.muted)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(value: (1 - unsorted).clamp(0.0, 1.0), minHeight: 10,
+                  color: c.lime, backgroundColor: c.range),
+            ),
+          ]),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Text('Shops, bills and M-PESA types Tosha knows are sorted for you. Anything it is not sure about stays '
+          '"Not sorted yet": it still counts in your totals, and nothing is guessed. Money moving between your own '
+          'accounts is left out; what you put away counts as savings.',
+          style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+      if ((overlap?['count'] ?? 0) > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: Panel(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: replaceManual,
+              onChanged: (v) => setState(() => replaceManual = v),
+              title: Text('Replace my ${overlap!['count']} typed-in record(s) in ${(overlap['months'] as List).join(', ')}'),
+              subtitle: const Text('Recommended, so nothing is counted twice. Turn off only if those were cash '
+                  'payments M-PESA does not show.'),
+            ),
+          ),
+        ),
+      if (pay.isNotEmpty) ...[
+        section('Who you pay', 'Optional. Each shows what it is now; suggestions are in lime. Change one once and '
+            'Tosha remembers it for every statement. Skip any you do not recognise.'),
+        ...pay.take(_showAll ? pay.length : 8).map(_payee),
+        if (pay.length > 8 && !_showAll)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: FilledButton.tonal(
+                onPressed: () => setState(() => _showAll = true), child: Text('Show ${pay.length - 8} more')),
+          ),
+      ],
+      if (paidBy.isNotEmpty) ...[
+        section('Who pays you', 'Optional, but it makes your score real. Money from a bank could be your pay or '
+            'allowance, or your own money moving. You can change single payments later in Who you pay.'),
+        ...paidBy.map(_payee),
+      ],
+      if (big.isNotEmpty) ...[
+        section('Big one-off payments', 'Much bigger than a usual month. Keeping them apart stops one purchase from '
+            'bending your budget and forecast.'),
+        for (final t in big) _oneOffCard(t),
+      ],
+      if (error != null) _Problem(error!),
+      const SizedBox(height: 24),
+    ]);
+  }
+
+  Widget _oneOffCard(Map<String, dynamic> t) {
+    final n = t['n'] as int;
+    final goals = (t['goals'] as List? ?? []).cast<Map<String, dynamic>>();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Panel(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Column(children: [
+          CheckboxListTile(
+            value: oneOff[n] ?? false,
+            onChanged: (v) => setState(() => oneOff[n] = v ?? false),
+            title: Text('${kes(t['amount'] as num)} on ${t['date']}'),
+            subtitle: Text('${t['label']}\nA one-off purchase (phone, laptop, furniture…)'),
+            isThreeLine: true,
+          ),
+          ...goals.map((g) => SwitchListTile(
+                value: goalsDone.contains(g['name']),
+                onChanged: (v) => setState(() => v ? goalsDone.add(g['name'] as String) : goalsDone.remove(g['name'])),
+                title: Text('This was my "${g['name']}" goal'),
+                subtitle: Text('Target ${kes(g['target'] as num)}, saved ${kes(g['saved'] as num)}. '
+                    'Marks it done and stops setting money aside for it.'),
+              )),
         ]),
       ),
     );
@@ -145,165 +389,53 @@ class _StatementScreenState extends State<StatementScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final c = AppColors.of(context);
     final p = preview;
     return Scaffold(
-      appBar: AppBar(title: const Text('M-PESA statement')),
-      body: PageWidth(child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          if (p == null) ...[
-            Text('Bring in your spending from M-PESA', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text('Get a full statement from the M-PESA app or *334#. The file and its password are only used to '
-                'read it and are never stored; you check everything before it is saved.',
-                style: theme.textTheme.bodySmall),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: busy ? null : _pick,
-              icon: const Icon(Icons.picture_as_pdf_outlined),
-              label: Text(filename ?? 'Choose statement (PDF)'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _password,
-              obscureText: true,
-              decoration: const InputDecoration(
-                  labelText: 'Password (if the PDF is locked)', helperText: 'The code Safaricom sent you by SMS'),
-            ),
-            const SizedBox(height: 16),
-            FilledButton(
-              onPressed: busy || bytes == null ? null : _read,
-              child: busy
-                  ? const BusyWords(lines: statementWords)
-                  : const Text('Read statement'),
-            ),
-          ] else ...[
-            Card(
-              color: theme.colorScheme.primaryContainer,
-              child: ListTile(
-                leading: const Icon(Icons.verified_outlined),
-                title: Text('Read all ${p['checks']['rows']} transactions'),
-                subtitle: Text('${(p['period'] as List?)?.join(' to ') ?? ''}. '
-                    'Every total matches your statement, so nothing was missed.'),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(p['new'] == 0
-                ? 'Everything in this statement is already in the app.'
-                : '${p['new']} spending payments are ready to import. Money moving between your own bank and '
-                    'fund accounts is left out; what you put away counts as savings.'),
-            if (((p['manual_overlap'] as Map?)?['count'] ?? 0) > 0)
-              Card(
-                margin: const EdgeInsets.only(top: 12),
-                child: SwitchListTile(
-                  value: replaceManual,
-                  onChanged: (v) => setState(() => replaceManual = v),
-                  title: Text('Replace my ${(p['manual_overlap'] as Map)['count']} hand-entered record(s) in '
-                      '${((p['manual_overlap'] as Map)['months'] as List).join(', ')}'),
-                  subtitle: const Text('Recommended, so nothing is counted twice. Turn off only if those records '
-                      'were cash spending that M-PESA does not show.'),
+      appBar: AppBar(title: Text(p == null ? (widget.messages ? 'M-PESA messages' : 'M-PESA statement') : 'Check before you import')),
+      body: PageWidth(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [p == null ? (widget.messages ? _pasteStep(context) : _pickStep(context)) : _reviewStep(context, p)],
+        ),
+      ),
+      bottomNavigationBar: p == null
+          ? null
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Align(
+                  heightFactor: 1,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: FilledButton(
+                    style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
+                    onPressed: busy || p['new'] == 0 ? null : _import,
+                    child: busy
+                        ? const BusyWords(lines: ['Saving your records…', 'Working out your figures again…'])
+                        : Text(p['new'] == 0 ? 'Nothing new to import' : 'Import ${p['new']} payments'),
+                    ),
+                  ),
                 ),
               ),
-            Card(
-              margin: const EdgeInsets.only(top: 12),
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('${((1 - (((p['coverage'] as Map)['unsorted'] ?? 0) as num)) * 100).round()}% of your spending '
-                      'is already sorted', style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  Text('Shops, bills and M-PESA types Tosha knows are sorted for you. Anything it is not sure about '
-                      'stays "Not sorted yet": it still counts in your totals, and nothing is guessed.',
-                      style: theme.textTheme.bodySmall),
-                ]),
-              ),
             ),
-            ...() {
-              final all = (p['payees'] as List).cast<Map<String, dynamic>>();
-              final pay = all.where((x) => x['direction'] != 'in').toList();
-              final paidBy = all.where((x) => x['direction'] == 'in').toList();
-              return [
-                if (pay.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text('Who you pay', style: theme.textTheme.titleMedium),
-                  Text('Optional. The highlighted choice is what each one is now. Change it once and Tosha remembers '
-                      'it for every statement. Skip any you do not recognise.', style: theme.textTheme.bodySmall),
-                  ...pay.take(10).map(_payee),
-                  if (pay.length > 10)
-                    ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: Text('More (${pay.length - 10})'),
-                      children: pay.skip(10).map(_payee).toList(),
-                    ),
-                ],
-                if (paidBy.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text('Who pays you', style: theme.textTheme.titleMedium),
-                  Text('Optional, but it makes your score real. Money from a bank could be your pay or allowance, '
-                      'or your own money moving. If one source sends both (your salary and your own savings from '
-                      'NCBA, say), change single payments later in Who you pay and who pays you.',
-                      style: theme.textTheme.bodySmall),
-                  ...paidBy.map(_payee),
-                ],
-              ];
-            }(),
-            ...() {
-              final big = (p['transactions'] as List)
-                  .cast<Map<String, dynamic>>()
-                  .where((t) => t['one_off'] == true)
-                  .toList();
-              if (big.isEmpty) return <Widget>[];
-              return [
-                const SizedBox(height: 16),
-                Text('Big one-off payments', style: theme.textTheme.titleMedium),
-                Text('Much bigger than a usual month. Keeping them out of your usual spending stops one purchase '
-                    'from distorting your budget and forecast.', style: theme.textTheme.bodySmall),
-                ...big.map((t) {
-                  final n = t['n'] as int;
-                  final goals = (t['goals'] as List? ?? []).cast<Map<String, dynamic>>();
-                  return Card(
-                    margin: const EdgeInsets.only(top: 8),
-                    child: Column(children: [
-                      CheckboxListTile(
-                        value: oneOff[n] ?? false,
-                        onChanged: (v) => setState(() => oneOff[n] = v ?? false),
-                        title: Text('${kes(t['amount'] as num)} on ${t['date']}'),
-                        subtitle: Text('${t['label']}\nA one-off purchase (phone, laptop, furniture…)'),
-                        isThreeLine: true,
-                      ),
-                      ...goals.map((g) => SwitchListTile(
-                            value: goalsDone.contains(g['name']),
-                            onChanged: (v) => setState(() =>
-                                v ? goalsDone.add(g['name'] as String) : goalsDone.remove(g['name'])),
-                            title: Text('This was my "${g['name']}" goal'),
-                            subtitle: Text('Target ${kes(g['target'] as num)}, saved ${kes(g['saved'] as num)}. '
-                                'Marks it done and stops setting money aside for it.'),
-                          )),
-                    ]),
-                  );
-                }),
-              ];
-            }(),
-            if (error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(error!, style: TextStyle(color: theme.colorScheme.error)),
-              ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: busy || p['new'] == 0 ? null : _import,
-              icon: const Icon(Icons.download_done),
-              label: const Text('Import'),
-            ),
-          ],
-          if (p == null && error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(error!, style: TextStyle(color: theme.colorScheme.error)),
-            ),
-        ],
-      )),
+    );
+  }
+}
+
+class _Problem extends StatelessWidget {
+  const _Problem(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(14)),
+      child: Text(text, style: TextStyle(color: c.warn)),
     );
   }
 }

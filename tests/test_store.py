@@ -1463,3 +1463,33 @@ def test_admin_can_pause_an_account_and_sees_ratings_and_sorting(client, monkeyp
                                                                                     "4": 1, "5": 0}}
     assert [a["action"] for a in v["admin_actions"]] == ["unblock", "block"]
     assert "kevin@example.com" not in client.get("/admin/validation", headers=boss).get_data(as_text=True)
+
+
+def test_records_come_in_one_trip_and_budget_edits_are_remembered(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    r = client.get("/me/records", headers=h).get_json()
+    assert r["months"] and all(t["date"].startswith(r["month"]) for t in r["transactions"])
+    plan = client.get("/me/budget-plan", headers=h).get_json()
+    cat = plan["everyday"][0]
+    total = sum(plan["lines"][c] for c in plan["everyday"])
+    new = client.post("/me/budget-plan/edit", headers=h, json={"category": cat, "amount": 1234}).get_json()
+    assert new["lines"][cat] == 1234 and new["edited"] == [cat]
+    assert abs(sum(new["lines"][c] for c in new["everyday"]) - total) <= len(plan["everyday"])   # rounding only
+    assert new["lines"]["savings"] == plan["lines"]["savings"]                                  # savings untouched
+    assert client.post("/me/budget-plan/edit", headers=h, json={"category": "savings", "amount": 0}).status_code == 400
+    assert client.post("/me/budget-plan/reset", headers=h).get_json()["edited"] == []
+
+
+def test_a_month_s_money_in_can_be_set_by_the_user(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    first = client.get("/me/overview", headers=h).get_json()["timeline"][0]
+    y, m = first["year"], first["month"]
+    assert client.put(f"/me/months/{y}/{m}/income", headers=h, json={"amount": 31234}).status_code == 200
+    again = client.get("/me/overview", headers=h).get_json()["timeline"][0]
+    assert again["income"] == 31234 and again["income_from"] == "you"
+    assert client.delete(f"/me/months/{y}/{m}/income", headers=h).status_code == 200
+    assert client.get("/me/overview", headers=h).get_json()["timeline"][0]["income"] == first["income"]
+    assert client.post("/me/outside-money", headers=h, json={"income": 5000, "spending": 3000}).status_code == 200
+    assert client.get("/me/profile", headers=h).get_json()["outsideIncome"] == 5000

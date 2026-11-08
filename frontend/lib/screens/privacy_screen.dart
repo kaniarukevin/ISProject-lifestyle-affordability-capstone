@@ -9,6 +9,7 @@ import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 
 IconData _iconFor(String title) => switch (title.toLowerCase()) {
       final t when t.startsWith('who runs') => Icons.school_outlined,
@@ -113,7 +114,7 @@ class _Section extends StatelessWidget {
 Widget _loading(AsyncSnapshot snap, Widget Function(Map<String, dynamic>) done) => snap.hasError
     ? const Padding(padding: EdgeInsets.all(24), child: Text('Could not load the notice. Check your connection.'))
     : !snap.hasData
-        ? const Center(child: CircularProgressIndicator())
+        ? const BusyCenter(privacyWords)
         : done(snap.data as Map<String, dynamic>);
 
 /// Read-only view of the notice (from the sign-up screen and from You). Signed in, it also offers the rights actions.

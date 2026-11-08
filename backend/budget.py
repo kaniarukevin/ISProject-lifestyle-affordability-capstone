@@ -21,6 +21,24 @@ TRIM_FUN = {"Stable": 0.0, "Strained": 0.25, "Critical": 0.50}
 # (found in testing, 1 Nov: every budget had "money sent" even for people who never send money).
 OPTIONAL = {"airtime_data": "airtime and data", "mobile_money_transfers": "money sent to others",
             "entertainment": "entertainment"}
+# With two or more full months of records, ANY everyday line the household never uses gets no budget (8 Nov:
+# someone whose power is in the rent, or who walks to work, should not be given a utilities or transport line).
+LABELS = {"food_groceries": "food", "transport": "transport", "utilities": "power, water and internet",
+          **OPTIONAL}
+# How much the household's own pattern counts against households like it, by months of history
+# (scripts/own_weight_experiment.py, 8 Nov): chosen on half the held-out households, kept only where the other
+# half confirmed it. 3-5 months did not confirm (0.8 was slightly worse), so it stays at the validated 0.5.
+OWN_WEIGHT = {1: 0.67, 3: 0.5, 6: 0.8}
+OWN_SAVINGS_CAP = 0.40      # a usual saving above 40% of income is kept at 40%, so everyday money is never starved
+
+
+def own_weight(months):
+    """Weight of the household's own spending pattern for a given number of months of history."""
+    w = 0.0
+    for n, v in sorted(OWN_WEIGHT.items()):
+        if months >= n:
+            w = v
+    return w
 _MODEL = {}
 
 
@@ -47,7 +65,8 @@ def _num(value, name, minimum=0.0):
 
 
 def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_job=False,
-                     urban_rural="urban", state="Stable", goal_per_month=0, last_month=None, own_spending=None):
+                     urban_rural="urban", state="Stable", goal_per_month=0, last_month=None, own_spending=None,
+                     own_months=0, own_savings=0.0):
     """own_spending: the household's usual monthly spending per everyday category (from its own records).
     When given, the split is half the model's (households like this one) and half the household's own
     pattern, and optional lines it never uses get nothing."""
@@ -56,7 +75,13 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
     notes = []
     fixed = {c: float(fixed.get(c, 0)) for c in FIXED}
     fixed_total = sum(fixed.values())
-    savings = max(0.10 * income, goal_per_month)
+    # Savings: at least 10%, or the goal, or what the household already saves, whichever is most. A good saver
+    # is never told to save less than they do.
+    habit = min(float(own_savings or 0), OWN_SAVINGS_CAP * income)
+    savings = max(0.10 * income, goal_per_month, habit)
+    if habit > max(0.10 * income, goal_per_month):
+        notes.append(f"You usually save about KES {round(habit):,} a month, more than the 10% minimum, so your "
+                     "budget keeps that.")
     everyday = income - fixed_total - savings
     if everyday < 0:
         savings = max(0.0, income - fixed_total)
@@ -74,8 +99,10 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
     share = pd.Series(share / share.sum(), index=variable)
     own = pd.Series({c: float((own_spending or {}).get(c, 0)) for c in variable})
     if own.sum() > 0:
-        share = 0.5 * share + 0.5 * own / own.sum()
-        unused = [c for c in OPTIONAL if c in variable and own[c] == 0]
+        w = own_weight(max(1, int(own_months or 1)))
+        share = (1 - w) * share + w * own / own.sum()
+        candidates = variable if (own_months or 0) >= 2 else [c for c in OPTIONAL if c in variable]
+        unused = [c for c in candidates if own[c] == 0]
         share[unused] = 0.0
         share = share / share.sum()
         notes.append("Split using your own spending pattern and households like yours.")
@@ -84,7 +111,7 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
             notes.append("Money you send (chama, family support) is already set aside under your commitments, "
                          "so it has no separate line.")
         if unused:
-            notes.append(f"No budget for {', '.join(OPTIONAL[c] for c in unused)}: you have not spent on "
+            notes.append(f"No budget for {', '.join(LABELS.get(c, c) for c in unused)}: you have not spent on "
                          f"{'it' if len(unused) == 1 else 'them'}. Record spending there and it comes back.")
     limits = {c: everyday * float(share[c]) for c in variable}
 
@@ -148,4 +175,6 @@ def evaluate(payload):
         if state not in STATES:
             raise BudgetInputError("state must be Stable, Strained or Critical")
     return recommend_budget(income, fixed, size, deps, hh.get("formal_job", False), urban_rural, state,
-                            goal, payload.get("last_month"), own)
+                            goal, payload.get("last_month"), own,
+                            int(_num(payload.get("own_months", 0), "own_months")),
+                            _num(payload.get("own_savings", 0), "own_savings"))

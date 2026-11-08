@@ -177,6 +177,25 @@ class Profile(Base):
     income_types: Mapped[list | None] = mapped_column(JSON, nullable=True)  # INCOME_TYPES, pick all that apply
     studying: Mapped[bool] = mapped_column(Boolean, default=False)
     children_in_school: Mapped[int] = mapped_column(Integer, default=0)
+    # Budget lines the user set by hand ({category: KES}); kept for later months, the rest rebalances around them.
+    budget_edits: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Money Tosha cannot see because it never touches M-PESA (an allowance spent by card, cash): rough monthly
+    # amounts the user gave, added to every statement month. income_gap_answered: the "your statement shows less
+    # than you told us" question was answered, so it is not asked again.
+    outside_income: Mapped[float] = mapped_column(Float, default=0.0)
+    outside_spending: Mapped[float] = mapped_column(Float, default=0.0)
+    income_gap_answered: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class MonthIncome(Base):
+    """A month's money in, set by the user ("this month I really had KES 30,000"): wins over everything else."""
+    __tablename__ = "month_income"
+    __table_args__ = (UniqueConstraint("user_id", "year", "month"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    year: Mapped[int] = mapped_column(Integer)
+    month: Mapped[int] = mapped_column(Integer)
+    amount: Mapped[float] = mapped_column(Float)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
@@ -326,7 +345,10 @@ def _upgrade(engine):
                         "money_in": {"pinned": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "profiles": {"income_low": "FLOAT", "name": "VARCHAR(40)", "income_types": "JSON",
                                      "studying": f"BOOLEAN NOT NULL DEFAULT {false}",
-                                     "children_in_school": "INTEGER NOT NULL DEFAULT 0"},
+                                     "children_in_school": "INTEGER NOT NULL DEFAULT 0", "budget_edits": "JSON",
+                                     "outside_income": "FLOAT NOT NULL DEFAULT 0",
+                                     "outside_spending": "FLOAT NOT NULL DEFAULT 0",
+                                     "income_gap_answered": f"BOOLEAN NOT NULL DEFAULT {false}"},
                         "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP",
                                   "session_epoch": "INTEGER NOT NULL DEFAULT 0", "blocked_at": "TIMESTAMP"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
@@ -814,6 +836,7 @@ def get_profile():
                        savingsBalance=p.savings_balance or 0.0, estimates=p.estimates or {},
                        incomeLow=p.income_low, name=p.name, incomeTypes=p.income_types or [],
                        studying=bool(p.studying), childrenInSchool=p.children_in_school or 0,
+                       outsideIncome=p.outside_income or 0.0, outsideSpending=p.outside_spending or 0.0,
                        email=s.get(User, g.user_id).email,
                        incomes=[{"name": i.name, "amount": i.amount, "frequency": i.frequency} for i in incomes])
 
@@ -916,29 +939,58 @@ def list_transactions():
         return jsonify(transactions=[_tx_json(t) for t in s.scalars(q).all()])
 
 
+def _month_summaries(s, user_id):
+    """One line per month, newest first: usual spending by category, one-offs apart, the user's own money moving
+    left out, and how many records the month holds. Also whether any record came from a statement."""
+    q = select(Transaction.day, Transaction.amount, Transaction.category, Transaction.one_off, Transaction.source) \
+        .where(Transaction.user_id == user_id)
+    months, statement = {}, False
+    for day, amount, category, one_off, source in s.execute(q):
+        m = months.setdefault((day.year, day.month), {"year": day.year, "month": day.month, "count": 0,
+                                                      "total": 0.0, "one_off": 0.0, "by_category": {}})
+        m["count"] += 1
+        statement = statement or source == "mpesa"
+        if category == "own_account":
+            continue
+        if one_off:
+            m["one_off"] += amount
+            continue
+        m["total"] += amount
+        m["by_category"][category] = m["by_category"].get(category, 0.0) + amount
+    return [months[k] for k in sorted(months, reverse=True)], statement
+
+
 @bp.get("/me/transactions/summary")
 @login_required
 def transaction_summary():
-    """One line per month, newest first: usual spending by category, one-offs apart, the user's own money moving
-    left out (same rules as the app's month cards), and how many records the month holds."""
-    q = select(Transaction.day, Transaction.amount, Transaction.category, Transaction.one_off, Transaction.source) \
-        .where(Transaction.user_id == g.user_id)
-    months, statement = {}, False
     with session() as s:
-        for day, amount, category, one_off, source in s.execute(q):
-            m = months.setdefault((day.year, day.month), {"year": day.year, "month": day.month, "count": 0,
-                                                          "total": 0.0, "one_off": 0.0, "by_category": {}})
-            m["count"] += 1
-            statement = statement or source == "mpesa"
-            if category == "own_account":
-                continue
-            if one_off:
-                m["one_off"] += amount
-                continue
-            m["total"] += amount
-            m["by_category"][category] = m["by_category"].get(category, 0.0) + amount
-    rows = [months[k] for k in sorted(months, reverse=True)]
+        rows, statement = _month_summaries(s, g.user_id)
     return jsonify(months=rows, has_statement=statement), 200
+
+
+@bp.get("/me/records")
+@login_required
+def records():
+    """The Records screen in one trip: every month's summary, plus one month's records (?month=YYYY-MM, default
+    the newest month with records). Two requests one after the other cost two long round trips from a phone."""
+    month = request.args.get("month")
+    with session() as s:
+        rows, statement = _month_summaries(s, g.user_id)
+        if month:
+            try:
+                first = date(int(month[:4]), int(month[5:7]), 1)
+            except (ValueError, IndexError):
+                raise InputError("month must look like 2026-10")
+        elif rows:
+            first = date(rows[0]["year"], rows[0]["month"], 1)
+        else:
+            first = date(_today().year, _today().month, 1)
+        after = date(first.year + first.month // 12, first.month % 12 + 1, 1)
+        txs = s.scalars(select(Transaction).where(Transaction.user_id == g.user_id, Transaction.day >= first,
+                                                  Transaction.day < after)
+                        .order_by(Transaction.day.desc(), Transaction.id.desc())).all()
+        return jsonify(months=rows, has_statement=statement, month=f"{first.year}-{first.month:02d}",
+                       transactions=[_tx_json(t) for t in txs]), 200
 
 
 @bp.post("/me/transactions")
@@ -1026,14 +1078,18 @@ def _user_months(s, user_id):
         # (a late or short allowance shows; moving one's own savings never inflates income).
         got = actual.get(key, 0.0)
         paid = min(income_at(key), got + mixed.get(key, 0.0)) if "mixed" in tags_in else got
-        if paid == 0 and other.get(key, 0.0) > 0:
-            # The tagged pay did not come this month, but money did, from the user's own accounts or from
-            # people. An allowance paid into a bank and moved to M-PESA looks exactly like that, so the month
-            # is not scored as "nothing came in": it counts up to the usual income (found on a real statement,
-            # 7 Nov: five months scored with no income although 20,000-30,000 arrived each month).
-            return min(income_at(key), other[key])
-        return paid
+        # Money from the user's own accounts or from people tops the tagged pay up, to at most the usual income.
+        # An allowance paid into a bank and moved to M-PESA looks exactly like that (7 Nov: months with no pay
+        # scored as no income; 8 Nov: a 16,000 salary month with the rest of a 30,000 income moved in from the
+        # bank scored as 16,000). Moving extra savings around still never raises income above the usual.
+        return paid + min(other.get(key, 0.0), max(0.0, income_at(key) - paid))
     by_month, outside, one_offs = {}, {}, {}
+    profile = s.get(Profile, user_id)
+    out_in = float(profile.outside_income or 0) if profile else 0.0
+    out_spend = float(profile.outside_spending or 0) if profile else 0.0
+    statement_months = {(t.day.year, t.day.month) for t in txs if t.source in ("mpesa", "messages")}
+    overrides = {(r.year, r.month): r.amount
+                 for r in s.scalars(select(MonthIncome).where(MonthIncome.user_id == user_id))}
     for t in txs:
         key = (t.day.year, t.day.month)
         if t.category == OWN_ACCOUNT:
@@ -1063,11 +1119,20 @@ def _user_months(s, user_id):
     for (y, mo), cats in sorted(by_month.items()):
         out = outside.get((y, mo), {})
         un = sum(out.values())
-        spread = {c: cats[c] + (un * weights.get(c, 0.0) if c in EVERYDAY else 0.0) for c in SPENDING_CATEGORIES}
+        # Card and cash spending the user estimated (statement months only: typed-in months already have it).
+        extra = out_spend if (y, mo) in statement_months else 0.0
+        spread = {c: cats[c] + ((un + extra) * weights.get(c, 0.0) if c in EVERYDAY else 0.0)
+                  for c in SPENDING_CATEGORIES}
         from_statement = use_actual and (y, mo) in covered
+        if (y, mo) in overrides:
+            money_in, source = overrides[(y, mo)], "you"
+        elif from_statement:
+            money_in, source = month_income((y, mo)) + out_in, "statement"
+        else:
+            money_in, source = income_at((y, mo)), "profile"
         months.append({"year": y, "month": mo, **spread,
-                       "income_primary": round(month_income((y, mo)) if from_statement else income_at((y, mo)), 2),
-                       "income_from": "statement" if from_statement else "profile",
+                       "income_primary": round(money_in, 2),
+                       "income_from": source, "outside_estimate": round(extra, 2),
                        "unsorted": round(un, 2), "outside": {k: round(v, 2) for k, v in out.items()},
                        "known": {c: round(v, 2) for c, v in cats.items()}})
     return months, income, one_offs
@@ -1090,7 +1155,10 @@ def monthly_summary():
     return jsonify(months=months)
 
 
-BUDGET_LINES = SPENDING_CATEGORIES + ["other_commitments"]
+# Shopping, health and personal care get budget lines of their own when the household spends on them in most
+# months (8 Nov), sized from its own average.
+EXTRA_LINES = ["shopping", "health", "personal_care"]
+BUDGET_LINES = SPENDING_CATEGORIES + ["other_commitments"] + EXTRA_LINES
 
 
 def _budget_lines(data):
@@ -1788,7 +1856,7 @@ def overview():
                    notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk, budget_warnings=warnings,
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record,
                    borrowing=borrowing, goal_progress=pic["goal_progress"], records_until=records_until,
-                   forecast_checks=forecast_checks,
+                   forecast_checks=forecast_checks, income_gap=_income_gap(pic),
                    # "Since November KES 8,500 went into savings. Count it towards Laptop?" (asked once per goal)
                    goal_suggestions=[x for x in pic["goal_progress"] if x["track"] is None and x["found_KES"] > 0])
 
@@ -1825,6 +1893,8 @@ def _recommend(pic, prev_limits, py, pm, set_aside=0.0):
         own["mobile_money_transfers"] = max(0.0, own["mobile_money_transfers"] - float(fixed.get("other_commitments", 0)))
         payload["own_spending"] = {cat: round(v, 2) for cat, v in own.items()
                                    if cat not in ("housing", "school_fees", "loan_repayment", "savings")}
+        payload["own_months"] = len(recent)
+        payload["own_savings"] = round(own["savings"], 2)
     prev_month = next((mo for mo in complete if (mo["year"], mo["month"]) == (py, pm)), None)
     if isinstance(prev_limits, dict) and prev_month:
         payload["last_month"] = {"limits": prev_limits,
@@ -1833,7 +1903,182 @@ def _recommend(pic, prev_limits, py, pm, set_aside=0.0):
         fixed["other_commitments"] = float(fixed.get("other_commitments", 0)) + set_aside
     plan = bud.evaluate(payload)
     plan["notes"] = notes + plan["notes"]
+    _add_extra_lines(plan, complete[-6:] if complete else [])
+    _apply_edits(plan, profile.budget_edits or {})
     return plan
+
+
+def _add_extra_lines(plan, recent):
+    """Shopping, health or personal care spent on in at least half of the recent months gets its own line, at
+    the household's average; the money comes out of the everyday lines, so the total still fits the income."""
+    if len(recent) < 2:
+        return plan
+    b = plan["budget"]
+    extras = {}
+    for c in EXTRA_LINES:
+        amounts = [mo.get("outside", {}).get(c, 0.0) for mo in recent]
+        if sum(1 for a in amounts if a > 0) * 2 >= len(recent) and statistics.mean(amounts) >= 200:
+            extras[c] = statistics.mean(amounts)
+    if not extras:
+        return plan
+    import budget as bud
+    everyday = [c for c in bud.model()["variable"] if c in b]
+    total = sum(float(b[c]) for c in everyday)
+    if total <= 0:
+        return plan
+    take = min(sum(extras.values()), total * 0.5)        # never more than half of the everyday money
+    k = take / sum(extras.values())
+    for c in everyday:
+        b[c] = round(float(b[c]) * (total - take) / total)
+    for c, v in extras.items():
+        b[c] = round(v * k)
+    plan["notes"].append("You spend on " + " and ".join(c.replace("_", " ") for c in extras)
+                         + " most months, so " + ("it has its own line" if len(extras) == 1 else "they have their own lines")
+                         + ", sized from what you usually spend.")
+    return plan
+
+
+def everyday_lines(plan):
+    import budget as bud
+    return [c for c in bud.model()["variable"] + EXTRA_LINES if c != "savings" and c in plan["budget"]]
+
+
+def _apply_edits(plan, edits):
+    """The user's own limits win; the other everyday lines are scaled so everyday money still adds up to the same
+    total. Savings and commitments are never touched (a budget edit cannot quietly stop saving or paying rent)."""
+    everyday = everyday_lines(plan)
+    mine = {c: max(0.0, float(v)) for c, v in edits.items() if c in everyday}
+    plan["edited"] = sorted(mine)
+    if not mine:
+        return plan
+    b = plan["budget"]
+    total = sum(float(b[c]) for c in everyday)
+    if sum(mine.values()) > total:                    # asked for more than there is: keep their proportions
+        k = total / sum(mine.values())
+        mine = {c: v * k for c, v in mine.items()}
+    rest = [c for c in everyday if c not in mine]
+    left = total - sum(mine.values())
+    others = sum(float(b[c]) for c in rest)
+    for c in rest:
+        b[c] = round(float(b[c]) * left / others) if others > 0 else round(left / len(rest))
+    for c, v in mine.items():
+        b[c] = round(v)
+    plan["notes"].append("You set " + ", ".join(f"{NOTE_LABELS.get(c, c)} to KES {round(v):,}" for c, v in mine.items())
+                         + "; the other everyday lines were adjusted so the total still fits your income.")
+    return plan
+
+
+INCOME_GAP_SHARE = 0.7     # statement income under 70% of the profile income, in most statement months
+
+
+def _income_gap(pic):
+    """When the statement shows clearly less money coming in than the user said they have (an allowance paid to
+    a bank and spent by card, cash wages), say so and ask, instead of silently scoring months as poorer than they
+    were. Asked once."""
+    p = pic["profile"]
+    if p is None or p.income_gap_answered or (p.outside_income or 0) > 0 or pic["income"] <= 0:
+        return None
+    seen = [mo["income_primary"] for mo in pic["complete"] if mo.get("income_from") == "statement"]
+    if len(seen) < 2:
+        return None
+    usual = statistics.median(seen)
+    if usual >= INCOME_GAP_SHARE * pic["income"]:
+        return None
+    return {"statement_KES": round(usual), "profile_KES": round(pic["income"]),
+            "gap_KES": round(pic["income"] - usual)}
+
+
+@bp.post("/me/outside-money")
+@login_required
+def set_outside_money():
+    """Money that never touches M-PESA, roughly per month: {"income": 14000, "spending": 9000}. Added to every
+    statement month (income) and spread over the everyday lines in the household's own proportions (spending)."""
+    b = _body()
+    with session() as s:
+        p = s.get(Profile, g.user_id)
+        if p is None:
+            return jsonify(error="set up your household first"), 400
+        p.outside_income = _num(b.get("income", 0), "income")
+        p.outside_spending = _num(b.get("spending", 0), "spending")
+        p.income_gap_answered = True
+        s.commit()
+    return jsonify(saved=True), 200
+
+
+@bp.post("/me/income-gap/dismiss")
+@login_required
+def dismiss_income_gap():
+    """"No, what the statement shows is right": stop asking."""
+    with session() as s:
+        p = s.get(Profile, g.user_id)
+        if p is not None:
+            p.income_gap_answered = True
+            s.commit()
+    return jsonify(saved=True), 200
+
+
+@bp.put("/me/months/<int:year>/<int:month>/income")
+@login_required
+def set_month_income(year, month):
+    """The user's own figure for one month's money in (a bonus paid to the bank, a month the allowance did not
+    come). Wins over the statement and the profile for that month only."""
+    if not 1 <= month <= 12:
+        raise InputError("month must be 1-12")
+    amount = _num(_body().get("amount"), "amount")
+    with session() as s:
+        row = s.scalar(select(MonthIncome).where(MonthIncome.user_id == g.user_id, MonthIncome.year == year,
+                                                 MonthIncome.month == month))
+        row = row or MonthIncome(user_id=g.user_id, year=year, month=month, amount=amount)
+        row.amount = amount
+        s.add(row)
+        s.commit()
+    return jsonify(saved=True), 200
+
+
+@bp.delete("/me/months/<int:year>/<int:month>/income")
+@login_required
+def clear_month_income(year, month):
+    with session() as s:
+        s.execute(delete(MonthIncome).where(MonthIncome.user_id == g.user_id, MonthIncome.year == year,
+                                            MonthIncome.month == month))
+        s.commit()
+    return jsonify(cleared=True), 200
+
+
+@bp.post("/me/budget-plan/edit")
+@login_required
+def edit_budget_line():
+    """Set one everyday line by hand ({"category": "food_groceries", "amount": 9000}). Remembered for later
+    months; this month's budget is rebuilt around it."""
+    b = _body()
+    cat = b.get("category")
+    amount = _num(b.get("amount"), "amount")
+    with session() as s:
+        profile = s.get(Profile, g.user_id)
+        if profile is None:
+            return jsonify(error="set up your household first"), 400
+        import budget as bud
+        if cat not in bud.model()["variable"] + EXTRA_LINES or cat == "savings":
+            raise InputError("only everyday lines can be set by hand")
+        profile.budget_edits = {**(profile.budget_edits or {}), cat: amount}
+        t = _today()
+        s.execute(delete(Budget).where(Budget.user_id == g.user_id, Budget.year == t.year, Budget.month == t.month))
+        s.commit()
+    return budget_plan()
+
+
+@bp.post("/me/budget-plan/reset")
+@login_required
+def reset_budget_edits():
+    """Back to the recommended budget: forget the lines set by hand and rebuild this month's budget."""
+    with session() as s:
+        profile = s.get(Profile, g.user_id)
+        if profile is not None:
+            profile.budget_edits = None
+        t = _today()
+        s.execute(delete(Budget).where(Budget.user_id == g.user_id, Budget.year == t.year, Budget.month == t.month))
+        s.commit()
+    return budget_plan()
 
 
 @bp.get("/me/budget-plan")
@@ -1868,11 +2113,13 @@ def budget_plan():
             s.commit()
         saved_now_data, auto_saved = plan, True
     # Safe to spend per day: what is left of the everyday limits, spread over the days left (audit 5.5).
-    everyday = [cat for cat in bud.model()["variable"]]
     lines = (_budget_lines(saved_now_data) if saved_now_data else None) or plan["budget"]
-    left = sum(float(lines.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in everyday + OUTSIDE)
+    everyday = bud.model()["variable"] + [c for c in EXTRA_LINES if c in lines]
+    left = sum(float(lines.get(cat, 0)) for cat in everyday) - sum(spent.get(cat, 0) for cat in set(everyday) | set(OUTSIDE))
     days_left = calendar.monthrange(y, m)[1] - pic["today"].day + 1
     return jsonify(year=y, month=m, plan=plan, spent_so_far=spent, saved=saved_now_data, auto_saved=auto_saved,
+                   everyday=everyday_lines(plan), edited=plan.get("edited", []), lines=lines,
+                   days_in_month=calendar.monthrange(y, m)[1],
                    everyday_left=round(left), days_left=days_left, safe_per_day=round(max(0.0, left) / days_left),
                    warnings=budget_warnings(lines, spent, pic["today"], everyday))
 
@@ -3357,7 +3604,7 @@ def export_my_data():
 def _delete_user(s, user_id):
     """Remove a user and everything kept about them (used by the user themselves and by an admin)."""
     for table in (MoneyIn, StatementRule, Scenario, Budget, Commitments, Transaction, IncomeSource, Profile,
-                  RevokedToken, ForecastSnapshot, IncomeHistory, Rating, PasswordReset):
+                  RevokedToken, ForecastSnapshot, IncomeHistory, Rating, PasswordReset, MonthIncome):
         s.execute(delete(table).where(table.user_id == user_id))
     s.execute(delete(User).where(User.id == user_id))
     s.commit()

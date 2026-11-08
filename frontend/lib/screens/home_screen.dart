@@ -70,34 +70,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
   final _opened = <int>{0};   // tabs load the first time they are opened, not all five at start-up
 
+  /// Records open inside the tab you are on (the nav stays); null when closed, '' for the newest month.
+  String? _records;
+
   void _go(int i) => setState(() {
         _tab = i;
         _opened.add(i);
+        _records = null;
       });
+
+  void _openRecords([String month = '']) => setState(() => _records = month);
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>(); // rebuild when the household changes
     final pages = [
-      DashboardScreen(onAddSpending: () => showAddSheet(context), onOpenTab: _go),
+      DashboardScreen(onAddSpending: () => showAddSheet(context), onOpenTab: _go, onOpenRecords: _openRecords),
       const AffordScreen(),
       const ForecastScreen(),
       const CommitmentsScreen(),
       const YouScreen(),
     ];
-    final body = IndexedStack(index: _tab, children: [
+    final tabs = IndexedStack(index: _tab, children: [
       for (var i = 0; i < pages.length; i++) _opened.contains(i) ? pages[i] : const SizedBox.shrink(),
     ]);
+    final body = _records == null
+        ? tabs
+        : RecordsView(key: ValueKey('records-$_records'), month: _records!.isEmpty ? null : _records);
 
     return LayoutBuilder(builder: (context, box) {
       final wide = box.maxWidth >= HomeScreen.wideFrom;
+      final inRecords = _records != null;
       final page = _Page(
-        title: _dests[_tab].title,
-        greeting: _tab == 0 ? 'Habari${(state.profile?.name ?? '').isNotEmpty ? ', ${state.profile!.name}' : ''}' : null,
-        onAdd: _tab == 0 ? () => showAddSheet(context) : null,
-        onRecords: _tab == 0 || _tab == 2
-            ? () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SpendingScreen()))
+        title: inRecords ? 'Your records' : _dests[_tab].title,
+        greeting: _tab == 0 && !inRecords
+            ? 'Habari${(state.profile?.name ?? '').isNotEmpty ? ', ${state.profile!.name}' : ''}'
             : null,
+        onBack: inRecords ? () => setState(() => _records = null) : null,
+        onAdd: _tab == 0 || inRecords ? () => showAddSheet(context) : null,
+        onRecords: (_tab == 0 || _tab == 2) && !inRecords ? _openRecords : null,
         wide: wide,
         child: body,
       );
@@ -132,8 +143,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
 /// The page heading, then the page. Overview also gets the greeting and the Add button.
 class _Page extends StatelessWidget {
-  const _Page({required this.title, required this.child, required this.wide, this.greeting, this.onAdd, this.onRecords});
+  const _Page({required this.title, required this.child, required this.wide, this.greeting, this.onAdd, this.onRecords,
+      this.onBack});
   final String title;
+  final VoidCallback? onBack;
   final String? greeting;
   final VoidCallback? onAdd;
   final VoidCallback? onRecords;
@@ -150,6 +163,10 @@ class _Page extends StatelessWidget {
         Padding(
           padding: EdgeInsets.only(top: wide ? 18 : 16, bottom: 12),
           child: Row(children: [
+            if (onBack != null) ...[
+              IconButton.filledTonal(tooltip: 'Back', onPressed: onBack, icon: const Icon(Icons.arrow_back_rounded)),
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 if (greeting != null) Text(greeting!, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
@@ -164,8 +181,12 @@ class _Page extends StatelessWidget {
             ],
             if (onAdd != null)
               wide
-                  ? FilledButton.icon(onPressed: onAdd, icon: const Icon(Icons.add_rounded), label: const Text('Add records'))
-                  : IconButton.filled(tooltip: 'Add records', onPressed: onAdd, icon: const Icon(Icons.add_rounded)),
+                  ? FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
+                      onPressed: onAdd, icon: const Icon(Icons.add_rounded), label: const Text('Add records'))
+                  : IconButton.filled(
+                      style: IconButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
+                      tooltip: 'Add records', onPressed: onAdd, icon: const Icon(Icons.add_rounded)),
           ]),
         ),
         Expanded(child: child),

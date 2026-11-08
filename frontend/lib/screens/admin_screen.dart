@@ -10,6 +10,7 @@ import '../theme/theme_controller.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 import 'home_screen.dart';
 import 'privacy_screen.dart';
 
@@ -128,7 +129,7 @@ class _AdminScreenState extends State<AdminScreen> {
                 const SizedBox(height: 12),
                 FilledButton(onPressed: _refreshAll, child: const Text('Try again')),
               ])
-            : const CircularProgressIndicator(),
+            : const BusyCenter(adminWords),
       );
     }
     final page = switch (_tab) {

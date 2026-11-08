@@ -62,3 +62,16 @@ def test_own_spending_pattern_shapes_the_split():
     assert mine["budget"]["mobile_money_transfers"] == 0 and mine["budget"]["entertainment"] == 0
     assert mine["budget"]["food_groceries"] > plain["budget"]["food_groceries"]
     assert mine["total"] == plain["total"]                       # still every shilling has a job
+
+
+def test_the_budget_follows_the_household_not_a_fixed_rule():
+    """8 Nov: with 2+ months of history a line the household never uses gets nothing (here utilities, e.g. power
+    included in rent), and a household that already saves 20% is not told to save 10%."""
+    own = {"food_groceries": 6000, "transport": 2500, "utilities": 0, "airtime_data": 800,
+           "mobile_money_transfers": 1500, "entertainment": 1200}
+    b = budget.recommend_budget(30000, {"housing": 9000}, own_spending=own, own_months=3, own_savings=6000)
+    assert b["budget"]["utilities"] == 0
+    assert b["budget"]["savings"] >= 6000
+    assert sum(b["budget"].values()) == 30000
+    first_month = budget.recommend_budget(30000, {"housing": 9000}, own_spending=own, own_months=1)
+    assert first_month["budget"]["utilities"] > 0            # one month is too little to drop a core line

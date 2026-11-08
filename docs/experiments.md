@@ -474,3 +474,25 @@ Limitation to state: someone genuinely living on savings now looks as if their u
 | Afford check | 13 | 11 |
 
 Local times after: Overview 123 ms, budget forecast 79 ms, afford 150 ms. All tests pass unchanged; the answers are the same, only fetched fewer times.
+
+## 2026-11-08: How much the household's own spending pattern counts in the budget
+
+Script: scripts/own_weight_experiment.py. Data: KIHBS-informed synthetic dataset v2, held-out (test) households,
+Stable months only. For month t the household's own everyday shares come from its previous months (at most 6);
+the prediction is the month's actual everyday total times the blended shares, (1 - w) x households like you
+(Random Forest + average Stable split, 28 Oct) + w x own shares. Error: KES off per category, summed over the six
+everyday categories. Test households split in two by ID: weights chosen on one half, confirmed once on the other.
+Rule fixed before running: keep 0.5 unless another weight is more than 2% better on the choosing half, and adopt
+it only where the confirming half does not get worse.
+
+| History | Choosing half: 0.5 / chosen | Chosen w | Confirming half: 0.5 / chosen | Decision |
+|---|---|---|---|---|
+| 1-2 months (n=34) | 7,224 / 6,424 | 0.67 | 3,927 / 3,907 | 0.67 (confirmed, small gain) |
+| 3-5 months (n=51) | 5,096 / 4,944 | 0.8 | 5,562 / 5,598 | 0.5 (not confirmed) |
+| 6+ months (n=111) | 5,275 / 4,824 | 0.8 | 4,846 / 4,505 | 0.8 (confirmed, 7% better) |
+
+Finding: the household's own pattern deserves more weight as history grows; with 6+ months it should count for
+80%. Not used for the decision, but noted: w = 0.67 beat 0.5 in all six cells (both halves, every bucket), so a
+single 0.67 would also have been a safe choice. Caveat: the synthetic households keep fairly stable shares over
+the year, which favours their own past; real households may change more, so the volunteers' months are the check.
+The w = 0 column (households like you only) is the worst everywhere: personalising the split clearly helps.

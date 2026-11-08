@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/busy_words.dart';
 
 /// "Why this score?" (SHAP). With no [choice] it explains the dashboard score; with a 'Can I afford it?' choice
 /// it also shows the score after it and which parts moved. Loaded only when asked: each explanation takes the
@@ -28,7 +29,7 @@ Future<void> showWhyScore(BuildContext context, {Map<String, dynamic>? choice}) 
               child: Text(e is ApiException ? e.message : 'Could not load the explanation. Try again later.'),
             );
           }
-          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          if (!snap.hasData) return const BusyCenter(whyWords);
           return _WhyBody(data: snap.data!, controller: controller);
         },
       ),

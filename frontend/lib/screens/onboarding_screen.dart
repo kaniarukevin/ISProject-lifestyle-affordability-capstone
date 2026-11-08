@@ -8,6 +8,7 @@ import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 
 /// First-time setup, one question at a time: name, how money comes in, who lives with you (children and fees),
 /// income, rent and savings, and a rough usual month. About two minutes; the first answer is "based on what
@@ -206,7 +207,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(56)),
                   onPressed: busy ? null : _next,
                   child: busy
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                      ? BusyWords(lines: step == _steps - 1 ? onboardingWords : savingWords)
                       : Text(step == _steps - 1 ? 'See my first answer' : 'Continue'),
                 ),
                 if (step == 0)

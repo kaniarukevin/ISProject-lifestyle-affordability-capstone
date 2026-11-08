@@ -3,12 +3,15 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../widgets/busy_words.dart';
 import '../widgets/tosha_logo.dart';
 import 'forgot_screen.dart';
 import 'password_field.dart';
 import 'privacy_screen.dart';
 
-/// First screen for a new user: create an account or log in.
+/// The landing page: log in (the default) or create an account. Wide screens get the black side banner with what
+/// Tosha does; phones get a short version of it above the form.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -19,7 +22,7 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
-  bool _newAccount = true;
+  bool _newAccount = false;          // most people opening the app already have an account
   bool _agreed = false;
   bool _busy = false;
   String? _error;
@@ -31,15 +34,24 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  void _switch() => setState(() {
+        _newAccount = !_newAccount;
+        _error = null;
+      });
+
   Future<void> _submit() async {
     final email = _email.text.trim();
     final password = _password.text;
-    if (!email.contains('@') || password.length < 8) {
-      setState(() => _error = 'Enter your email and a password of at least 8 characters.');
+    if (!email.contains('@')) {
+      setState(() => _error = 'Enter your email address.');
+      return;
+    }
+    if (password.length < 8) {
+      setState(() => _error = 'Passwords are at least 8 characters.');
       return;
     }
     if (_newAccount && !_agreed) {
-      setState(() => _error = 'Please read and agree to the privacy notice to create an account.');
+      setState(() => _error = 'Please read and agree to how your data is used to create an account.');
       return;
     }
     setState(() {
@@ -55,100 +67,182 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Widget _form(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    return AutofillGroup(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Text(_newAccount ? 'Create your account' : 'Welcome back', style: theme.textTheme.headlineMedium),
+        const SizedBox(height: 6),
+        Text(
+            _newAccount
+                ? 'It takes about two minutes, and Tosha gives you a first answer straight away.'
+                : 'Log in to see your score, your budget and what you can afford.',
+            style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+        const SizedBox(height: 28),
+        TextField(
+          controller: _email,
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
+          textInputAction: TextInputAction.next,
+          decoration: const InputDecoration(labelText: 'Email'),
+        ),
+        const SizedBox(height: 14),
+        PasswordField(
+          controller: _password,
+          helper: _newAccount ? 'At least 8 characters' : null,
+          autofillHints: [_newAccount ? AutofillHints.newPassword : AutofillHints.password],
+          onSubmitted: (_) => _submit(),
+        ),
+        if (!_newAccount)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () => Navigator.of(context)
+                  .push(MaterialPageRoute(builder: (_) => ForgotScreen(email: _email.text.trim()))),
+              child: const Text('Forgot password?'),
+            ),
+          ),
+        if (_newAccount) ...[
+          const SizedBox(height: 14),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => setState(() => _agreed = !_agreed),
+            child: Row(children: [
+              Checkbox(value: _agreed, onChanged: (v) => setState(() => _agreed = v ?? false)),
+              const Expanded(child: Text('I agree to how my data is used.')),
+              TextButton(
+                onPressed: () => showPrivacy(context, context.read<AppState>().api),
+                child: const Text('Read it'),
+              ),
+            ]),
+          ),
+        ],
+        if (_error != null)
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(14)),
+            child: Text(_error!, style: TextStyle(color: c.warn)),
+          ),
+        const SizedBox(height: 20),
+        FilledButton(
+          style: FilledButton.styleFrom(
+              backgroundColor: c.lime, foregroundColor: c.onLime, minimumSize: const Size.fromHeight(54)),
+          onPressed: _busy ? null : _submit,
+          child: _busy
+              ? BusyWords(lines: _newAccount ? signUpWords : logInWords)
+              : Text(_newAccount ? 'Create account' : 'Log in'),
+        ),
+        const SizedBox(height: 16),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Text(_newAccount ? 'Already have an account?' : 'New to Tosha?', style: TextStyle(color: c.muted)),
+          TextButton(
+            onPressed: _busy ? null : _switch,
+            child: Text(_newAccount ? 'Log in' : 'Create an account'),
+          ),
+        ]),
+      ]),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: SafeArea(
+          child: LayoutBuilder(builder: (context, box) {
+            final form = Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(28),
+                child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: _form(context)),
+              ),
+            );
+            if (box.maxWidth >= 900) {
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  const Expanded(child: _Banner()),
+                  Expanded(child: form),
+                ]),
+              );
+            }
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              child: Column(children: [
+                const _Banner(compact: true),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 28, 8, 0),
+                  child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: _form(context)),
+                ),
+              ]),
+            );
+          }),
+        ),
+      );
+}
+
+/// The black side of the landing page: the name, the promise and what Tosha does.
+class _Banner extends StatelessWidget {
+  const _Banner({this.compact = false});
+  final bool compact;
+
+  static const _points = [
+    (Icons.verified_user_rounded, 'Ask "Can I afford it?" before you commit to a loan, rent or a big buy.'),
+    (Icons.insights_rounded, 'See your financial state and score, read from your own M-PESA statement.'),
+    (Icons.account_balance_wallet_rounded, 'A budget that adjusts as your month goes.'),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.all(24),
-            children: [
-              const Center(child: _LogoTile()),
-              const SizedBox(height: 12),
-              Text('Tosha', textAlign: TextAlign.center, style: theme.textTheme.headlineMedium),
-              const SizedBox(height: 4),
-              Text("Know if it's enough.",
-                  textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
-              const SizedBox(height: 24),
-              SegmentedButton<bool>(
-                segments: const [
-                  ButtonSegment(value: true, label: Text('Create account')),
-                  ButtonSegment(value: false, label: Text('Log in')),
-                ],
-                selected: {_newAccount},
-                onSelectionChanged: (s) => setState(() {
-                  _newAccount = s.first;
-                  _error = null;
-                }),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _email,
-                keyboardType: TextInputType.emailAddress,
-                autofillHints: const [AutofillHints.email],
-                decoration: const InputDecoration(labelText: 'Email'),
-              ),
-              PasswordField(
-                controller: _password,
-                helper: _newAccount ? 'At least 8 characters' : null,
-                autofillHints: [_newAccount ? AutofillHints.newPassword : AutofillHints.password],
-                onSubmitted: (_) => _submit(),
-              ),
-              if (_newAccount)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Row(children: [
-                    Checkbox(value: _agreed, onChanged: (v) => setState(() => _agreed = v ?? false)),
-                    const Expanded(child: Text('I have read and agree to how my data is used.')),
-                    TextButton(
-                      onPressed: () => showPrivacy(context, context.read<AppState>().api),
-                      child: const Text('Read'),
+    final c = AppColors.of(context);
+    const white = Colors.white;
+    final muted = Colors.white.withValues(alpha: 0.7);
+    final head = Row(children: [
+      const ToshaLogo(size: 40),
+      const SizedBox(width: 12),
+      Text('Tosha', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: white)),
+    ]);
+    return Container(
+      padding: EdgeInsets.all(compact ? 24 : 48),
+      decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(32)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
+        children: [
+          head,
+          SizedBox(height: compact ? 20 : 0),
+          if (!compact) const Spacer(),
+          Text("Know if it's enough.",
+              style: (compact ? Theme.of(context).textTheme.headlineMedium : Theme.of(context).textTheme.displaySmall)
+                  ?.copyWith(color: white, fontWeight: FontWeight.w700, letterSpacing: -1, height: 1.1)),
+          const SizedBox(height: 12),
+          Text('Budgets and affordability for Kenyan households, built on how money really moves.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: muted)),
+          if (!compact) ...[
+            const SizedBox(height: 32),
+            for (final (icon, text) in _points)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle),
+                    child: Icon(icon, size: 18, color: c.onLime),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(text, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: white)),
                     ),
-                  ]),
-                ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
-                ),
-              const SizedBox(height: 20),
-              FilledButton(
-                onPressed: _busy ? null : _submit,
-                child: _busy
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : Text(_newAccount ? 'Create account' : 'Log in'),
+                  ),
+                ]),
               ),
-              if (!_newAccount)
-                TextButton(
-                  onPressed: () => Navigator.of(context)
-                      .push(MaterialPageRoute(builder: (_) => ForgotScreen(email: _email.text.trim()))),
-                  child: const Text('Forgot password?'),
-                ),
-              const SizedBox(height: 12),
-              Text('Only you can see your data, statement files are never kept, and you can delete '
-                  'everything at any time.',
-                  textAlign: TextAlign.center, style: theme.textTheme.bodySmall),
-            ],
-          ),
-        ),
+            const Spacer(),
+            Text('Only you see your data. Statement files are never kept, and you can delete everything at any time.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
+          ],
+        ],
       ),
     );
   }
-}
-
-/// The app icon on the sign-in screen: the lime ring on a black tile.
-class _LogoTile extends StatelessWidget {
-  const _LogoTile();
-
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(20)),
-        alignment: Alignment.center,
-        child: const ToshaLogo(size: 48),
-      );
 }

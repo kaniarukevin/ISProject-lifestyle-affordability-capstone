@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 
 /// Step 2 of the journey: rent, fees, debts and goals, turned into monthly figures by the /commitments engine.
 class CommitmentsScreen extends StatefulWidget {
@@ -134,7 +135,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
 
   @override
   Widget build(BuildContext context) {
-    if (c == null) return const Center(child: CircularProgressIndicator());
+    if (c == null) return const BusyCenter(plansWords);
     final theme = Theme.of(context);
     final col = AppColors.of(context);
     final s = summary;

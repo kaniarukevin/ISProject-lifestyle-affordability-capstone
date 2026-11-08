@@ -168,6 +168,16 @@ class AppTheme {
         centerTitle: false,
         titleTextStyle: text.titleLarge?.copyWith(fontWeight: FontWeight.w700),
       ),
+      // One calm fade for every page, on every platform. The default on Apple devices (and the web on a Mac)
+      // slides the page in from the side, which felt like leaving the app.
+      pageTransitionsTheme: const PageTransitionsTheme(builders: {
+        TargetPlatform.android: _FadeTransition(),
+        TargetPlatform.iOS: _FadeTransition(),
+        TargetPlatform.macOS: _FadeTransition(),
+        TargetPlatform.windows: _FadeTransition(),
+        TargetPlatform.linux: _FadeTransition(),
+        TargetPlatform.fuchsia: _FadeTransition(),
+      }),
       cardTheme: CardThemeData(
         color: card,
         elevation: 0,
@@ -273,4 +283,14 @@ class AppTheme {
       ),
     );
   }
+}
+
+
+class _FadeTransition extends PageTransitionsBuilder {
+  const _FadeTransition();
+
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation,
+          Animation<double> secondaryAnimation, Widget child) =>
+      FadeTransition(opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut), child: child);
 }

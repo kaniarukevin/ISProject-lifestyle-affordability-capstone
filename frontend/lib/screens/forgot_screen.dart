@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
+import '../widgets/busy_words.dart';
 import 'password_field.dart';
 
 /// Forgot password: (1) the email, (2) the 6-digit code from the email and a new password. On success the user
@@ -102,6 +104,7 @@ class _ForgotScreenState extends State<ForgotScreen> {
                   maxLength: 6,
                   decoration: const InputDecoration(labelText: '6-digit code', counterText: ''),
                 ),
+                const SizedBox(height: 14),
                 PasswordField(
                   controller: _password,
                   label: 'New password',
@@ -117,9 +120,13 @@ class _ForgotScreenState extends State<ForgotScreen> {
                 ),
               const SizedBox(height: 20),
               FilledButton(
+                style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(54),
+                    backgroundColor: AppColors.of(context).lime,
+                    foregroundColor: AppColors.of(context).onLime),
                 onPressed: _busy ? null : (_sent ? _reset : _send),
                 child: _busy
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? BusyWords(lines: _sent ? resetWords : sendCodeWords)
                     : Text(_sent ? 'Set new password' : 'Send code'),
               ),
               if (_sent)
