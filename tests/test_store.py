@@ -1507,3 +1507,7 @@ def test_past_budgets_are_compared_with_what_was_spent(client, monkeypatch):
     assert first["has_budget"] is True and first["everyday_lines"] == 2
     food = next(x for x in first["lines"] if x["category"] == "food_groceries")
     assert food["diff"] == food["spent"] - 1 and first["kept"] == 1                  # food over, transport kept
+    monkeypatch.setenv("ADMIN_EMAILS", "boss@example.com")
+    boss = signup(client, "boss@example.com")
+    v = client.get("/admin/validation", headers=boss)                                # pooled, with a saved budget
+    assert v.status_code == 200 and v.get_json()["budgets"]["kept"] == 1

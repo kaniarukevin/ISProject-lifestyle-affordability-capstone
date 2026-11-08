@@ -121,7 +121,7 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Widget _body() {
-    if (overview == null || reports == null || perf == null || valid == null) {
+    if (overview == null || reports == null || perf == null) {
       return Center(
         child: error != null
             ? Column(mainAxisSize: MainAxisSize.min, children: [
@@ -135,13 +135,16 @@ class _AdminScreenState extends State<AdminScreen> {
     final page = switch (_tab) {
       0 => _OverviewPage(d: overview!, perf: perf!, onOpen: _go),
       1 => _ModelsPage(models: _list(reports!['models'])),
-      2 => _RealUsePage(v: valid!, real: overview!['forecast_on_real_months'] as Map<String, dynamic>?),
+      // Real use loads on its own: if it fails, only this page says so, and the rest of the console still works.
+      2 => valid == null
+          ? Center(child: Text(error ?? 'Loading…', textAlign: TextAlign.center))
+          : _RealUsePage(v: valid!, real: overview!['forecast_on_real_months'] as Map<String, dynamic>?),
       3 => _PerformancePage(p: perf!),
       4 => _DatasetsPage(sets: _list(reports!['datasets'])),
       5 => _UsersPage(
           users: _list(overview!['recent_users']),
           total: (overview!['users'] as Map)['total'] as int,
-          actions: _list(valid!['admin_actions']),
+          actions: _list(valid?['admin_actions']),
           onChanged: () => Future.wait([_fetch('overview'), _fetch('valid')])),
       _ => const _SettingsPage(),
     };
