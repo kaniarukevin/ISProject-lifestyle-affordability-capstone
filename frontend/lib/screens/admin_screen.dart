@@ -824,7 +824,7 @@ class _RealUsePage extends StatelessWidget {
       const _Heading('Does Tosha match people\'s real finances?',
           sub: 'Users answer on a 1 to 5 scale under the overview and under each affordability answer. This is '
               'the test of the reworded hypothesis (deviation D16).'),
-      CardRow(minWidth: 320, children: [
+      CardColumns(minWidth: 320, children: [
         _ratingPanel(context, 'Overview', (ratings['overview'] as Map).cast<String, dynamic>()),
         _ratingPanel(context, '"Can I afford it?" answers', (ratings['afford'] as Map).cast<String, dynamic>()),
       ]),
@@ -870,6 +870,13 @@ class _RealUsePage extends StatelessWidget {
             'Checks followed by "I\'m doing this"'),
         _Tile('${usage['ratings']}', 'Ratings given'),
       ]),
+      if (v['budgets'] != null)
+        CardRow(minWidth: 180, children: [
+          _Tile((v['budgets'] as Map)['share_kept'] == null ? '-'
+              : '${(((v['budgets'] as Map)['share_kept'] as num) * 100).round()}%', 'Budget lines kept'),
+          _Tile('${(v['budgets'] as Map)['months']}', 'Past months with a budget'),
+          _Tile('${(v['budgets'] as Map)['kept']} of ${(v['budgets'] as Map)['lines']}', 'Everyday lines kept'),
+        ]),
       if (presets.isNotEmpty || sources.isNotEmpty)
         Panel(
           child: LayoutBuilder(builder: (context, box) {

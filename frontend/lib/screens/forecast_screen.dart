@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
@@ -32,6 +33,10 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
   @override
   void initState() {
     super.initState();
+    SharedPreferences.getInstance().then((p) {
+      final v = p.getInt(_viewKey);
+      if (v != null && mounted) setState(() => _view = v);
+    });
     _showLast();
     _load();
   }
@@ -60,7 +65,14 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
   /// 0: the next three months; 1: this month's budget (both in this tab, no new page).
   int _view = 0;
 
-  void _editBudget() => setState(() => _view = 1);
+  void _editBudget() => _setView(1);
+
+  static const _viewKey = 'cache_v1_forecast_view';
+
+  void _setView(int v) {
+    setState(() => _view = v);
+    SharedPreferences.getInstance().then((p) => p.setInt(_viewKey, v));
+  }
 
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -73,7 +85,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
               ButtonSegment(value: 1, label: Text("This month's budget"), icon: Icon(Icons.account_balance_wallet_rounded)),
             ],
             selected: {_view},
-            onSelectionChanged: (v) => setState(() => _view = v.first),
+            onSelectionChanged: (v) => _setView(v.first),
           ),
         ),
         const SizedBox(height: 16),

@@ -98,16 +98,14 @@ class DonutWithLegend extends StatelessWidget {
           ]),
         ),
     ]);
-    return LayoutBuilder(builder: (context, box) {
-      if (box.maxWidth < 420) {
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Center(child: donut),
-          const SizedBox(height: 16),
-          legend,
-        ]);
-      }
-      return Row(children: [donut, const SizedBox(width: 28), Expanded(child: legend)]);
-    });
+    // A Wrap, not a LayoutBuilder: the legend sits beside the donut when there is room and under it when not,
+    // and the whole thing can still be measured by a parent that needs its height.
+    return Wrap(
+      spacing: 28,
+      runSpacing: 16,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [donut, ConstrainedBox(constraints: const BoxConstraints(minWidth: 220, maxWidth: 380), child: legend)],
+    );
   }
 }
 

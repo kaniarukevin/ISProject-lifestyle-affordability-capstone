@@ -2045,6 +2045,53 @@ def clear_month_income(year, month):
     return jsonify(cleared=True), 200
 
 
+FIXED_LINES = ("housing", "school_fees", "loan_repayment", "other_commitments")
+
+
+def _budget_review(budget_data, month):
+    """A past month's saved budget against what was really spent: every line, and how many everyday lines were
+    kept. month is that month's row from _user_months (or None if nothing was recorded)."""
+    lines = _budget_lines(budget_data) or {}
+    known = (month or {}).get("known", {})
+    outside = (month or {}).get("outside", {})
+    rows = []
+    for c, planned in lines.items():
+        if c == "savings" or (planned <= 0 and not known.get(c) and not outside.get(c)):
+            continue
+        spent = float(known.get(c, outside.get(c, 0.0)))
+        rows.append({"category": c, "budget": round(planned), "spent": round(spent), "diff": round(spent - planned),
+                     "fixed": c in FIXED_LINES})
+    everyday = [r for r in rows if not r["fixed"] and r["budget"] > 0]
+    kept = sum(1 for r in everyday if r["spent"] <= r["budget"])
+    unsorted = float(outside.get(UNSORTED, 0.0))
+    return {"lines": sorted(rows, key=lambda r: (r["fixed"], -r["budget"])),
+            "kept": kept, "everyday_lines": len(everyday),
+            "planned": round(sum(r["budget"] for r in rows)), "spent": round(sum(r["spent"] for r in rows) + unsorted),
+            "unsorted": round(unsorted),
+            "savings_planned": round(float(lines.get("savings", 0))), "saved": round(float(known.get("savings", 0))),
+            "notes": [n for n in (budget_data or {}).get("notes", []) if isinstance(n, str)]}
+
+
+@bp.get("/me/budgets/history")
+@login_required
+def budget_history():
+    """Past months' budgets against what was spent, newest first (8 Nov). A month with records but no saved
+    budget says so: Tosha never rebuilds a budget the user did not see."""
+    with session() as s:
+        months, _, _ = _user_months(s, g.user_id)
+        saved = {(b.year, b.month): b.data for b in s.scalars(select(Budget).where(Budget.user_id == g.user_id))}
+    today = _today()
+    by_key = {(m["year"], m["month"]): m for m in months}
+    keys = sorted({k for k in set(by_key) | set(saved) if k < (today.year, today.month)}, reverse=True)[:12]
+    out = []
+    for k in keys:
+        if k in saved:
+            out.append({"year": k[0], "month": k[1], "has_budget": True, **_budget_review(saved[k], by_key.get(k))})
+        else:
+            out.append({"year": k[0], "month": k[1], "has_budget": False})
+    return jsonify(months=out), 200
+
+
 @bp.post("/me/budget-plan/edit")
 @login_required
 def edit_budget_line():
@@ -3677,6 +3724,16 @@ def admin_validation():
         sources = Counter(src for (src,) in s.execute(select(Transaction.source)))
         scen = s.execute(select(Scenario.request, Scenario.result, Scenario.user_id)).all()
         actions = s.scalars(select(AdminAction).order_by(AdminAction.at.desc(), AdminAction.id.desc()).limit(50)).all()
+        # Budget lines kept in past months, pooled over everyone (no names, no amounts per person).
+        today = _today()
+        kept = lines = budgeted_months = 0
+        for uid in set(s.scalars(select(Budget.user_id))):
+            months = {(m["year"], m["month"]): m for m in _user_months(s, uid)[0]}
+            for b in s.scalars(select(Budget).where(Budget.user_id == uid)):
+                if (b.year, b.month) >= (today.year, today.month) or (b.year, b.month) not in months:
+                    continue
+                r = _budget_review(b.data, months[(b.year, b.month)])
+                kept, lines, budgeted_months = kept + r["kept"], lines + r["everyday_lines"], budgeted_months + 1
         statement_users = {u for *_, u in txs}
 
     def rated(where):
@@ -3705,6 +3762,8 @@ def admin_validation():
         usage={"checks": len(scen), "people_checking": len({u for *_, u in scen}), "applied": applied,
                "by_preset": dict(presets.most_common()), "records_by_source": dict(sources),
                "ratings": len(ratings)},
+        budgets={"months": budgeted_months, "lines": lines, "kept": kept,
+                 "share_kept": round(kept / lines, 3) if lines else None},
         admin_actions=[{"at": a.at.isoformat(timespec="minutes"), "action": a.action, "account": a.target_id}
                        for a in actions]), 200
 

@@ -42,6 +42,7 @@ class BudgetView extends StatefulWidget {
 
 class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
   Map<String, dynamic>? r;
+  bool _past = false;                 // this month, or past months against what was spent
   String? error;
 
   Api get api => context.read<AppState>().api;
@@ -144,6 +145,22 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
+    final switcher = Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(spacing: 8, children: [
+        ChoiceChip(label: const Text('This month'), selected: !_past, showCheckmark: false,
+            onSelected: (_) => setState(() => _past = false)),
+        ChoiceChip(label: const Text('Past months'), selected: _past, showCheckmark: false,
+            onSelected: (_) => setState(() => _past = true)),
+      ]),
+    );
+    if (_past) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        switcher,
+        const SizedBox(height: 16),
+        const Expanded(child: _PastBudgets()),
+      ]);
+    }
     if (r == null) {
       return error == null
           ? const BusyCenter(budgetWords)
@@ -216,6 +233,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
       child: ListView(
         padding: const EdgeInsets.only(bottom: 24),
         children: [
+          switcher,
+          const SizedBox(height: 16),
           if (d['safe_per_day'] != null && daysLeft > 0)
             Panel(
               color: c.lime,
@@ -231,7 +250,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
             ),
           if (warnings.isNotEmpty) BudgetWarnings(warnings: warnings),
           const SizedBox(height: 20),
-          CardRow(minWidth: 340, children: [
+          CardColumns(minWidth: 340, children: [
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 Text('Your plan for ${monthNames[(d['month'] as int) - 1]}', style: theme.textTheme.titleLarge),
@@ -395,4 +414,216 @@ class _VersusRule extends StatelessWidget {
       ]),
     );
   }
+}
+
+
+/// Past months: each month's saved budget against what was really spent, line by line, how many lines were
+/// kept, and what the budget changed that month. A month without a saved budget says so; none is rebuilt.
+class _PastBudgets extends StatefulWidget {
+  const _PastBudgets();
+
+  @override
+  State<_PastBudgets> createState() => _PastBudgetsState();
+}
+
+class _PastBudgetsState extends State<_PastBudgets> with ReloadOnChange {
+  List<Map<String, dynamic>>? months;
+  String? error;
+
+  static const _names = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+    'October', 'November', 'December'];
+
+  @override
+  Future<void> reloadQuietly() => _load();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final m = await context.read<AppState>().api.budgetHistory();
+      if (mounted) setState(() => months = m);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => error = e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    if (months == null) {
+      return error != null ? Center(child: Text(error!)) : const BusyCenter(['Loading your past budgets…']);
+    }
+    final withBudget = months!.where((m) => m['has_budget'] == true).toList();
+    if (months!.isEmpty) {
+      return Center(child: Text('No past months yet.', style: TextStyle(color: c.muted)));
+    }
+    final top = withBudget.fold<double>(0, (a, m) {
+      final p = (m['planned'] as num).toDouble(), s = (m['spent'] as num).toDouble();
+      return [a, p, s].reduce((x, y) => x > y ? x : y);
+    });
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          if (withBudget.length >= 2)
+            Panel(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Text('Planned against spent', style: theme.textTheme.titleLarge),
+                const SizedBox(height: 4),
+                Text(_trend(withBudget), style: TextStyle(color: c.muted)),
+                const SizedBox(height: 14),
+                Row(children: [
+                  _key(c.range, 'Planned'),
+                  const SizedBox(width: 16),
+                  _key(theme.colorScheme.onSurface, 'Spent'),
+                  const SizedBox(width: 16),
+                  _key(c.warn, 'Spent, over the plan'),
+                ]),
+                for (final m in withBudget.reversed)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Row(children: [
+                      SizedBox(width: 44, child: Text(monthShort[(m['month'] as int) - 1], style: theme.textTheme.bodySmall)),
+                      Expanded(
+                        child: Column(children: [
+                          _Bar(value: (m['planned'] as num).toDouble(), top: top, color: c.range),
+                          const SizedBox(height: 3),
+                          _Bar(value: (m['spent'] as num).toDouble(), top: top,
+                              color: (m['spent'] as num) > (m['planned'] as num) ? c.warn : theme.colorScheme.onSurface),
+                        ]),
+                      ),
+                      SizedBox(
+                        width: 96,
+                        child: Text(_diffText(m), textAlign: TextAlign.right, style: theme.textTheme.bodySmall),
+                      ),
+                    ]),
+                  ),
+              ]),
+            ),
+          for (final m in months!) ...[
+            const SizedBox(height: 16),
+            m['has_budget'] == true ? _month(context, m) : _noBudget(context, m),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static Widget _key(Color color, String text) => Row(mainAxisSize: MainAxisSize.min, children: [
+        Container(width: 10, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
+        const SizedBox(width: 6),
+        Text(text, style: const TextStyle(fontSize: 12)),
+      ]);
+
+  static String _diffText(Map<String, dynamic> m) {
+    final d = (m['spent'] as num) - (m['planned'] as num);
+    return d > 0 ? '${kesAmount(d)} over' : '${kesAmount(-d)} under';
+  }
+
+  /// One plain sentence about the months shown: getting closer to the plan, or drifting away.
+  static String _trend(List<Map<String, dynamic>> m) {
+    final kept = m.map((x) => (x['kept'] as num) / ((x['everyday_lines'] as num) == 0 ? 1 : x['everyday_lines'] as num)).toList();
+    final recent = kept.first, oldest = kept.last;
+    final over = m.where((x) => (x['spent'] as num) > (x['planned'] as num)).length;
+    final keep = recent > oldest ? 'You are keeping more of your lines than before.'
+        : recent < oldest ? 'You are keeping fewer of your lines than before.' : 'You keep about the same share of your lines.';
+    return '$over of ${m.length} months went over the plan. $keep';
+  }
+
+  Widget _noBudget(BuildContext context, Map<String, dynamic> m) {
+    final c = AppColors.of(context);
+    return Panel(
+      child: Row(children: [
+        Expanded(
+          child: Text('${_names[(m['month'] as int) - 1]} ${m['year']}', style: Theme.of(context).textTheme.titleMedium),
+        ),
+        Flexible(
+          child: Text('No budget that month. Budgets are kept from the first time you open them.',
+              textAlign: TextAlign.right, style: TextStyle(color: c.muted)),
+        ),
+      ]),
+    );
+  }
+
+  Widget _month(BuildContext context, Map<String, dynamic> m) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final lines = (m['lines'] as List).cast<Map<String, dynamic>>();
+    final kept = m['kept'] as int, all = m['everyday_lines'] as int;
+    final notes = (m['notes'] as List).cast<String>();
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Expanded(child: Text('${_names[(m['month'] as int) - 1]} ${m['year']}', style: theme.textTheme.titleLarge)),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(color: kept == all && all > 0 ? c.lime : c.field, borderRadius: BorderRadius.circular(16)),
+            child: Text('$kept of $all lines kept',
+                style: TextStyle(fontWeight: FontWeight.w700, color: kept == all && all > 0 ? c.onLime : null)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        Text('Planned ${kesAmount(m['planned'] as num)} · spent ${kesAmount(m['spent'] as num)} · '
+            'saved ${kesAmount(m['saved'] as num)} of ${kesAmount(m['savings_planned'] as num)} planned'
+            '${(m['unsorted'] as num) > 0 ? ' · ${kesAmount(m['unsorted'] as num)} not sorted' : ''}',
+            style: TextStyle(color: c.muted)),
+        const SizedBox(height: 10),
+        for (final l in lines)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 7),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Row(children: [
+                Expanded(child: Text(_fixedLabels[l['category']] ?? categoryLabel(l['category'] as String),
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
+                Text('${kesAmount(l['spent'] as num)} of ${kesAmount(l['budget'] as num)}'),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 92,
+                  child: Text(
+                    (l['diff'] as num) > 0 ? '${kesAmount(l['diff'] as num)} over' : '${kesAmount(-(l['diff'] as num))} under',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(color: (l['diff'] as num) > 0 ? c.warn : c.muted, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 4),
+              _Bar(value: (l['spent'] as num).toDouble(), top: [(l['budget'] as num).toDouble(), (l['spent'] as num).toDouble()]
+                  .reduce((a, b) => a > b ? a : b), color: (l['diff'] as num) > 0 ? c.warn : ChartColors.category(context, l['category'] as String),
+                  track: true),
+            ]),
+          ),
+        if (notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('What the budget changed that month', style: theme.textTheme.titleSmall),
+          for (final n in notes)
+            Padding(padding: const EdgeInsets.only(top: 4), child: Text('• $n', style: TextStyle(color: c.muted))),
+        ],
+      ]),
+    );
+  }
+}
+
+/// A plain horizontal bar, as long as value/top; with [track], a grey track behind it shows the full line.
+class _Bar extends StatelessWidget {
+  const _Bar({required this.value, required this.top, required this.color, this.track = false});
+  final double value, top;
+  final Color color;
+  final bool track;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
+        final w = top <= 0 ? 0.0 : (box.maxWidth * value / top).clamp(value > 0 ? 4.0 : 0.0, box.maxWidth);
+        return Container(
+          height: 10,
+          alignment: Alignment.centerLeft,
+          decoration: track ? BoxDecoration(color: AppColors.of(context).range, borderRadius: BorderRadius.circular(5)) : null,
+          child: Container(width: w, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5))),
+        );
+      });
 }

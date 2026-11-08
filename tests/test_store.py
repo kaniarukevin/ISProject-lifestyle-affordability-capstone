@@ -1493,3 +1493,17 @@ def test_a_month_s_money_in_can_be_set_by_the_user(client, monkeypatch):
     assert client.get("/me/overview", headers=h).get_json()["timeline"][0]["income"] == first["income"]
     assert client.post("/me/outside-money", headers=h, json={"income": 5000, "spending": 3000}).status_code == 200
     assert client.get("/me/profile", headers=h).get_json()["outsideIncome"] == 5000
+
+
+def test_past_budgets_are_compared_with_what_was_spent(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    past = client.get("/me/budgets/history", headers=h).get_json()["months"]
+    assert past and all(m["has_budget"] is False for m in past)             # nothing saved: nothing invented
+    y, m = past[0]["year"], past[0]["month"]
+    client.put(f"/me/budgets/{y}/{m}", headers=h, json={"budget": {"food_groceries": 1, "transport": 99999,
+                                                                    "savings": 100}})
+    first = client.get("/me/budgets/history", headers=h).get_json()["months"][0]
+    assert first["has_budget"] is True and first["everyday_lines"] == 2
+    food = next(x for x in first["lines"] if x["category"] == "food_groceries")
+    assert food["diff"] == food["spent"] - 1 and first["kept"] == 1                  # food over, transport kept
