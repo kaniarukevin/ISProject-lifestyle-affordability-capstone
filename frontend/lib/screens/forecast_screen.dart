@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 import 'budget_screen.dart';
 
 /// Forecast and budget: the next three months at your usual pace (the plain, validated forecast), what to put
@@ -56,14 +57,30 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
     }
   }
 
-  Future<void> _editBudget() async {
-    await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => Scaffold(appBar: AppBar(title: const Text('Your budget')), body: const BudgetScreen())));
-    // a changed budget reloads the forecast by itself
-  }
+  /// 0: the next three months; 1: this month's budget (both in this tab, no new page).
+  int _view = 0;
+
+  void _editBudget() => setState(() => _view = 1);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: SegmentedButton<int>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 0, label: Text('Next 3 months'), icon: Icon(Icons.show_chart_rounded)),
+              ButtonSegment(value: 1, label: Text("This month's budget"), icon: Icon(Icons.account_balance_wallet_rounded)),
+            ],
+            selected: {_view},
+            onSelectionChanged: (v) => setState(() => _view = v.first),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Expanded(child: _view == 1 ? const BudgetView() : _forecast(context)),
+      ]);
+
+  Widget _forecast(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
     if (error != null && f == null) {
@@ -77,7 +94,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
         ]),
       );
     }
-    if (f == null) return const Center(child: CircularProgressIndicator());
+    if (f == null) return const BusyCenter(forecastWords);
     final d = f!;
     if (d['has_data'] != true) {
       return Center(
@@ -186,7 +203,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                   child: FilledButton.tonal(
                     style: FilledButton.styleFrom(backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
                     onPressed: _editBudget,
-                    child: Text(d['budget_source'] == 'saved' ? 'Change my budget' : 'Review and save my budget'),
+                    child: const Text("See this month's budget"),
                   ),
                 ),
               ]),

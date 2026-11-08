@@ -7,6 +7,7 @@ import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
+import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
 import '../widgets/rating_row.dart';
 import '../widgets/verdict.dart';
@@ -16,8 +17,10 @@ import 'why_score_sheet.dart';
 /// Top row: the affordability score, "Can I afford it?", and what is expected to be left this month.
 /// Then the budget forecast chart beside what is coming up, then anything worth knowing.
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key, this.onAddSpending, this.onOpenTab});
+  const DashboardScreen({super.key, this.onAddSpending, this.onOpenTab, this.onOpenRecords});
   final VoidCallback? onAddSpending;
+  /// Open Records inside this tab at a month ('YYYY-MM').
+  final ValueChanged<String>? onOpenRecords;
   /// Switch to another tab: 1 = Can I afford it?, 2 = Forecast and budget, 3 = Plans.
   final ValueChanged<int>? onOpenTab;
 
@@ -125,6 +128,10 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
                 Text('Showing your last figures, updating…', style: theme.textTheme.bodySmall),
               ]),
             ),
+          if (d['income_gap'] != null) ...[
+            _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
+            const SizedBox(height: 20),
+          ],
           CardRow(children: [
             _ScoreCard(
               score: (d['score'] as num).round(),
@@ -144,6 +151,13 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               onAll: () => widget.onOpenTab?.call(3),
             ),
           ]),
+          if (((d['timeline'] as List?) ?? []).isNotEmpty) ...[
+            const SizedBox(height: 20),
+            _YearCard(
+              months: (d['timeline'] as List).cast<Map<String, dynamic>>(),
+              onOpen: (key) => widget.onOpenRecords?.call(key),
+            ),
+          ],
           if (notes.isNotEmpty) ...[
             const SizedBox(height: 20),
             Panel(
@@ -534,3 +548,217 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
+
+
+/// "Your year": every scored month as a tile with its state and score, newest on the right. Tap one for that
+/// month's figures and a way into its records (lifestyle tracking over time, proposal R22).
+class _YearCard extends StatelessWidget {
+  const _YearCard({required this.months, required this.onOpen});
+  final List<Map<String, dynamic>> months;
+  final ValueChanged<String> onOpen;
+
+  static const _short = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  static const _long = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
+    'October', 'November', 'December'];
+
+  String _kes(num v) => 'KES ${v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
+
+  void _show(BuildContext context, Map<String, dynamic> m) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final key = '${m['year']}-${(m['month'] as int).toString().padLeft(2, '0')}';
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${_long[(m['month'] as int) - 1]} ${m['year']}', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 12),
+            Align(alignment: Alignment.centerLeft, child: _StateTag(state: m['state'] as String, score: m['score'] as int)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(child: Text('Money in', style: TextStyle(color: c.muted))),
+              Text(_kes(m['income'] as num), style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (m['income_from'] == 'you')
+                Padding(padding: const EdgeInsets.only(left: 6), child: Text('· set by you', style: TextStyle(color: c.muted))),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  editMonthIncome(context, m['year'] as int, m['month'] as int, m['income'] as num,
+                      setByYou: m['income_from'] == 'you');
+                },
+                child: const Text('Change'),
+              ),
+            ]),
+            for (final (label, value) in [
+              ('Spent', m['spent'] as num),
+              ('Saved', m['saved'] as num),
+            ])
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                child: Row(children: [
+                  Expanded(child: Text(label, style: TextStyle(color: c.muted))),
+                  Text(_kes(value), style: const TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+              ),
+            if (m['estimated'] == true)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('Partly from the rough figures you gave at setup.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onOpen(key);
+              },
+              child: const Text("See this month's records"),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final shown = months.length > 12 ? months.sublist(months.length - 12) : months;
+    final counts = {for (final s in ['Stable', 'Strained', 'Critical']) s: shown.where((m) => m['state'] == s).length};
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text('Your year', style: theme.textTheme.titleLarge),
+        const SizedBox(height: 4),
+        Text(
+            '${counts['Stable']} Stable, ${counts['Strained']} Strained and ${counts['Critical']} Critical '
+            'month${shown.length == 1 ? '' : 's'}. Tap a month to see it.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(height: 16),
+        LayoutBuilder(builder: (context, box) {
+          const gap = 8.0;
+          final per = box.maxWidth >= 720 ? 12 : 6;
+          final w = (box.maxWidth - gap * (per - 1)) / per;
+          return Wrap(spacing: gap, runSpacing: gap, children: [
+            for (final m in shown)
+              SizedBox(width: w, child: _MonthTile(m: m, label: _short[(m['month'] as int) - 1], onTap: () => _show(context, m))),
+          ]);
+        }),
+        const SizedBox(height: 12),
+        Wrap(spacing: 16, runSpacing: 6, children: [
+          for (final s in ['Stable', 'Strained', 'Critical'])
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 10, height: 10, decoration: BoxDecoration(color: _stateColor(c, s), borderRadius: BorderRadius.circular(3))),
+              const SizedBox(width: 6),
+              Text(s, style: theme.textTheme.bodySmall),
+            ]),
+        ]),
+      ]),
+    );
+  }
+}
+
+Color _stateColor(AppColors c, String s) => switch (s) { 'Stable' => c.stable, 'Strained' => c.strained, _ => c.critical };
+
+/// Text on a state colour: white only on the deep light-mode Critical brown, dark ink everywhere else.
+Color _stateInk(BuildContext context, String s) =>
+    s == 'Critical' && Theme.of(context).brightness == Brightness.light ? Colors.white : const Color(0xFF111111);
+
+class _MonthTile extends StatelessWidget {
+  const _MonthTile({required this.m, required this.label, required this.onTap});
+  final Map<String, dynamic> m;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    final state = m['state'] as String;
+    final fg = _stateInk(context, state);
+    return Tooltip(
+      message: '$label: $state, score ${m['score']}',
+      child: Material(
+        color: _stateColor(c, state),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Column(children: [
+              Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 12)),
+              Text('${m['score']}', style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 18)),
+              Text(state[0], style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 11)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StateTag extends StatelessWidget {
+  const _StateTag({required this.state, required this.score});
+  final String state;
+  final int score;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(color: _stateColor(c, state), borderRadius: BorderRadius.circular(20)),
+      child: Text('$state · score $score',
+          style: TextStyle(color: _stateInk(context, state), fontWeight: FontWeight.w700)),
+    );
+  }
+}
+
+
+/// The statement shows clearly less money coming in than the user said (8 Nov: a 16,000 salary on M-PESA, the
+/// rest of a 30,000 income paid to a bank). Tosha asks once instead of scoring the months as poorer.
+class _IncomeGapCard extends StatelessWidget {
+  const _IncomeGapCard({required this.gap});
+  final Map<String, dynamic> gap;
+
+  String _kes(num v) => 'KES ${v.round().toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Icon(Icons.help_rounded, color: theme.colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Does some of your money come outside M-PESA?', style: theme.textTheme.titleLarge)),
+        ]),
+        const SizedBox(height: 8),
+        Text('Your statement shows about ${_kes(gap['statement_KES'] as num)} coming in each month, but you told us '
+            'you have about ${_kes(gap['profile_KES'] as num)}. Tosha only sees M-PESA, so money paid to a bank or '
+            'in cash is missing, and your months look tighter than they were.',
+            style: TextStyle(color: c.muted)),
+        const SizedBox(height: 14),
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
+            onPressed: () => editOutsideMoney(context, income: gap['gap_KES'] as num),
+            child: const Text('Yes, set it up'),
+          ),
+          FilledButton.tonal(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              await context.read<AppState>().api.dismissIncomeGap();
+              messenger.showSnackBar(const SnackBar(
+                  content: Text('Understood. If your income changed, update it under You, Household and income.')));
+            },
+            child: Text('No, ${_kes(gap['statement_KES'] as num)} is right'),
+          ),
+        ]),
+      ]),
+    );
+  }
+}

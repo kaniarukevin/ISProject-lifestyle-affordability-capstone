@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import '../widgets/panel.dart';
+import '../widgets/busy_words.dart';
 import 'profile_screen.dart' show kes;
 
 /// One-tap choices for what a payee or payment is. [selected] is highlighted; [suggested] gets a hint mark.
@@ -19,19 +21,68 @@ class TagChips extends StatelessWidget {
   final bool moneyIn;
 
   @override
-  Widget build(BuildContext context) => Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: (moneyIn ? inTagLabels : tagLabels).entries
-            .where((e) => allowOwnAccount || e.key != 'own_account')
-            .map((e) => ChoiceChip(
-                  label: Text(e.key == suggested ? '${e.value} ?' : e.value),
-                  selected: selected == e.key,
-                  avatar: e.key == suggested && selected != e.key ? const Icon(Icons.lightbulb_outline, size: 16) : null,
-                  onSelected: (_) => onPick(e.key),
-                ))
-            .toList(),
-      );
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: (moneyIn ? inTagLabels : tagLabels).entries
+          .where((e) => allowOwnAccount || e.key != 'own_account')
+          .map((e) {
+        final hint = e.key == suggested && selected != e.key;
+        return ChoiceChip(
+          label: Text(e.value),
+          selected: selected == e.key,
+          showCheckmark: false,
+          // The suggestion wears a touch of lime, so the likely answer is one tap away and easy to spot.
+          backgroundColor: hint ? c.lime.withValues(alpha: 0.55) : null,
+          side: hint ? BorderSide(color: c.lime, width: 1.5) : null,
+          avatar: hint ? Icon(Icons.auto_awesome_rounded, size: 16, color: c.onLime) : null,
+          labelStyle: hint ? TextStyle(color: c.onLime, fontWeight: FontWeight.w600) : null,
+          tooltip: hint ? 'Suggested' : null,
+          onSelected: (_) => onPick(e.key),
+        );
+      }).toList(),
+    );
+  }
+}
+
+/// A suggestion for an unknown payee ("same amount early each month: rent?"): a soft lime box with the reason
+/// and a one-tap "Use it". Never applied without the user.
+class SuggestionBox extends StatelessWidget {
+  const SuggestionBox({super.key, required this.lines, this.label, this.onUse});
+  final List<String> lines;
+  final String? label;          // what the suggestion is, e.g. "Rent"
+  final VoidCallback? onUse;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+      decoration: BoxDecoration(
+        color: c.lime.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.16 : 0.32),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(children: [
+        Icon(Icons.auto_awesome_rounded, size: 18, color: Theme.of(context).colorScheme.onSurface),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            for (final l in lines) Text(l),
+          ]),
+        ),
+        if (onUse != null && label != null)
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime,
+                minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+            onPressed: onUse,
+            child: Text('Use: $label'),
+          ),
+      ]),
+    );
+  }
 }
 
 /// After tagging rent or school fees: offer to add it to commitments, so the budget sets it aside first.
@@ -268,12 +319,7 @@ class _PayeesScreenState extends State<PayeesScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final all = ((data?['payees'] as List?) ?? []).cast<Map<String, dynamic>>();
-    final shown = onlyToSort
-        ? all
-            .where((p) => p['tag'] == null && (p['category'] == 'unsorted' || p['type'] == 'sent' ||
-                p['type'] == 'pochi' || p['direction'] == 'in'))
-            .toList()
-        : all;
+    final shown = onlyToSort ? all.where(_toSort).toList() : all;
     final pay = shown.where((p) => p['direction'] != 'in').toList();
     final paidBy = shown.where((p) => p['direction'] == 'in').toList();
     return Scaffold(
@@ -284,31 +330,48 @@ class _PayeesScreenState extends State<PayeesScreen> {
         ),
       ]),
       body: PageWidth(child: data == null
-          ? Center(child: error != null ? Text(error!) : const CircularProgressIndicator())
+          ? (error != null ? Center(child: Text(error!)) : const BusyCenter(payeeWords))
           : RefreshIndicator(
               onRefresh: _load,
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  Text('Tell Tosha who people and businesses are, once. It applies to every past and future '
-                      'payment.', style: theme.textTheme.bodySmall),
-                  const SizedBox(height: 8),
-                  Text('${((data!['sorted_share'] as num) * 100).round()}% of your statement money is sorted',
-                      style: theme.textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  LinearProgressIndicator(value: (data!['sorted_share'] as num).toDouble(), minHeight: 8),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: onlyToSort,
-                    onChanged: (v) => setState(() => onlyToSort = v),
-                    title: const Text('Only show who still needs sorting'),
+                  Panel(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Text('${((data!['sorted_share'] as num) * 100).round()}% of your statement money is sorted',
+                          style: theme.textTheme.titleLarge),
+                      const SizedBox(height: 10),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(7),
+                        child: LinearProgressIndicator(
+                            value: (data!['sorted_share'] as num).toDouble(), minHeight: 14,
+                            color: AppColors.of(context).lime, backgroundColor: AppColors.of(context).range),
+                      ),
+                      const SizedBox(height: 10),
+                      Text('Tell Tosha who people and businesses are, once. It applies to every past and future '
+                          'payment. Suggestions are marked in lime; nothing is changed without you.',
+                          style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
+                      const SizedBox(height: 14),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: SegmentedButton<bool>(
+                          showSelectedIcon: false,
+                          segments: [
+                            ButtonSegment(value: true, label: Text('Still to sort (${all.where(_toSort).length})')),
+                            ButtonSegment(value: false, label: Text('Everyone (${all.length})')),
+                          ],
+                          selected: {onlyToSort},
+                          onSelectionChanged: (v) => setState(() => onlyToSort = v.first),
+                        ),
+                      ),
+                    ]),
                   ),
                   if (shown.isEmpty)
                     const Padding(
                       padding: EdgeInsets.only(top: 24),
                       child: Center(child: Text('Nothing left to sort. Upload a statement to add more.')),
                     ),
-                  ...pay.map((p) => _PayeeCard(
+                  ...pay.map((p) => PayeeCard(
                         payee: p,
                         onTag: (tag) => _tag(p, tag),
                         onUntag: p['tag'] == null ? null : () => _untag(p),
@@ -322,7 +385,7 @@ class _PayeesScreenState extends State<PayeesScreen> {
                         'or friends for something specific is "Paid back or a gift". Church, chama and harambee count '
                         'under "Family, friends and giving".',
                         style: theme.textTheme.bodySmall),
-                    ...paidBy.map((p) => _PayeeCard(
+                    ...paidBy.map((p) => PayeeCard(
                           payee: p,
                           onTag: (tag) => _tag(p, tag),
                           onUntag: p['tag'] == null ? null : () => _untag(p),
@@ -336,62 +399,91 @@ class _PayeesScreenState extends State<PayeesScreen> {
   }
 }
 
+/// Still worth asking about: not tagged yet, and either unsorted, a person (sent, Pochi) or money coming in.
+bool _toSort(Map<String, dynamic> p) =>
+    p['tag'] == null &&
+    (p['category'] == 'unsorted' || p['type'] == 'sent' || p['type'] == 'pochi' || p['direction'] == 'in');
+
 String _now(Map<String, dynamic> p, String? tag) {
   final c = tag ?? p['category'] as String;
   if (p['direction'] == 'in') return inTagLabels[c] ?? (c == 'own_account' ? inTagLabels['own_account']! : c);
   return tagLabels[c] ?? categoryLabel(c);
 }
 
-class _PayeeCard extends StatelessWidget {
-  const _PayeeCard({required this.payee, required this.onTag, this.onUntag, this.onPayments});
+/// One person or business: who, how much and how often, the recent payments people remember, a suggestion
+/// if there is one, and one-tap choices. Used in Who you pay and while importing a statement.
+class PayeeCard extends StatelessWidget {
+  const PayeeCard({super.key, required this.payee, required this.onTag, this.onUntag, this.onPayments, this.picked});
   final Map<String, dynamic> payee;
   final void Function(String tag) onTag;
   final VoidCallback? onUntag;
   final VoidCallback? onPayments;   // money coming in: change one payment on its own
+  final String? picked;             // a choice made on this screen but not saved yet (statement import)
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final c = AppColors.of(context);
     final s = payee['suggestion'] as Map<String, dynamic>?;
-    final tag = payee['tag'] as String?;
-    return Card(
-      margin: const EdgeInsets.only(top: 10),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    final tag = picked ?? payee['tag'] as String?;
+    final name = (payee['payee'] ?? payee['label'] ?? '') as String;
+    final moneyIn = payee['direction'] == 'in';
+    final hints = [if (s != null) s['why'] as String, ...((payee['hints'] as List?) ?? []).cast<String>()];
+    final sTag = s?['tag'] as String?;
+    final current = tag ?? payee['category'] as String?;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Panel(
+        padding: const EdgeInsets.all(20),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
-            Expanded(
-              child: Text((payee['payee'] ?? payee['label'] ?? '') as String,
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: c.field,
+              child: Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+                  style: TextStyle(fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface)),
             ),
-            Text(kes(payee['total'] as num), style: const TextStyle(fontWeight: FontWeight.w600)),
-          ]),
-          Text('${payee['type_label'] ?? ''} · ${payee['count']} payment(s) · last ${payee['last']}'
-              ' · sorted as: ${_now(payee, tag)}',
-              style: theme.textTheme.bodySmall),
-          if (s != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(children: [
-                Icon(Icons.lightbulb_outline, size: 16, color: theme.colorScheme.primary),
-                const SizedBox(width: 4),
-                Expanded(child: Text(s['why'] as String, style: theme.textTheme.bodySmall)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(name, style: const TextStyle(fontWeight: FontWeight.w700)),
+                Text('${payee['type_label'] ?? ''} · ${payee['count']} payment${payee['count'] == 1 ? '' : 's'}'
+                    '${payee['last'] != null ? ' · last ${payee['last']}' : ''}',
+                    style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
               ]),
             ),
-          const SizedBox(height: 8),
-          // The current category is highlighted, so you can see what it is and change it in one tap.
-          TagChips(
-            selected: tag ?? payee['category'] as String?,
-            suggested: s?['tag'] as String?,
-            moneyIn: payee['direction'] == 'in',
-            onPick: onTag,
-          ),
-          Wrap(spacing: 4, children: [
-            if (onPayments != null && (payee['count'] as num) > 1)
-              TextButton(onPressed: onPayments, child: const Text('Change one payment')),
-            if (onUntag != null)
-              TextButton(onPressed: onUntag, child: const Text('Undo: back to how the statement sorted it')),
+            Text(kes(payee['total'] as num), style: const TextStyle(fontWeight: FontWeight.w700)),
           ]),
+          // People remember when and how much, not account numbers.
+          for (final pm in ((payee['recent'] as List?) ?? []).cast<Map<String, dynamic>>())
+            Padding(
+              padding: const EdgeInsets.only(top: 4, left: 52),
+              child: Text('${kes(pm['amount'] as num)} on ${pm['date']}',
+                  style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+            ),
+          const SizedBox(height: 8),
+          Text('Now: ${_now(payee, tag)}', style: theme.textTheme.bodyMedium),
+          if (hints.isNotEmpty)
+            SuggestionBox(
+              lines: hints,
+              label: sTag == null || sTag == current
+                  ? null
+                  : (moneyIn ? inTagLabels[sTag] : tagLabels[sTag] ?? categoryLabel(sTag)),
+              onUse: sTag == null || sTag == current ? null : () => onTag(sTag),
+            ),
+          const SizedBox(height: 12),
+          // The current category is highlighted, so you can see what it is and change it in one tap.
+          TagChips(selected: current, suggested: sTag, moneyIn: moneyIn, onPick: onTag),
+          if ((onPayments != null && (payee['count'] as num) > 1) || onUntag != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Wrap(spacing: 4, children: [
+                if (onPayments != null && (payee['count'] as num) > 1)
+                  TextButton(onPressed: onPayments, child: const Text('Change one payment')),
+                if (onUntag != null)
+                  TextButton(onPressed: onUntag, child: const Text('Undo: back to how the statement sorted it')),
+              ]),
+            ),
         ]),
       ),
     );

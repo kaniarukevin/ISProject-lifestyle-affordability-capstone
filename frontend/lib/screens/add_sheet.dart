@@ -37,6 +37,13 @@ Future<void> showAddSheet(BuildContext context) => showModalBottomSheet<void>(
                 ),
                 const SizedBox(height: 10),
                 _Option(
+                  icon: Icons.sms_rounded,
+                  title: 'Paste M-PESA messages',
+                  subtitle: 'Keeps you current between statements',
+                  onTap: () => open(const StatementScreen(messages: true)),
+                ),
+                const SizedBox(height: 10),
+                _Option(
                   icon: Icons.edit_rounded,
                   title: 'Type it in',
                   subtitle: 'Cash and anything else',

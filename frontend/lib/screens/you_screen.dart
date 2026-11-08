@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
+import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
 import 'privacy_screen.dart';
 import 'payees_screen.dart';
@@ -107,6 +108,19 @@ class YouScreen extends StatelessWidget {
               title: const Text('Household and income'),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => push(const ProfileScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.account_balance_rounded),
+              title: const Text('Money outside M-PESA'),
+              subtitle: const Text('An allowance paid to a bank, cash, card spending'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () async {
+                final p = await state.api.getProfile();
+                if (context.mounted) {
+                  await editOutsideMoney(context,
+                      income: p?['outsideIncome'] as num?, spending: p?['outsideSpending'] as num?);
+                }
+              },
             ),
             ListTile(
               leading: const Icon(Icons.receipt_long_rounded),

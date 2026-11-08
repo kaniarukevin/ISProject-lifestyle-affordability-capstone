@@ -284,7 +284,8 @@ class _AskFormState extends State<AskForm> {
       if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: c.warn))),
     ];
     final button = FilledButton(
-      style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+      style: FilledButton.styleFrom(
+          minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
       onPressed: _busy ? null : _check,
       child: _busy ? const BusyWords(lines: checkingWords) : const Text('Check'),
     );
@@ -762,7 +763,8 @@ class _GoAheadState extends State<_GoAhead> {
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       FilledButton(
-        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+        style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
         onPressed: busy ? null : _go,
         child: const Text("I'm doing this"),
       ),

@@ -157,6 +157,10 @@ class Api {
   Future<Map<String, dynamic>> spendingSummary() async =>
       (await get('/me/transactions/summary')) as Map<String, dynamic>;
 
+  /// The Records screen in one trip: every month's summary and one month's records (default the newest).
+  Future<Map<String, dynamic>> records({String? month}) async =>
+      (await get(month == null ? '/me/records' : '/me/records?month=$month')) as Map<String, dynamic>;
+
   Future<List<Txn>> addTransactions(List<Txn> txns) async {
     final d = await post('/me/transactions', txns.map((t) => t.toJson()).toList()) as Map<String, dynamic>;
     return (d['transactions'] as List).map((e) => Txn.fromJson(e as Map<String, dynamic>)).toList();
@@ -234,6 +238,25 @@ class Api {
 
   Future<Map<String, dynamic>> budgetPlan() async => (await get('/me/budget-plan')) as Map<String, dynamic>;
 
+  /// Set one everyday budget line by hand (remembered for later months); returns the rebuilt budget.
+  Future<Map<String, dynamic>> editBudgetLine(String category, double amount) async =>
+      (await post('/me/budget-plan/edit', {'category': category, 'amount': amount})) as Map<String, dynamic>;
+
+  /// Money that never touches M-PESA, roughly per month (income in, card or cash spending out).
+  Future<void> setOutsideMoney(double income, double spending) =>
+      post('/me/outside-money', {'income': income, 'spending': spending});
+
+  /// "What the statement shows is right": stop asking about the income gap.
+  Future<void> dismissIncomeGap() => post('/me/income-gap/dismiss', {});
+
+  /// One month's money in, set by the user (wins for that month only), or cleared.
+  Future<void> setMonthIncome(int year, int month, double amount) =>
+      put('/me/months/$year/$month/income', {'amount': amount});
+  Future<void> clearMonthIncome(int year, int month) => delete('/me/months/$year/$month/income');
+
+  /// Forget the lines set by hand and go back to the recommended budget.
+  Future<Map<String, dynamic>> resetBudget() async => (await post('/me/budget-plan/reset', {})) as Map<String, dynamic>;
+
   Future<void> saveBudget(int year, int month, Map<String, dynamic> plan) => put('/me/budgets/$year/$month', plan);
 
   /// 'Can I afford this?' on the user's own data. [choice] is a preset with its inputs.
@@ -261,6 +284,10 @@ class Api {
   }
 
   /// Save a reviewed statement: the preview's transactions, the answers to its questions, finished goals.
+  /// Pasted M-PESA SMS confirmations, read like a statement (same review screen, nothing saved yet).
+  Future<Map<String, dynamic>> previewMessages(String text) async =>
+      (await post('/me/messages/preview', {'text': text})) as Map<String, dynamic>;
+
   Future<Map<String, dynamic>> importStatement(Map<String, dynamic> body) async =>
       (await post('/me/statements/import', body)) as Map<String, dynamic>;
 

@@ -9,6 +9,7 @@ import 'screens/onboarding_screen.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'theme/theme_controller.dart';
+import 'widgets/busy_words.dart';
 
 void main() {
   runApp(MultiProvider(
@@ -31,6 +32,29 @@ class App extends StatelessWidget {
         darkTheme: AppTheme.dark(),
         themeMode: context.watch<ThemeController>().mode,
         home: const _Start(),
+        // A whole-app wait (logging out) is said in words over whatever screen is showing.
+        builder: (context, child) => Stack(children: [
+          ?child,
+          if (context.watch<AppState>().busy case final lines?)
+            Positioned.fill(
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: 0.35),
+                child: Center(
+                  child: Material(
+                    color: Theme.of(context).colorScheme.surface,
+                    borderRadius: BorderRadius.circular(24),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 22),
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
+                        child: BusyWords(lines: lines),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ]),
       );
 }
 
@@ -41,7 +65,7 @@ class _Start extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    if (!state.loaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (!state.loaded) return const Scaffold(body: BusyCenter(startWords));
     if (!state.signedIn) return const AuthScreen();
     if (state.admin) return const AdminScreen();      // role-based: admins never see the household app
     if (state.consented == false) return const ConsentScreen();

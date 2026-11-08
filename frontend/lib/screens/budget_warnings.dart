@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/transaction.dart' show categoryLabel;
+import '../theme/app_theme.dart';
 import 'profile_screen.dart' show kes;
 
 /// Budget lines running out this month (from the server: over the limit, or 80%+ used well ahead of the calendar).
@@ -22,25 +23,23 @@ class BudgetWarnings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
+    final c = AppColors.of(context);
+    return Container(
       margin: const EdgeInsets.only(top: 12),
-      color: theme.colorScheme.errorContainer,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(Icons.speed, color: theme.colorScheme.onErrorContainer),
-            const SizedBox(width: 8),
-            Text('Budget check', style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.onErrorContainer)),
-          ]),
-          const SizedBox(height: 6),
-          ...warnings.map((w) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text('• ${message(w)}', style: TextStyle(color: theme.colorScheme.onErrorContainer)),
-              )),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(20)),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.speed_rounded, color: c.warn),
+          const SizedBox(width: 8),
+          Text('Running ahead', style: TextStyle(color: c.warn, fontWeight: FontWeight.w700)),
         ]),
-      ),
+        const SizedBox(height: 8),
+        ...warnings.map((w) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Text('• ${message(w)}', style: TextStyle(color: c.warn)),
+            )),
+      ]),
     );
   }
 }
