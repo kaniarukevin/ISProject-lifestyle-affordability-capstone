@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../widgets/tosha_logo.dart';
+import 'forgot_screen.dart';
 import 'password_field.dart';
 import 'privacy_screen.dart';
 
@@ -120,6 +121,12 @@ class _AuthScreenState extends State<AuthScreen> {
                     ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
                     : Text(_newAccount ? 'Create account' : 'Log in'),
               ),
+              if (!_newAccount)
+                TextButton(
+                  onPressed: () => Navigator.of(context)
+                      .push(MaterialPageRoute(builder: (_) => ForgotScreen(email: _email.text.trim()))),
+                  child: const Text('Forgot password?'),
+                ),
               const SizedBox(height: 12),
               Text('Only you can see your data, statement files are never kept, and you can delete '
                   'everything at any time.',

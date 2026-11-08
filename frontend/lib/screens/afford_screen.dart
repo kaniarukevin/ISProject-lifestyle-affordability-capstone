@@ -12,6 +12,7 @@ import '../widgets/busy_words.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
+import '../widgets/rating_row.dart';
 import '../widgets/verdict.dart';
 import 'why_score_sheet.dart';
 
@@ -528,6 +529,12 @@ class ResultView extends StatelessWidget {
       if (result['id'] != null) ...[
         gap,
         _GoAhead(result: result, onChanged: onChanged, onExploring: onExploring),
+        gap,
+        RatingCard(
+            key: ValueKey('rate-${result['id']}'),
+            where: 'afford',
+            scenarioId: result['id'] as int,
+            question: 'Does this answer match what you would expect?'),
       ],
       const SizedBox(height: 12),
       Text('Based on ${result['months_used'] ?? 'your recent'} month(s) of your own records. '

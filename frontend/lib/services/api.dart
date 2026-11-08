@@ -42,7 +42,8 @@ class Api {
       path.startsWith('/me/statements/preview') ||
       path.startsWith('/me/messages/preview') ||
       path.startsWith('/me/password') ||
-      path.startsWith('/me/consent');
+      path.startsWith('/me/consent') ||
+      path.startsWith('/me/ratings');
 
   // The free server can take up to a minute to wake up, so allow for it.
   static const _timeout = Duration(seconds: 60);
@@ -117,6 +118,20 @@ class Api {
     return token = d['token'] as String;
   }
 
+  /// Forgot password, step 1: email a 6-digit code. The answer is the same whether or not the email has an account.
+  Future<String> forgotPassword(String email) async =>
+      ((await post('/auth/forgot', {'email': email})) as Map<String, dynamic>)['message'] as String;
+
+  /// Forgot password, step 2: the code and a new password; logs this device in.
+  Future<String> resetPassword(String email, String code, String newPassword) async {
+    final d = await post('/auth/reset', {'email': email, 'code': code, 'new': newPassword});
+    return token = d['token'] as String;
+  }
+
+  /// "Does this match your real finances?" (1 to 5), on the overview or on one affordability check.
+  Future<void> rate(String where, int score, {int? scenarioId}) =>
+      post('/me/ratings', {'where': where, 'score': score, 'scenario_id': ?scenarioId});
+
   // ---- profile ----
   /// The saved profile, or null if this account has not set one up yet.
   Future<Map<String, dynamic>?> getProfile() async {
@@ -177,6 +192,12 @@ class Api {
 
   /// Remove an account and all its data (admins only; admin accounts cannot be removed this way).
   Future<void> adminDeleteUser(int id) => delete('/admin/users/$id');
+
+  /// Pause an account (it cannot log in; its data is kept) or let it back in (admins only).
+  Future<void> adminBlockUser(int id, bool blocked) => post('/admin/users/$id/block', {'blocked': blocked});
+
+  /// Ratings, sorting kept or corrected, feature use and admin actions, pooled (admins only).
+  Future<Map<String, dynamic>> adminValidation() async => (await get('/admin/validation')) as Map<String, dynamic>;
 
   /// Everyone you pay (from statements), with their tags and suggestions.
   Future<Map<String, dynamic>> payees() async => (await get('/me/payees')) as Map<String, dynamic>;

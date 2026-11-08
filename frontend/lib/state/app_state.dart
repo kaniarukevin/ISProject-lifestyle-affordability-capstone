@@ -71,6 +71,16 @@ class AppState extends ChangeNotifier {
 
   Future<void> signIn(String email, String password, {required bool newAccount, bool consent = false}) async {
     newAccount ? await api.register(email, password, consent: consent) : await api.login(email, password);
+    await _afterLogin();
+  }
+
+  /// Forgot password: the emailed code and a new password. Every other device is logged out; this one is in.
+  Future<void> resetPassword(String email, String code, String newPassword) async {
+    await api.resetPassword(email, code, newPassword);
+    await _afterLogin();
+  }
+
+  Future<void> _afterLogin() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, api.token!);
     profile = null;
