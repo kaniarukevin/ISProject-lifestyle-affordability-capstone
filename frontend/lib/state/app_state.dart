@@ -15,6 +15,7 @@ class AppState extends ChangeNotifier {
 
   static const _tokenKey = 'token_v1';
   static const _profileKey = 'profile_v1';
+  static const _adminKey = 'admin_v1';
 
   final Api api;
   Profile? profile;
@@ -23,14 +24,29 @@ class AppState extends ChangeNotifier {
   /// so the app is not blocked; the server still refuses statements without consent.
   bool? consented;
   bool get signedIn => api.token != null;
+  /// The server's answer to "is this an admin account?" (from ADMIN_EMAILS on the server, never set in the app).
+  /// Admins get the admin console instead of the household app.
+  bool admin = false;
+
+  Future<void> _loadRole(SharedPreferences prefs) async {
+    try {
+      admin = await api.isAdmin();
+      await prefs.setBool(_adminKey, admin);
+    } on ApiException catch (e) {
+      if (e.isUnauthorised) rethrow;
+      // Offline: keep the last answer.
+    } catch (_) {}
+  }
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     api.token = prefs.getString(_tokenKey);
     final cached = prefs.getString(_profileKey);
     if (cached != null) profile = Profile.fromJson(jsonDecode(cached) as Map<String, dynamic>);
+    admin = prefs.getBool(_adminKey) ?? false;
     if (signedIn) {
       try {
+        await _loadRole(prefs);
         final remote = await api.getProfile();
         if (remote != null) await _cache(Profile.fromJson(remote));
         consented = (await api.consent())['accepted'] == true;
@@ -48,6 +64,8 @@ class AppState extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_tokenKey, api.token!);
     profile = null;
+    admin = false;
+    await _loadRole(prefs);
     final remote = await api.getProfile();
     if (remote != null) {
       await _cache(Profile.fromJson(remote));
@@ -110,7 +128,9 @@ class AppState extends ChangeNotifier {
     api.token = null;
     profile = null;
     consented = null;
+    admin = false;
     final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_adminKey);
     await prefs.remove(_tokenKey);
     await prefs.remove(_profileKey);
     for (final k in prefs.getKeys().where((k) => k.startsWith(_cachePrefix)).toList()) {

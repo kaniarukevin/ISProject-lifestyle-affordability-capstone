@@ -826,7 +826,8 @@ def test_admin_page_is_for_admins_only_and_shows_no_personal_finances(client, mo
     assert client.get("/admin/overview", headers=user).status_code == 403
     assert client.get("/me/role", headers=user).get_json()["admin"] is False
     boss = signup(client, "boss@example.com")
-    assert client.get("/me/role", headers=boss).get_json()["admin"] is True
+    assert client.get("/me/role", headers=boss).get_json() == {"admin": True, "role": "admin"}
+    assert client.put("/me/profile", headers=boss, json={"householdSize": 1}).status_code == 403   # no household
     r = client.get("/admin/overview", headers=boss)
     assert r.status_code == 200
     d = r.get_json()

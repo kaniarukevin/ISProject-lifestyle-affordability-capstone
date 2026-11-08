@@ -7,7 +7,6 @@ import '../theme/theme_controller.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/panel.dart';
-import 'admin_screen.dart';
 import 'privacy_screen.dart';
 import 'payees_screen.dart';
 import 'profile_screen.dart';
@@ -15,8 +14,7 @@ import 'spending_screen.dart';
 
 /// You: household and income, privacy, appearance, log out, delete account.
 class YouScreen extends StatelessWidget {
-  const YouScreen({super.key, this.admin = false});
-  final bool admin;
+  const YouScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -130,13 +128,6 @@ class YouScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => showPrivacy(context, state.api),
             ),
-            if (admin)
-              ListTile(
-                leading: const Icon(Icons.admin_panel_settings_rounded),
-                title: const Text('Admin'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => push(const AdminScreen()),
-              ),
           ]),
         ),
         Card(

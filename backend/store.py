@@ -674,6 +674,9 @@ def get_profile():
 @bp.put("/me/profile")
 @login_required
 def put_profile():
+    with session() as s:
+        if _is_admin(s, g.user_id):     # role separation: an admin account runs the app and keeps no household
+            return jsonify(error="admin accounts keep no household; use a normal account for your own budget"), 403
     b = _body()
     size = int(_num(b.get("householdSize", 1), "householdSize", 1))
     deps = int(_num(b.get("dependants", 0), "dependants"))
@@ -3096,7 +3099,8 @@ def _mask(email):
 @login_required
 def my_role():
     with session() as s:
-        return jsonify(admin=_is_admin(s, g.user_id)), 200
+        admin = _is_admin(s, g.user_id)
+        return jsonify(admin=admin, role="admin" if admin else "user"), 200
 
 
 @bp.get("/admin/overview")

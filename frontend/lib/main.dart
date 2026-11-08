@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'screens/admin_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/privacy_screen.dart';
@@ -42,6 +43,7 @@ class _Start extends StatelessWidget {
     final state = context.watch<AppState>();
     if (!state.loaded) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     if (!state.signedIn) return const AuthScreen();
+    if (state.admin) return const AdminScreen();      // role-based: admins never see the household app
     if (state.consented == false) return const ConsentScreen();
     return state.profile == null ? const OnboardingScreen() : const HomeScreen();
   }
