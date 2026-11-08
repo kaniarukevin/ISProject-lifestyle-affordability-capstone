@@ -39,8 +39,35 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   int _tab = 0;
+  DateTime? _away;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Back in the app after more than a minute away (another tab, another app, the phone locked): the screens
+  /// refresh quietly, since figures may have changed elsewhere, for example on another device.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState s) {
+    if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) _away ??= DateTime.now();
+    if (s == AppLifecycleState.resumed) {
+      final away = _away;
+      _away = null;
+      if (away != null && DateTime.now().difference(away) > const Duration(minutes: 1) && mounted) {
+        context.read<AppState>().dataChanged();
+      }
+    }
+  }
   final _opened = <int>{0};   // tabs load the first time they are opened, not all five at start-up
 
   void _go(int i) => setState(() {

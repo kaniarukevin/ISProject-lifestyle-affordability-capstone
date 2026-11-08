@@ -14,12 +14,13 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from flask import Flask, jsonify, request
+from flask import Flask, g, jsonify, request
 
 from affordability import AffordabilityInputError, evaluate
 import budget
 import commitments
 import limits
+import monitor
 import store
 from flask_cors import CORS
 
@@ -37,6 +38,7 @@ app.config["MAX_CONTENT_LENGTH"] = 11 * 1024 * 1024    # refuse oversized upload
 CORS(app, origins=[r"^https?://localhost(:\d+)?$", r"^https?://127\.0\.0\.1(:\d+)?$",
                    *[o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]])
 store.init()
+monitor.install(app)          # first hook: every request is timed, refused ones too
 app.register_blueprint(store.bp)
 
 
@@ -60,6 +62,7 @@ def _any_error(exc):
                  413: "that file is too large (the limit is 10 MB)"}
         return jsonify(error=plain.get(exc.code, exc.description)), exc.code
     app.logger.exception("unexpected error on %s %s", request.method, request.path)
+    g._mon_error = type(exc).__name__          # the error type only, for the admin events log
     return jsonify(error="Something went wrong on our side. Please try again in a minute."), 500
 
 

@@ -11,6 +11,16 @@ import '../services/api.dart';
 class AppState extends ChangeNotifier {
   AppState({Api? api}) : api = api ?? Api() {
     this.api.onUnauthorised = () => signOut();
+    this.api.onWrite = (_) => dataChanged();
+  }
+
+  /// Goes up by one whenever the user's data changes anywhere in the app. Screens that show that data
+  /// (ReloadOnChange) fetch fresh figures quietly, keeping the old ones on screen until the new ones arrive.
+  int dataVersion = 0;
+
+  void dataChanged() {
+    dataVersion++;
+    notifyListeners();
   }
 
   static const _tokenKey = 'token_v1';

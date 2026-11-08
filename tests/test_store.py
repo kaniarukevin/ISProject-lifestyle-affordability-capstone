@@ -837,6 +837,20 @@ def test_admin_page_is_for_admins_only_and_shows_no_personal_finances(client, mo
     assert kevin["email"] == "k***@example.com"
     assert "kevin@example.com" not in r.get_data(as_text=True)
     assert "4000" not in r.get_data(as_text=True)                # no amounts at all
+    assert client.get("/admin/reports", headers=user).status_code == 403
+    rep = client.get("/admin/reports", headers=boss).get_json()
+    state = next(m for m in rep["models"] if m["id"] == "state")
+    assert state["present"] and [b["value"] for b in state["charts"][0]["bars"] if b.get("ours")] == [0.799]
+    assert {d["name"] for d in rep["datasets"]} >= {"KIHBS 2015/16", "Web Masters staging"}
+    assert client.get("/admin/performance", headers=user).status_code == 403
+    perf = client.get("/admin/performance", headers=boss)
+    assert any(x["route"] == "/me/role" for x in perf.get_json()["routes"])
+    assert perf.get_json()["db_round_trip_ms"] >= 0 and "kevin@example.com" not in perf.get_data(as_text=True)
+    boss_id = next(u["id"] for u in d["recent_users"] if u["id"] != kevin["id"])
+    assert client.delete(f"/admin/users/{boss_id}", headers=boss).status_code == 400     # not an admin account
+    assert client.delete(f"/admin/users/{kevin['id']}", headers=user).status_code == 403
+    assert client.delete(f"/admin/users/{kevin['id']}", headers=boss).status_code == 200
+    assert client.get("/admin/overview", headers=boss).get_json()["users"]["total"] == 1
 
 
 def test_why_this_score_explains_the_dashboard_and_a_scenario(client, monkeypatch):

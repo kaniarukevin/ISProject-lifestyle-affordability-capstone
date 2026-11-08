@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
+import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
@@ -19,7 +20,10 @@ class ForecastScreen extends StatefulWidget {
   State<ForecastScreen> createState() => _ForecastScreenState();
 }
 
-class _ForecastScreenState extends State<ForecastScreen> {
+class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
+  @override
+  Future<void> reloadQuietly() => _load();
+
   Map<String, dynamic>? f;
   String? error;
   int _month = 0;
@@ -27,12 +31,21 @@ class _ForecastScreenState extends State<ForecastScreen> {
   @override
   void initState() {
     super.initState();
+    _showLast();
     _load();
+  }
+
+  /// The forecast from last time, at once, while the fresh one loads.
+  Future<void> _showLast() async {
+    final last = await context.read<AppState>().cached('forecast');
+    if (last != null && mounted && f == null) setState(() => f = last);
   }
 
   Future<void> _load() async {
     try {
-      final d = await context.read<AppState>().api.budgetForecast();
+      final state = context.read<AppState>();
+      final d = await state.api.budgetForecast();
+      if (d['has_data'] == true) state.keep('forecast', d);
       if (!mounted) return;
       setState(() {
         f = d;
@@ -46,7 +59,7 @@ class _ForecastScreenState extends State<ForecastScreen> {
   Future<void> _editBudget() async {
     await Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => Scaffold(appBar: AppBar(title: const Text('Your budget')), body: const BudgetScreen())));
-    _load();
+    // a changed budget reloads the forecast by itself
   }
 
   @override
