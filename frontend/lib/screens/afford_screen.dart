@@ -95,7 +95,7 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
             );
 
       if (sideBySide && _preset != null) {
-        return ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+        return ListView(padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom), children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -158,7 +158,7 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
           });
       return RefreshIndicator(
         onRefresh: _loadHistory,
-        child: ListView(padding: const EdgeInsets.only(bottom: 40), children: [
+        child: ListView(padding: EdgeInsets.only(bottom: 40 + MediaQuery.paddingOf(context).bottom), children: [
           // On a phone the line gets the full width and Past checks sits under it, instead of squeezing both.
           if (box.maxWidth >= 600)
             Row(children: [

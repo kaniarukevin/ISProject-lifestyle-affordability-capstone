@@ -159,7 +159,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           Text('Your bills, debts and goals. They are taken out first when your budget is built.', style: muted),
           if (busy) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),

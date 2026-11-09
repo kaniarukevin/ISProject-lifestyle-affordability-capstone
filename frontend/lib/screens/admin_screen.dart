@@ -204,7 +204,13 @@ class _AdminScreenState extends State<AdminScreen> {
         }
         return Scaffold(
           body: Stack(children: [
-            SafeArea(bottom: false, child: Padding(padding: const EdgeInsets.only(bottom: 92), child: page)),
+            // Pages run to the bottom of the screen and scroll behind the pill (9 Nov: the empty band above it wasted
+            // space). The extra bottom padding tells each page's list to leave room so its last card clears the pill.
+            SafeArea(bottom: false, child: MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                  padding: MediaQuery.paddingOf(context).copyWith(bottom: MediaQuery.paddingOf(context).bottom + 92)),
+              child: page,
+            )),
             Positioned(
               left: 0,
               right: 0,
@@ -227,7 +233,7 @@ class _Scroll extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           for (var i = 0; i < children.length; i++) ...[if (i > 0) const SizedBox(height: 20), children[i]],
         ],

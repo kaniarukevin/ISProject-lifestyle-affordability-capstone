@@ -275,7 +275,7 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
     return RefreshIndicator(
       onRefresh: () => _load(month),
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           TextField(
             controller: _search,

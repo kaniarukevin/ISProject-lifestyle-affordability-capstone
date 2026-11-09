@@ -117,7 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           if (_stale)
             Padding(
