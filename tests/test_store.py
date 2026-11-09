@@ -1511,3 +1511,15 @@ def test_past_budgets_are_compared_with_what_was_spent(client, monkeypatch):
     boss = signup(client, "boss@example.com")
     v = client.get("/admin/validation", headers=boss)                                # pooled, with a saved budget
     assert v.status_code == 200 and v.get_json()["budgets"]["kept"] == 1
+
+
+def test_finding_money_cuts_wants_before_needs():
+    """9 Nov: a 7,000 rent cut food by 37%, as hard as eating out. Wants go first, needs keep at least 85%."""
+    now = {"food_groceries": 6277, "transport": 3301, "airtime_data": 861, "mobile_money_transfers": 7907,
+           "entertainment": 3736, "shopping": 1635}
+    after, below = store._shrink(now, list(now), 7000)
+    assert after["food_groceries"] == 6277 and after["transport"] == 3301 and below == 0
+    assert after["entertainment"] == round(3736 * 0.25) and after["shopping"] == round(1635 * 0.25)
+    assert abs(sum(after.values()) - (sum(now.values()) - 7000)) <= 2
+    _, below = store._shrink(now, list(now), 20000)               # more than wants can give: needs are hit
+    assert below > 0
