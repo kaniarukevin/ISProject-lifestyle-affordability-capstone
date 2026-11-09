@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/model_note.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -322,6 +323,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               ]),
             ),
           ],
+          const ModelNote(),
         ],
       ),
     );

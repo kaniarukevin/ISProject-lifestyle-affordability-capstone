@@ -52,6 +52,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _restorePlace();
+    _requests = context.read<AppState>().tabRequest..addListener(_onTabRequest);
+  }
+
+  ValueNotifier<int?>? _requests;
+
+  void _onTabRequest() {
+    final t = _requests?.value;
+    if (t != null && mounted) _go(t.clamp(0, _dests.length - 1));
   }
 
   Future<void> _restorePlace() async {
@@ -75,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _requests?.removeListener(_onTabRequest);
     super.dispose();
   }
 

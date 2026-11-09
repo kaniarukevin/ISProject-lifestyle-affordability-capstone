@@ -117,6 +117,13 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ]),
           ),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, top: 4),
+            child: Text(
+                "Tosha's advice comes from statistical models built mostly on survey and simulated data. It is "
+                'guidance, not financial advice, and it can be wrong.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: c.muted)),
+          ),
         ],
         if (_error != null)
           Container(

@@ -18,6 +18,14 @@ class AppState extends ChangeNotifier {
   /// (ReloadOnChange) fetch fresh figures quietly, keeping the old ones on screen until the new ones arrive.
   int dataVersion = 0;
 
+  /// A screen asks the home screen to switch tab (for example "See it in Plans" after going ahead with a check).
+  final tabRequest = ValueNotifier<int?>(null);
+
+  void openTab(int tab) {
+    tabRequest.value = null;   // the same tab twice in a row still fires
+    tabRequest.value = tab;
+  }
+
   void dataChanged() {
     dataVersion++;
     notifyListeners();
