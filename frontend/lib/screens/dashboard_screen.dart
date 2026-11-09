@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/model_note.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../state/reload_on_change.dart';
@@ -180,6 +181,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
           ],
           const SizedBox(height: 20),
           const RatingCard(where: 'overview', question: 'Does this overview match your real finances?'),
+          const ModelNote(),
         ],
       ),
     );

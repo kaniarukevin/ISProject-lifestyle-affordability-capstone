@@ -18,8 +18,11 @@ const Map<String, String> obligationFrequencies = {
 
 class Obligation {
   Obligation({required this.name, required this.amount, this.frequency = 'monthly', this.category = 'other_commitments',
-      this.nextDue, this.lastPaid});
+      this.nextDue, this.lastPaid, this.fromCheck});
   String name, frequency, category;
+
+  /// The day it was added by going ahead with a 'Can I afford it?' check ('2026-11-09'), kept through saves.
+  String? fromCheck;
   double amount;
 
   /// Optional: when the next payment is due ('2026-12-05'), and when it was last marked paid. Marking it paid
@@ -27,34 +30,41 @@ class Obligation {
   String? nextDue, lastPaid;
 
   Map<String, dynamic> toJson() => {'name': name, 'amount': amount, 'frequency': frequency, 'category': category,
-        if (nextDue != null) 'next_due': nextDue, if (lastPaid != null) 'last_paid': lastPaid};
+        if (nextDue != null) 'next_due': nextDue, if (lastPaid != null) 'last_paid': lastPaid,
+        if (fromCheck != null) 'from_check': fromCheck};
   factory Obligation.fromJson(Map<String, dynamic> j) => Obligation(
       name: j['name'] as String,
       amount: (j['amount'] as num).toDouble(),
       frequency: (j['frequency'] ?? 'monthly') as String,
       category: (j['category'] ?? 'other_commitments') as String,
       nextDue: j['next_due'] as String?,
-      lastPaid: j['last_paid'] as String?);
+      lastPaid: j['last_paid'] as String?,
+      fromCheck: j['from_check'] as String?);
 }
 
 class Debt {
-  Debt({required this.name, required this.balance, required this.annualRate, required this.monthlyPayment});
+  Debt({required this.name, required this.balance, required this.annualRate, required this.monthlyPayment,
+      this.fromCheck});
   String name;
+  String? fromCheck;
   double balance, annualRate, monthlyPayment;
 
   Map<String, dynamic> toJson() =>
-      {'name': name, 'balance': balance, 'annual_rate': annualRate, 'monthly_payment': monthlyPayment};
+      {'name': name, 'balance': balance, 'annual_rate': annualRate, 'monthly_payment': monthlyPayment,
+        if (fromCheck != null) 'from_check': fromCheck};
   factory Debt.fromJson(Map<String, dynamic> j) => Debt(
       name: j['name'] as String,
       balance: (j['balance'] as num).toDouble(),
       annualRate: ((j['annual_rate'] ?? 0) as num).toDouble(),
-      monthlyPayment: (j['monthly_payment'] as num).toDouble());
+      monthlyPayment: (j['monthly_payment'] as num).toDouble(),
+      fromCheck: j['from_check'] as String?);
 }
 
 class Goal {
   Goal({required this.name, required this.target, this.saved = 0, required this.monthsLeft, this.done = false,
-      this.doneOn, this.deadline});
+      this.doneOn, this.deadline, this.fromCheck});
   String name;
+  String? fromCheck;
   double target, saved;
   int monthsLeft;
 
@@ -83,7 +93,8 @@ class Goal {
   String? doneOn;
 
   Map<String, dynamic> toJson() => {'name': name, 'target': target, 'saved': saved, 'months_left': monthsLeft,
-        if (deadline != null) 'deadline': deadline, if (done) 'done': true, if (doneOn != null) 'done_on': doneOn};
+        if (deadline != null) 'deadline': deadline, if (done) 'done': true, if (doneOn != null) 'done_on': doneOn,
+        if (fromCheck != null) 'from_check': fromCheck};
   factory Goal.fromJson(Map<String, dynamic> j) => Goal(
       name: j['name'] as String,
       target: (j['target'] as num).toDouble(),
@@ -91,7 +102,8 @@ class Goal {
       monthsLeft: (j['months_left'] as num).toInt(),
       done: j['done'] == true,
       doneOn: j['done_on'] as String?,
-      deadline: j['deadline'] as String?);
+      deadline: j['deadline'] as String?,
+      fromCheck: j['from_check'] as String?);
 }
 
 class Commitments {

@@ -418,6 +418,7 @@ class ResultView extends StatelessWidget {
     final lines = ((budgets?['lines'] as List?) ?? []).cast<Map>().map((m) => m.cast<String, dynamic>()).toList();
     final cutText = _cutText(result['what_to_cut']);
     final advice = ((result['advice'] as List?) ?? []).cast<String>();
+    final goals = (result['goals_effect'] as Map?)?.cast<String, dynamic>();
     const gap = SizedBox(height: 20);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -448,11 +449,63 @@ class ResultView extends StatelessWidget {
             if (choice != null)
               Align(
                 alignment: Alignment.centerLeft,
-                child: TextButton(onPressed: () => showWhyScore(context, choice: choice), child: const Text('Why this score?')),
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => showWhyScore(context, choice: choice),
+                    icon: const Icon(Icons.insights_rounded),
+                    label: const Text('Why this score?'),
+                  ),
+                ),
               ),
           ],
         ]),
       ),
+      // The explanation sits right under the verdict (9 Nov: it was below the tables, and people missed it).
+      if (reasons.length > 1 || goals != null) ...[
+        gap,
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Why', style: theme.textTheme.titleLarge),
+            const SizedBox(height: 12),
+            for (final r in reasons.skip(1)) _Because(icon: Icons.info_outline_rounded, text: r),
+            if (goals != null)
+              _Because(
+                icon: Icons.flag_rounded,
+                text: goals['sentence'] as String,
+                color: goals['fits'] == true ? null : c.warn,
+              ),
+          ]),
+        ),
+      ],
+      if (cutText != null || advice.isNotEmpty) ...[
+        gap,
+        Panel(
+          color: const Color(0xFF111111),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(Icons.lightbulb_rounded, color: c.lime),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(verdict == 'Affordable' ? 'To make room for it' : 'What would make it work',
+                    style: theme.textTheme.titleLarge?.copyWith(color: Colors.white)),
+              ),
+            ]),
+            const SizedBox(height: 12),
+            if (cutText != null)
+              Text(cutText, style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFFE4E4DE))),
+            for (final a in advice)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Padding(padding: const EdgeInsets.only(top: 7, right: 10),
+                      child: Container(width: 6, height: 6, decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle))),
+                  Expanded(child: Text(a, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFFE4E4DE)))),
+                ]),
+              ),
+          ]),
+        ),
+      ],
       if (phases.length > 1 || cash.isNotEmpty) ...[
         gap,
         Panel(
@@ -507,35 +560,6 @@ class ResultView extends StatelessWidget {
           ]),
         ),
       ],
-      if (reasons.length > 1) ...[
-        gap,
-        Panel(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Why', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 10),
-            for (final r in reasons.skip(1))
-              Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(r, style: theme.textTheme.bodyMedium)),
-          ]),
-        ),
-      ],
-      if (cutText != null || advice.isNotEmpty) ...[
-        gap,
-        Panel(
-          color: const Color(0xFF111111),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(verdict == 'Affordable' ? 'To make room for it' : 'What would make it work',
-                style: theme.textTheme.titleLarge?.copyWith(color: Colors.white)),
-            const SizedBox(height: 10),
-            if (cutText != null)
-              Text(cutText, style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFFE4E4DE))),
-            for (final a in advice)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(a, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFFE4E4DE))),
-              ),
-          ]),
-        ),
-      ],
       if (result['id'] != null) ...[
         gap,
         _GoAhead(result: result, onChanged: onChanged, onExploring: onExploring),
@@ -571,6 +595,27 @@ class ResultView extends StatelessWidget {
       return 'Spend ${cuts.map((e) => 'KES ${money(e.value)} less on ${categoryLabel(e.key).toLowerCase()}').join(', ')} a month.';
     }
     return null;
+  }
+}
+
+/// One reason in the Why block: an icon, then the sentence.
+class _Because extends StatelessWidget {
+  const _Because({required this.icon, required this.text, this.color});
+  final IconData icon;
+  final String text;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 20, color: color ?? AppColors.of(context).muted),
+        const SizedBox(width: 12),
+        Expanded(child: Text(text, style: theme.textTheme.bodyLarge?.copyWith(color: color))),
+      ]),
+    );
   }
 }
 
@@ -767,6 +812,19 @@ class _GoAheadState extends State<_GoAhead> {
           const SizedBox(height: 6),
           Text('Your budget and overview now include this.',
               style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF2B3110))),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF111111), side: const BorderSide(color: Color(0xFF111111))),
+            onPressed: () {
+              // Back to the tabs (a phone opens the check as its own page), then to Plans.
+              final app = context.read<AppState>();
+              Navigator.of(context).popUntil((r) => r.isFirst);
+              app.openTab(3);
+            },
+            icon: const Icon(Icons.calendar_month_rounded),
+            label: const Text('See it in Plans'),
+          ),
         ]),
       );
     }

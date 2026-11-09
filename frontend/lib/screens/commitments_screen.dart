@@ -208,7 +208,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                 return _Row(
                   title: e.value.name,
                   amount: money(e.value.amount),
-                  subtitle: '${_capital(obligationFrequencies[e.value.frequency] ?? '')}$due',
+                  subtitle: '${_capital(obligationFrequencies[e.value.frequency] ?? '')}$due${_fromCheck(e.value.fromCheck)}',
                   subtitleColor: status == 'overdue' ? col.warn : null,
                   onTap: () => _edit('obligation', e.value, (x) => c!.obligations[e.key] = x as Obligation),
                   onDelete: () => _confirmRemove(e.value.name, () => c!.obligations.removeAt(e.key)),
@@ -230,7 +230,8 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                     title: e.value.name,
                     amount: '${money(e.value.monthlyPayment)} a month',
                     subtitle: 'KES ${money(e.value.balance)} left · ${e.value.annualRate}% a year'
-                        '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}',
+                        '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}'
+                        '${_fromCheck(e.value.fromCheck)}',
                     onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
                     onDelete: () => _confirmRemove(e.value.name, () => c!.debts.removeAt(e.key)),
                   );
@@ -281,7 +282,14 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                     onTap: e.value.done ? null : () => _edit('goal', e.value, (x) => c!.goals[e.key] = x as Goal),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       Row(children: [
-                        Expanded(child: Text(e.value.name, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600))),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(e.value.name, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                            if (e.value.fromCheck != null)
+                              Text('F${_fromCheck(e.value.fromCheck).substring(4)}',
+                                  style: theme.textTheme.bodySmall?.copyWith(color: col.muted)),
+                          ]),
+                        ),
                         if (e.value.done)
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -391,6 +399,12 @@ class _Row extends StatelessWidget {
 const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /// '2026-12-05' -> '5 Dec 2026'.
+/// ' · from a check on 9 Nov' for items added by going ahead with a 'Can I afford it?' check.
+String _fromCheck(String? iso) {
+  final d = iso == null ? null : DateTime.tryParse(iso);
+  return d == null ? '' : ' · from a check on ${d.day} ${_monthShort[d.month - 1]}';
+}
+
 String _day(String iso) {
   final d = DateTime.parse(iso);
   return '${d.day} ${_monthShort[d.month - 1]} ${d.year}';

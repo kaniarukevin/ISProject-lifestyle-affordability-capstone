@@ -356,6 +356,25 @@ def _upgrade(engine):
             if name not in have:
                 with engine.begin() as conn:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+    _relax_leftover_columns(engine)
+
+
+def _relax_leftover_columns(engine):
+    """A column an older version created but the models no longer write (9 Nov: profiles.updated_at on the live
+    database) must not block inserts: if it is NOT NULL with no default, every new row fails. Make it optional.
+    PostgreSQL only; local SQLite databases are created fresh from the models."""
+    if engine.dialect.name != "postgresql":
+        return
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        known = set(table.columns.keys())
+        for col in insp.get_columns(table.name):
+            if col["name"] not in known and not col.get("nullable", True) and col.get("default") is None:
+                with engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE {table.name} ALTER COLUMN "{col["name"]}" DROP NOT NULL'))
+                print(f"[boot] made leftover column {table.name}.{col['name']} optional", flush=True)
 
 
 def session():
@@ -2623,6 +2642,9 @@ def afford():
                     + (f": KES {-lm['left_over_KES']:,} short that month." if (lm["left_over_KES"] or 0) < 0 else "."))
         result["budgets"] = (None if result.get("upfront_short_KES") else
                              _budget_side_by_side(s, pic, _as_monthly(scenario, result), result))
+        effect = _goals_effect(pic, result, scenario)
+        if effect:
+            result["goals_effect"] = effect
         if b.get("preset") == "plan":
             for item in _plan_costs(b):
                 if item["per"] != "month":
@@ -2635,6 +2657,44 @@ def afford():
         s.commit()
         result["id"] = row.id
     return jsonify(result), 200
+
+
+def _goals_effect(pic, result, scenario):
+    """What a choice does to the user's savings goals (9 Nov). Goals stay out of the score: the model was trained
+    without them, and a goal is a plan, not money owed. But a check that says Affordable while it quietly eats the
+    goal saving would mislead, so the result says how much less the goals get and how much later they arrive.
+    The money for goals is what is left each month (the hardest period, for instalments)."""
+    goals = [gl for gl in ((pic.get("commitments") or {}).get("goals") or []) if gl.get("monthly_needed_KES", 0) > 0]
+    need = sum(gl["monthly_needed_KES"] for gl in goals)
+    if need <= 0 or scenario.get("type") == "savings_goal" or "after" not in result:
+        return None
+    before = result.get("before", {}).get("left_over_KES")
+    after = min([p["left_over_KES"] for p in result.get("phases") or []] or [result["after"]["left_over_KES"]])
+    if before is None or after is None:
+        return None
+    gap_before = max(0.0, need - max(0.0, before))
+    gap_after = max(0.0, need - max(0.0, after))
+    less = round(gap_after - gap_before)
+    out = {"need_KES": round(need), "left_after_KES": round(max(0.0, after)), "less_KES": max(0, less),
+           "fits": gap_after <= 0, "goals": []}
+    if out["fits"]:
+        out["sentence"] = (f"Your goals still fit: they need KES {round(need):,} a month and about "
+                           f"KES {round(after):,} would be left.")
+        return out
+    if less < 1:            # already short for the goals before this choice; this does not make it worse
+        out["sentence"] = (f"Your goals need KES {round(need):,} a month, more than is left even now; "
+                           "this choice does not change that.")
+        return out
+    share = max(0.0, min(1.0, max(0.0, after) / need))
+    for gl in sorted(goals, key=lambda x: -x["monthly_needed_KES"])[:3]:
+        later = math.ceil(gl["months_left"] / share) if share > 0 else None
+        out["goals"].append({"name": gl["name"], "months_left": gl["months_left"], "months_new": later})
+    slips = "; ".join(f"{x['name']}: about {x['months_new']} months instead of {x['months_left']}"
+                      if x["months_new"] else f"{x['name']}: on hold while this lasts" for x in out["goals"])
+    left = (f"about KES {round(after):,} is left" if after > 0 else "nothing is left")
+    out["sentence"] = (f"Your goals need KES {round(need):,} a month. After this, {left}, so your goals get "
+                       f"KES {less:,} a month less. {slips}.")
+    return out
 
 
 @bp.post("/me/explain")
@@ -2824,7 +2884,7 @@ def _apply_plan(s, user_id, req, result, data, profile, label, obligation):
         price = float(up.get("amount"))
         if up.get("pay") == "instalments":
             pay = float(result.get("instalment_per_month_KES") or price / max(1, int(up.get("months", 6))))
-            data["debts"].append({"name": label, "balance": round(price), "annual_rate": float(up.get("annual_rate", 0)),
+            data["debts"].append({"from_check": _today().isoformat(), "name": label, "balance": round(price), "annual_rate": float(up.get("annual_rate", 0)),
                                   "monthly_payment": round(pay)})
             notes.append(f"Added {label} as a debt: KES {round(pay):,} a month until it is paid off.")
         else:
@@ -2841,7 +2901,7 @@ def _apply_plan(s, user_id, req, result, data, profile, label, obligation):
     for item in _plan_costs(req):
         cat, name = item["category"], item["label"] or label
         if cat in ("housing", "school_fees", "mobile_money_transfers", "loan_repayment"):
-            data["obligations"].append({"name": name, "category": cat if cat in ("housing", "school_fees")
+            data["obligations"].append({"from_check": _today().isoformat(), "name": name, "category": cat if cat in ("housing", "school_fees")
                                         else "other_commitments", "amount": round(item["amount"]),
                                         "frequency": freq[item["per"]]})
             notes.append(f"Added {name} (KES {round(item['amount']):,} a {item['per']}) to your commitments.")
@@ -2881,7 +2941,7 @@ def _apply_choice(s, user_id, req, result, how):
     notes = []
 
     def obligation(name, cat, amount, months=None):
-        data["obligations"].append({"name": name, "category": cat, "amount": round(amount), "frequency": "monthly"})
+        data["obligations"].append({"from_check": _today().isoformat(), "name": name, "category": cat, "amount": round(amount), "frequency": "monthly"})
         notes.append(f"Added {name} (KES {round(amount):,} a month) to your commitments.")
         if months:
             notes.append(f"It lasts {months} month(s): remove it under Commitments when it ends.")
@@ -2896,7 +2956,7 @@ def _apply_choice(s, user_id, req, result, how):
             notes.append(f"Paid from savings. Your savings are now KES {round(profile.savings_balance):,}.")
         else:
             pay = float(result.get("instalment_per_month_KES") or price / max(1, int(req.get("months", 6))))
-            data["debts"].append({"name": label, "balance": round(price), "annual_rate": float(req.get("annual_rate", 0)),
+            data["debts"].append({"from_check": _today().isoformat(), "name": label, "balance": round(price), "annual_rate": float(req.get("annual_rate", 0)),
                                   "monthly_payment": round(pay)})
             notes.append(f"Added {label} as a debt: KES {round(pay):,} a month until it is paid off.")
     elif kind == "move_house":
@@ -2923,7 +2983,7 @@ def _apply_choice(s, user_id, req, result, how):
         notes += _apply_plan(s, user_id, req, result, data, profile, label, obligation)
     elif kind == "savings_goal":
         months = int(req.get("months", 6))
-        data["goals"].append({"name": label, "target": round(float(req["target"])), "saved": 0, "months_left": months})
+        data["goals"].append({"from_check": _today().isoformat(), "name": label, "target": round(float(req["target"])), "saved": 0, "months_left": months})
         notes.append(f"Added the goal {label}: KES {round(float(req['target']) / months):,} a month is set aside in your budget.")
     elif kind == "income_change":
         delta = float(req["amount"])

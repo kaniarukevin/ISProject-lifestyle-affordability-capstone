@@ -1275,7 +1275,8 @@ def test_a_plan_with_instalments_is_checked_while_paying_and_after(client, monke
     assert r["instalment_per_month_KES"] > 160000 / 18                         # interest included
     sid = r["id"]
     assert client.post(f"/me/scenarios/{sid}/apply", headers=h, json={}).status_code == 200
-    assert client.get("/me/commitments", headers=h).get_json()["debts"][0]["name"] == "Boda boda"
+    debt = client.get("/me/commitments", headers=h).get_json()["debts"][0]
+    assert debt["name"] == "Boda boda" and debt["from_check"] == "2026-11-15"     # shown as "from a check on 15 Nov"
 
 
 def test_a_plan_paid_from_savings_needs_the_savings(client, monkeypatch):
@@ -1288,6 +1289,22 @@ def test_a_plan_paid_from_savings_needs_the_savings(client, monkeypatch):
     r = client.post("/me/afford", headers=h, json=fees).get_json()
     assert any("each term" in x and "7,000 a month" in x for x in r["reasons"])
     assert client.post("/me/afford", headers=h, json={"preset": "plan"}).status_code == 400
+
+
+def test_a_check_says_what_it_does_to_savings_goals(client, monkeypatch):
+    h = _earner(client, monkeypatch)
+    client.put("/me/commitments", headers=h, json={"goals": [{"name": "Plot", "target": 48000, "months_left": 6}]})
+    small = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "entertainment",
+                                                      "amount": 500, "label": "Gym"}).get_json()
+    assert small["goals_effect"]["fits"] and "still fit" in small["goals_effect"]["sentence"]
+    loan = client.post("/me/afford", headers=h, json={"preset": "loan", "amount": 120000, "months": 12,
+                                                     "annual_rate": 14}).get_json()
+    eff = loan["goals_effect"]
+    assert not eff["fits"] and eff["less_KES"] > 0
+    assert eff["goals"][0]["name"] == "Plot"
+    assert eff["goals"][0]["months_new"] is None or eff["goals"][0]["months_new"] > 6
+    goal = client.post("/me/afford", headers=h, json={"preset": "savings_goal", "target": 3000, "months": 3}).get_json()
+    assert "goals_effect" not in goal          # a goal check already weighs the goal itself
 
 
 # ---------- low month: income that varies ----------

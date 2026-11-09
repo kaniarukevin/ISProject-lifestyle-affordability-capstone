@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../widgets/model_note.dart';
 import '../models/transaction.dart' show categoryLabel;
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -157,7 +158,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 ],
               ),
               const SizedBox(height: 6),
-              Text('Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              Text('The shaded band is a likely range, not a promise. Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ]),
           ),
           const SizedBox(height: 20),
@@ -254,6 +255,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
               ),
             ]),
           ]),
+          const ModelNote(),
         ],
       ),
     );
