@@ -162,7 +162,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
       return Scaffold(
         body: Stack(children: [
-          SafeArea(bottom: false, child: Padding(padding: const EdgeInsets.only(bottom: 92), child: page)),
+          // Pages run to the bottom of the screen and scroll behind the pill (9 Nov: the empty band above it wasted
+            // space). The extra bottom padding tells each page's list to leave room so its last card clears the pill.
+            SafeArea(bottom: false, child: MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                  padding: MediaQuery.paddingOf(context).copyWith(bottom: MediaQuery.paddingOf(context).bottom + 92)),
+              child: page,
+            )),
           Positioned(
             left: 0,
             right: 0,

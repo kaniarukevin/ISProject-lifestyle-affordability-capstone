@@ -231,7 +231,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           switcher,
           const SizedBox(height: 16),
@@ -469,7 +469,7 @@ class _PastBudgetsState extends State<_PastBudgets> with ReloadOnChange {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           if (withBudget.length >= 2)
             Panel(

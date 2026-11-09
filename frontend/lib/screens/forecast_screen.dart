@@ -125,7 +125,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
           Text(d['based_on'] == 'setup'
               ? 'Based on the rough figures you gave at setup'
