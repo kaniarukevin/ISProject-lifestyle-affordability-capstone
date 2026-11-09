@@ -1969,7 +1969,16 @@ def _shrink(lines, cats, cut):
         for c in out:
             out[c] -= min(out[c], left * out[c] / total) if total > 0 else 0
         below = left
-    return {c: round(v) for c, v in out.items()}, round(below)
+    # Whole shillings that still add up exactly: the rounding remainder goes to the line that was cut the most
+    # (never to a protected one), so a budget is never a shilling more or less than the income (found by test,
+    # 9 Nov: 30,001 of 30,000).
+    rounded = {c: round(v) for c, v in out.items()}
+    start = sum(float(lines.get(c, 0)) for c in cats)
+    target = round(start - min(float(cut), start))
+    if rounded and sum(rounded.values()) != target:
+        most_cut = max(rounded, key=lambda c: float(lines.get(c, 0)) - out[c])
+        rounded[most_cut] += target - sum(rounded.values())
+    return rounded, round(below)
 
 
 def everyday_lines(plan):
