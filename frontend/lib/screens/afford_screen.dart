@@ -151,19 +151,28 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
             const gap = 12.0;
             final w = (b.maxWidth - gap * (cols - 1)) / cols;
             return Wrap(spacing: gap, runSpacing: gap, children: [
-              for (final p in ps) SizedBox(width: w, child: _PresetCard(preset: p, onTap: () => _pick(p, sideBySide))),
+              // Every card the same height, so rows line up whatever the title length (9 Nov: ragged rows).
+              for (final p in ps)
+                SizedBox(width: w, height: MediaQuery.textScalerOf(context).scale(176), child: _PresetCard(preset: p, onTap: () => _pick(p, sideBySide))),
             ]);
           });
       return RefreshIndicator(
         onRefresh: _loadHistory,
-        child: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
-          Row(children: [
-            Expanded(
-              child: Text('Try a change before you make it. Nothing is saved unless you go ahead.',
-                  style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
-            ),
-            ?pastLink,
-          ]),
+        child: ListView(padding: const EdgeInsets.only(bottom: 40), children: [
+          // On a phone the line gets the full width and Past checks sits under it, instead of squeezing both.
+          if (box.maxWidth >= 600)
+            Row(children: [
+              Expanded(
+                child: Text('Try a change before you make it. Nothing is saved unless you go ahead.',
+                    style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+              ),
+              ?pastLink,
+            ])
+          else ...[
+            Text('Try a change before you make it. Nothing is saved unless you go ahead.',
+                style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+            if (pastLink != null) Align(alignment: Alignment.centerLeft, child: pastLink),
+          ],
           const SizedBox(height: 20),
           Text('Suggested for you', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
@@ -194,10 +203,10 @@ class _PresetCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(18),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             CircleAvatar(radius: 20, backgroundColor: c.field, child: Icon(preset.icon, size: 20, color: theme.colorScheme.onSurface)),
-            const SizedBox(height: 14),
+            const Spacer(),
             Text(preset.title, maxLines: 2, overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w700)),
             const SizedBox(height: 2),

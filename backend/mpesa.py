@@ -50,13 +50,17 @@ def read_pdf(data, password=None):
     except StatementError:
         raise
     except (PdfReadError, ValueError, KeyError) as exc:
-        raise StatementError("This file could not be read as a PDF.") from exc
+        raise StatementError("This file could not be read as a PDF. Choose the M-PESA statement PDF that "
+                             "Safaricom emailed you.") from exc
 
 
 def parse_text(text):
     """Statement text -> header facts and rows, oldest first, with checks."""
     if "M-PESA STATEMENT" not in text.upper() or "Receipt No." not in text:
-        raise StatementError("This does not look like an M-PESA statement from Safaricom.")
+        raise StatementError("This does not look like an M-PESA statement from Safaricom, so nothing was read. "
+                             "Get the full statement from the M-PESA app (Statements, then Request full statement) "
+                             "or by dialling *334#; Safaricom emails it as a PDF. Bank statements and photos or "
+                             "scans of a statement cannot be read.")
     period = re.search(r"Statement Period:\s*(\d\d \w{3} \d{4})\s*-\s*(\d\d \w{3} \d{4})", text)
     total = re.search(r"TOTAL:\s*([\d,]+\.\d\d)\s+([\d,]+\.\d\d)", text)
     rows, cur = [], None
