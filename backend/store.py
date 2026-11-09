@@ -1938,6 +1938,40 @@ def _add_extra_lines(plan, recent):
     return plan
 
 
+# When money has to be found (a new rent, a loan, raising one line by hand), wants are cut before needs, and no
+# line is cut below a floor of what it is now (9 Nov: moving house cut food by 37%, as hard as eating out, and left
+# shopping untouched). Order: fun, shopping, personal care; then money sent to family and friends; then needs.
+SHRINK_TIERS = [
+    (("entertainment", "shopping", "personal_care"), 0.25),
+    (("mobile_money_transfers",), 0.50),
+    (("food_groceries", "transport", "utilities", "airtime_data", "health"), 0.85),
+]
+
+
+def _shrink(lines, cats, cut):
+    """Take `cut` KES out of the lines in `cats`, wants first, each tier down to its floor, in proportion to what
+    each line can give. Anything still missing comes from every line in proportion (needs below their usual).
+    Returns (new lines, KES taken from needs below their floor)."""
+    out = {c: float(lines.get(c, 0)) for c in cats}
+    left = max(0.0, float(cut))
+    for tier, floor in SHRINK_TIERS:
+        room = {c: out[c] * (1 - floor) for c in tier if c in out and out[c] > 0}
+        total = sum(room.values())
+        if left <= 0 or total <= 0:
+            continue
+        take = min(left, total)
+        for c, r in room.items():
+            out[c] -= take * r / total
+        left -= take
+    below = 0.0
+    if left > 0:
+        total = sum(out.values())
+        for c in out:
+            out[c] -= min(out[c], left * out[c] / total) if total > 0 else 0
+        below = left
+    return {c: round(v) for c, v in out.items()}, round(below)
+
+
 def everyday_lines(plan):
     import budget as bud
     return [c for c in bud.model()["variable"] + EXTRA_LINES if c != "savings" and c in plan["budget"]]
@@ -1959,8 +1993,11 @@ def _apply_edits(plan, edits):
     rest = [c for c in everyday if c not in mine]
     left = total - sum(mine.values())
     others = sum(float(b[c]) for c in rest)
-    for c in rest:
-        b[c] = round(float(b[c]) * left / others) if others > 0 else round(left / len(rest))
+    if others > left:                                  # the other lines must give: wants first, needs last
+        b.update(_shrink(b, rest, others - left)[0])
+    else:
+        for c in rest:
+            b[c] = round(float(b[c]) * left / others) if others > 0 else round(left / len(rest))
     for c, v in mine.items():
         b[c] = round(v)
     plan["notes"].append("You set " + ", ".join(f"{NOTE_LABELS.get(c, c)} to KES {round(v):,}" for c, v in mine.items())
@@ -2514,14 +2551,27 @@ def _budget_side_by_side(s, pic, scenario, result):
             after = dict(_recommend(after_pic, prev_limits, py, pm, sum(everyday_added.values()))["budget"])
         except bud.BudgetInputError:
             after = None
+    note = None
     if after is not None:
+        # The recommendation for the new situation splits the smaller everyday money afresh, which cuts every line
+        # alike. People cut wants first: rebuild the everyday lines from today's plan, cutting wants before needs.
+        flex = [c for c in EVERYDAY + EXTRA_LINES if c in before or c in after]
+        have, need = sum(float(before.get(c, 0)) for c in flex), sum(float(after.get(c, 0)) for c in flex)
+        if need < have:
+            new, below = _shrink(before, flex, have - need)
+            after.update(new)
+            note = ("Fun, shopping and personal care go down first, then money sent to others; food, transport "
+                    "and bills stay close to what you spend now.")
+            if below > 0:
+                note = (f"To fit, essentials like food and transport would have to drop below what you usually "
+                        f"spend, by about KES {below:,} a month. That is hard to keep up.")
         for cat, add in everyday_added.items():         # show the new cost on its own line, not as "other"
             after[cat] = after.get(cat, 0) + round(add)
             after["other_commitments"] = after.get("other_commitments", 0) - round(add)
     order = [c for c in BUDGET_LINES if before.get(c) or (after or {}).get(c)]
     return {"lines": [{"category": c, "now": round(before.get(c, 0)),
                        "after": None if after is None else round(after.get(c, 0))} for c in order],
-            "note": None if after is not None else "With this change there is no income left to share out."}
+            "note": note if after is not None else "With this change there is no income left to share out."}
 
 
 @bp.post("/me/afford")
