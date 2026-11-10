@@ -83,6 +83,8 @@ class AboutNumbersScreen extends StatelessWidget {
                 for (final l in const [
                   'Money that never passes through M-PESA is missing unless you add it.',
                   'The score looks mostly at your last 3 to 6 months; your year\'s track record is shown beside it.',
+                  'The score is a fair warning for next month, and weaker after that. It shows where you are now; '
+                      '"Can I afford it?" is how Tosha looks further ahead, by trying a change on your own months.',
                   'Savings goals are not part of the score; each check says what it does to them.',
                   'A few months of records give rougher answers than a full year.',
                 ])

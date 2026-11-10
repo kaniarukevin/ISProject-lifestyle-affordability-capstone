@@ -1898,6 +1898,7 @@ def overview():
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record,
                    borrowing=borrowing, goal_progress=pic["goal_progress"], records_until=records_until,
                    forecast_checks=forecast_checks, income_gap=_income_gap(pic), savings_check=_savings_check(g.user_id, pic),
+                   next_month=_next_month_sentence(pic, outlook, income),
                    # "Since November KES 8,500 went into savings. Count it towards Laptop?" (asked once per goal)
                    goal_suggestions=[x for x in pic["goal_progress"] if x["track"] is None and x["found_KES"] > 0])
 
@@ -2102,6 +2103,28 @@ def dismiss_income_gap():
             p.income_gap_answered = True
             s.commit()
     return jsonify(saved=True), 200
+
+
+def _next_month_sentence(pic, outlook, income):
+    """One line on the home score card about the month ahead (10 Nov). The score is a fair one-month warning
+    (docs/experiments.md, 10 Nov: AUC 0.71 for Critical a month later, fading after that), so the card says what
+    next month looks like, from the spending forecast, and never claims more than a month."""
+    if len(outlook) < 2 or not pic["complete"] or income <= 0:
+        return None
+    nxt = outlook[1]
+    name = calendar.month_name[nxt["month"]]
+    usual = statistics.median(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in pic["complete"])
+    # The forecast total includes the savings line; compare spending alone with income and with usual spending.
+    total = round(nxt["total"] - nxt.get("breakdown", {}).get("savings", 0))
+    fees = round(nxt.get("breakdown", {}).get("school_fees", 0))
+    why = f", including about KES {fees:,} in school fees" if fees else ""
+    if total > income:
+        return (f"{name} could be hard: spending is expected to be about KES {total:,}{why}, more than the "
+                f"KES {round(income):,} that usually comes in.")
+    if usual and total > 1.10 * usual:
+        return f"{name} could be tighter than usual: about KES {total:,} expected{why}, against your usual KES {round(usual):,}."
+    return (f"{name} looks like a usual month: about KES {total:,} of spending expected, leaving about "
+            f"KES {round(income - total):,} before saving.")
 
 
 def _carry_sentence(scored):

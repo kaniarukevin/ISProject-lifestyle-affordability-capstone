@@ -1309,6 +1309,12 @@ def test_a_check_says_what_it_does_to_savings_goals(client, monkeypatch):
     assert "goals_effect" not in goal          # a goal check already weighs the goal itself
 
 
+def test_the_home_card_says_what_next_month_looks_like(client, monkeypatch):
+    h = _earner(client, monkeypatch)                     # 45,000 in, about 32,000 spent a month; today 15 Nov
+    line = client.get("/me/overview", headers=h).get_json()["next_month"]
+    assert line.startswith("December ") and "KES" in line
+
+
 def test_an_old_savings_balance_is_checked_not_rewritten(client, monkeypatch):
     h = _earner(client, monkeypatch)                              # entered 15 Nov; saved 4,000 a month Jul-Oct
     assert client.get("/me/overview", headers=h).get_json()["savings_check"] is None      # fresh: nothing to ask

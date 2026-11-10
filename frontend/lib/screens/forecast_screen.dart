@@ -145,7 +145,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 _Key(mark: Container(width: 16, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
                 _Key(mark: Container(width: 16, height: 3, color: c.muted), text: 'Expected'),
                 _Key(mark: Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range,
-                    borderRadius: BorderRadius.circular(3))), text: 'Likely range'),
+                    borderRadius: BorderRadius.circular(3))), text: 'Could be anywhere in here'),
               ]),
               const SizedBox(height: 16),
               ForecastChart(

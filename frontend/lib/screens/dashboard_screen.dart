@@ -154,6 +154,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               score: (d['score'] as num).round(),
               state: d['state'] as String,
               summary: d['timeline_summary'] as String?,
+              nextMonth: d['next_month'] as String?,
             ),
             _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
             _LeftCard(overview: d, forecast: bf),
@@ -207,10 +208,11 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
 const _onLime = Color(0xFF111111);
 
 class _ScoreCard extends StatelessWidget {
-  const _ScoreCard({required this.score, required this.state, this.summary});
+  const _ScoreCard({required this.score, required this.state, this.summary, this.nextMonth});
   final int score;
   final String state;
   final String? summary;
+  final String? nextMonth;   // what next month looks like: the score is a fair one-month warning (10 Nov)
 
   @override
   Widget build(BuildContext context) {
@@ -243,8 +245,23 @@ class _ScoreCard extends StatelessWidget {
         Text('The score runs from 0 to 100: the higher it is, the more room your money has. It is worked out from your '
             'last few months.',
             style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
+        if (nextMonth != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: const Color(0x14000000), borderRadius: BorderRadius.circular(14)),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.east_rounded, size: 18, color: _onLime),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(nextMonth!,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: _onLime, fontWeight: FontWeight.w600)),
+              ),
+            ]),
+          ),
+        ],
         if (summary != null) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(summary!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
         ],
         const SizedBox(height: 16),
@@ -413,11 +430,11 @@ class _ForecastCard extends StatelessWidget {
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 14, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          Text('Budget forecast', style: theme.textTheme.titleLarge),
+          Text('The next 3 months', style: theme.textTheme.titleLarge),
           key(Container(width: 16, height: 3, color: theme.colorScheme.onSurface), 'What you spent'),
           key(Container(width: 16, height: 3, color: c.muted), 'Expected'),
           key(Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
-              'Likely range'),
+              'Could be anywhere in here'),
         ]),
         const SizedBox(height: 16),
         if (f == null)

@@ -496,3 +496,35 @@ Finding: the household's own pattern deserves more weight as history grows; with
 single 0.67 would also have been a safe choice. Caveat: the synthetic households keep fairly stable shares over
 the year, which favours their own past; real households may change more, so the volunteers' months are the check.
 The w = 0 column (households like you only) is the worst everywhere: personalising the split clearly helps.
+
+## 2026-11-10: Does today's score anticipate the months ahead?
+
+Script: scripts/score_predicts_later.py. Data: KIHBS-informed synthetic dataset, the 60 held-out (test) households,
+12 months each. For each month t, the score is worked out exactly as the app does it (one-pass timeline, months up to
+t only) and compared with the household's true state h = 1, 2 and 3 months later. Baselines: the deployed state
+model's answer for month t carried forward ("same as now"), and always guessing the most common training state
+(Strained). Rule fixed before running: the forward-looking claim holds at horizon h if the AUC for "Critical at
+t+h" is at least 0.70 and the score's band beats the most-common guess.
+
+| Months ahead | Pairs | AUC Critical | AUC Stable | Band accuracy | Same as now | Most common | Holds? |
+|---|---|---|---|---|---|---|---|
+| 1 | 660 | 0.709 | 0.760 | 0.486 | 0.562 | 0.370 | yes |
+| 2 | 600 | 0.609 | 0.678 | 0.418 | 0.442 | 0.368 | no |
+| 3 | 540 | 0.564 | 0.628 | 0.381 | 0.370 | 0.350 | no |
+
+Average score at month t by the true state 3 months later: Stable 57.9 (n=162), Strained 43.7 (n=189),
+Critical 42.4 (n=189).
+
+Finding: the score is a useful one-month-ahead warning (AUC 0.71 for Critical, 0.76 for Stable) and fades after
+that; by three months it is only a little better than chance. It separates households that will be Stable from the
+rest (57.9 against about 43) but hardly tells Strained from Critical. As a guess of the exact state, the score's
+band is weaker than carrying the current state forward, which is expected: the band was set for verdicts, not for
+naming next month's state.
+
+The ceiling is low for any method on this data: carrying the current state forward drops from 0.56 at one month to
+0.37 at three, close to the most-common guess, so the generator's states change a lot from month to month and are
+hard to anticipate three months out. Real households may be more persistent; the volunteers' months are the check.
+
+Decision: the app keeps its claim narrow. Tosha is forward-looking because it simulates a planned change on the
+household's own recent months before they commit, forecasts spending with a range, and gives a short-term warning;
+it does not claim to predict a household's state months ahead. The About page and Chapter 5 say so.
