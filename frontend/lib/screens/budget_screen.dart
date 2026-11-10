@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/state_words.dart';
 import '../widgets/model_note.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
@@ -34,6 +35,13 @@ class BudgetScreen extends StatelessWidget {
 /// This month's budget: what is safe to spend today, how the money is split, each everyday line against the
 /// month's pace, and what changed this month. Any everyday line can be set by hand; the others rebalance, savings
 /// and bills stay, and the choice is remembered next month.
+/// What a month's state means for the budget, in plain words (wording audit, 10 Nov).
+const _monthLooks = {
+  'Stable': 'fine: there is room to save',
+  'Strained': 'stretched: there is little room for extras',
+  'Critical': 'hard: more is going out than comes in',
+};
+
 class BudgetView extends StatefulWidget {
   const BudgetView({super.key});
 
@@ -210,7 +218,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                     ),
                 ]),
               ),
-              Text('${kesAmount(s)} of ${kesAmount(limit)}', style: const TextStyle(fontWeight: FontWeight.w600)),
+              Text('${kesAmount(s)} spent of ${kesAmount(limit)}', style: const TextStyle(fontWeight: FontWeight.w600)),
               const SizedBox(width: 6),
               Icon(Icons.edit_rounded, size: 16, color: c.muted),
             ]),
@@ -240,12 +248,13 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
             Panel(
               color: c.lime,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Safe to spend today', style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime)),
+                Text('You can spend about', style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime)),
                 const SizedBox(height: 4),
-                Text(kesAmount(d['safe_per_day'] as num),
+                Text('${kesAmount(d['safe_per_day'] as num)} a day',
                     style: theme.textTheme.displaySmall?.copyWith(color: c.onLime, fontWeight: FontWeight.w700, letterSpacing: -1)),
                 const SizedBox(height: 4),
-                Text('${kesAmount(d['everyday_left'] as num)} left for everyday spending over the next $daysLeft '
+                Text('until the end of the month and still keep to your plan: '
+                    '${kesAmount(d['everyday_left'] as num)} left for everyday spending over the next $daysLeft '
                     'day${daysLeft == 1 ? '' : 's'}.', style: TextStyle(color: c.onLime)),
               ]),
             ),
@@ -257,13 +266,13 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                 Text('Your plan for ${monthNames[(d['month'] as int) - 1]}', style: theme.textTheme.titleLarge),
                 const SizedBox(height: 4),
                 Text('Every shilling of your ${kesAmount(plan['income'] as num)} has a job. '
-                    'This month looks ${(plan['state'] as String).toLowerCase()}.',
+                    'This month looks ${_monthLooks[plan['state']] ?? stateLabel(plan['state'] as String).toLowerCase()}.',
                     style: TextStyle(color: c.muted)),
                 const SizedBox(height: 16),
                 DonutWithLegend(centerLabel: 'KES planned', slices: [
-                  if (bills > 0) Slice('Rent and bills', bills.toDouble(), ChartColors.slot(context, 0)),
+                  if (bills > 0) Slice('Paid first: rent and bills', bills.toDouble(), ChartColors.slot(context, 0)),
                   if (saving > 0) Slice('Savings', saving.toDouble(), ChartColors.slot(context, 2)),
-                  if (everydayTotal > 0) Slice('Everyday spending', everydayTotal.toDouble(), ChartColors.slot(context, 1)),
+                  if (everydayTotal > 0) Slice('Everyday: what is left to live on', everydayTotal.toDouble(), ChartColors.slot(context, 1)),
                 ]),
               ]),
             ),
@@ -295,7 +304,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                 Expanded(child: Text('Everyday spending', style: theme.textTheme.titleLarge)),
                 if (edited.isNotEmpty) TextButton(onPressed: _reset, child: const Text('Back to recommended')),
               ]),
-              Text('Tap a line to set your own limit. The black mark shows where spending should be by today.',
+              Text('Tap a line to change its limit. The thin mark shows where you would be today if you spread it '
+                  'evenly over the month.',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
               const SizedBox(height: 8),
               for (final k in everyday) limitRow(k),
@@ -342,7 +352,7 @@ class _Plain extends StatelessWidget {
         child: Row(children: [
           Expanded(child: Text(label)),
           if (spent != null)
-            Text('${kesAmount(spent!)} paid of ', style: TextStyle(color: AppColors.of(context).muted)),
+            Text('${kesAmount(spent!)} paid so far, of ', style: TextStyle(color: AppColors.of(context).muted)),
           Text(kesAmount(amount), style: const TextStyle(fontWeight: FontWeight.w600)),
         ]),
       );
@@ -384,7 +394,7 @@ class _VersusRule extends StatelessWidget {
         );
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('Your budget vs the 50/30/20 rule', style: theme.textTheme.titleLarge),
+        Text('How this compares with a one-size-fits-all budget (50/30/20)', style: theme.textTheme.titleLarge),
         const SizedBox(height: 4),
         Text('Fixed rules give everyone the same percentages. Tosha starts from your bills, your own spending and '
             'how your month is going, so the split is yours.', style: TextStyle(color: c.muted)),
@@ -546,7 +556,7 @@ class _PastBudgetsState extends State<_PastBudgets> with ReloadOnChange {
           child: Text('${_names[(m['month'] as int) - 1]} ${m['year']}', style: Theme.of(context).textTheme.titleMedium),
         ),
         Flexible(
-          child: Text('No budget that month. Budgets are kept from the first time you open them.',
+          child: Text('No budget for that month: Tosha keeps a month\'s budget from the first time you open it.',
               textAlign: TextAlign.right, style: TextStyle(color: c.muted)),
         ),
       ]),

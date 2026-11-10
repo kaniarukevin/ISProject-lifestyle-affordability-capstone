@@ -77,9 +77,9 @@ class ScoreScale extends StatelessWidget {
           }),
           const SizedBox(height: 6),
           Row(children: [
-            Expanded(flex: 33, child: Text('Not affordable', style: muted)),
+            Expanded(flex: 33, child: Text('0 · Not affordable', style: muted)),
             Expanded(flex: 23, child: Text('Stretch', style: muted)),
-            Expanded(flex: 44, child: Text('Affordable', style: muted, textAlign: TextAlign.right)),
+            Expanded(flex: 44, child: Text('Affordable · 100', style: muted, textAlign: TextAlign.right)),
           ]),
         ]),
       ),

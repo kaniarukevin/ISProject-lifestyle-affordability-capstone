@@ -161,7 +161,8 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
       child: ListView(
         padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
-          Text('Your bills, debts and goals. They are taken out first when your budget is built.', style: muted),
+          Text('Money you have to pay, or want to save, every month. Tosha sets it aside first, then plans the rest.',
+              style: muted),
           if (busy) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
           if (error != null)
             Padding(padding: const EdgeInsets.only(top: 10), child: Text(error!, style: TextStyle(color: col.warn))),
@@ -221,7 +222,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
             _Section(
               title: 'Debts',
               note: 'Fuliza, M-Shwari, SACCO or bank loan, phone on credit',
-              empty: 'No debts. Good.',
+              empty: 'No debts. Add Fuliza, a SACCO or bank loan, or a phone on credit if you have any.',
               onAdd: () => _add('debt'),
               children: [
                 ...c!.debts.asMap().entries.map((e) {
@@ -229,8 +230,8 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                   return _Row(
                     title: e.value.name,
                     amount: '${money(e.value.monthlyPayment)} a month',
-                    subtitle: 'KES ${money(e.value.balance)} left · ${e.value.annualRate}% a year'
-                        '${plan != null && plan['cleared_by'] != null ? ' · cleared by ${plan['cleared_by']}' : ''}'
+                    subtitle: 'KES ${money(e.value.balance)} still owed · ${e.value.annualRate}% interest a year'
+                        '${plan != null && plan['cleared_by'] != null ? ' · paid off by ${plan['cleared_by']}' : ''}'
                         '${_fromCheck(e.value.fromCheck)}',
                     onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
                     onDelete: () => _confirmRemove(e.value.name, () => c!.debts.removeAt(e.key)),
@@ -242,7 +243,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(color: col.field, borderRadius: BorderRadius.circular(20)),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Text('What if I pay more each month?', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                      Text('What if I pay a bit more each month?', style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
                       const SizedBox(height: 8),
                       TextFormField(
                         initialValue: c!.extraPerMonth == 0 ? '' : c!.extraPerMonth.round().toString(),
@@ -269,7 +270,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
             _Section(
               title: 'Goals',
               note: 'An emergency fund, a plot, a trip',
-              empty: 'No goals yet.',
+              empty: 'No goals yet. Add one, like an emergency fund, and Tosha sets money aside for it in your budget.',
               onAdd: () => _add('goal'),
               children: c!.goals.asMap().entries.map((e) {
                 // Matched by name: the server's list leaves reached goals out, so positions differ.
@@ -310,8 +311,9 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                       Text(
                         e.value.done
                             ? 'KES ${money(e.value.target)}${e.value.doneOn != null ? ' · reached ${e.value.doneOn}' : ''}'
-                            : '${money(e.value.saved)} of ${money(e.value.target)} · ${e.value.monthsLeft} month(s) left'
-                                '${g != null ? ' · KES ${money(g['monthly_needed_KES'] as num)} a month' : ''}',
+                            : 'KES ${money(e.value.saved)} of KES ${money(e.value.target)} saved'
+                                '${g != null ? ' · KES ${money(g['monthly_needed_KES'] as num)} a month to reach it' : ''}'
+                                ' in ${e.value.monthsLeft} month${e.value.monthsLeft == 1 ? '' : 's'}',
                         style: theme.textTheme.bodySmall?.copyWith(color: col.muted),
                       ),
                     ]),
@@ -529,7 +531,7 @@ class _AddDialogState extends State<_AddDialog> {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.event),
               title: Text(due == null ? 'Next due date (optional)' : 'Next due ${_day(_iso(due!))}'),
-              subtitle: const Text('Lets the app remind you when it is due.'),
+              subtitle: const Text('Tosha shows it under "Coming up" on the home tab a week before it is due.'),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 if (due != null) IconButton(tooltip: 'No due date', icon: const Icon(Icons.close),
                     onPressed: () => setState(() => due = null)),

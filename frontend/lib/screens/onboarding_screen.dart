@@ -246,7 +246,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Text(question, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 10),
           SegmentedButton<bool>(
-            showSelectedIcon: false,
+            showSelectedIcon: true,   // a tick on the chosen answer: a dark segment alone did not read as "chosen"
             emptySelectionAllowed: true,
             segments: const [ButtonSegment(value: true, label: Text('Yes')), ButtonSegment(value: false, label: Text('No'))],
             selected: {?value},
@@ -282,13 +282,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ]);
       case 1:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 2 of $_steps', 'How does money come in$who?', 'Pick all that apply.'),
+          _title(theme, 'Step 2 of $_steps', 'How does money come in$who?',
+              'Pick all that apply; a tick shows what you picked. Tap again to take it off.'),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final e in incomeTypeLabels.entries)
               FilterChip(
                 label: Text(e.value),
                 selected: types.contains(e.key),
-                showCheckmark: false,
+                showCheckmark: true,   // 10 Nov: without the tick, testers could not tell picked from not picked
                 onSelected: (on) => setState(() {
                   if (e.key == 'none' && on) types.clear();
                   if (e.key != 'none' && on) types.remove('none');
@@ -309,10 +310,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         ]);
       case 2:
-        Widget counter(String label, int value, int min, int max, ValueChanged<int> set) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+        Widget counter(String label, String help, int value, int min, int max, ValueChanged<int> set) => Padding(
+              padding: const EdgeInsets.only(bottom: 12),
               child: Row(children: [
-                Expanded(child: Text(label, style: theme.textTheme.bodyLarge)),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(label, style: theme.textTheme.bodyLarge),
+                    Text(help, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+                  ]),
+                ),
                 IconButton.filledTonal(
                   tooltip: 'Fewer',
                   onPressed: value > min ? () => setState(() => set(value - 1)) : null,
@@ -327,16 +333,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ]),
             );
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 3 of $_steps', 'Who lives with you?'),
+          _title(theme, 'Step 3 of $_steps', 'Who lives with you?', 'Use the + and − buttons. 0 is a fine answer.'),
           Panel(
             child: Column(children: [
-              counter('People at home, including you', people, 1, 20, (v) {
+              counter('People at home, including you', 'Everyone who lives and eats with you.', people, 1, 20, (v) {
                 people = v;
                 support = support.clamp(0, v - 1);
                 children = children.clamp(0, v - 1);
               }),
-              counter('People you support', support, 0, people - 1, (v) => support = v),
-              counter('Children in school', children, 0, people - 1, (v) => children = v),
+              counter('People who depend on your money', 'Of the people at home, those you pay for: children, a parent, '
+                  'a relative. Not you.', support, 0, people - 1, (v) => support = v),
+              counter('Children in school', 'Only children whose school fees your household pays.', children, 0,
+                  people - 1, (v) => children = v),
             ]),
           ),
           if (children > 0) ...[
@@ -367,14 +375,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           _title(theme, 'Step 4 of $_steps', 'How much comes in each month$who?',
               studying ? 'Allowance, HELB upkeep, gigs, all together. A rough number is fine.'
                   : 'Salary, business, support from family, all together. A rough number is fine.'),
-          _money(income, 'Money in, a usual month', big: true),
+          _money(income, 'Money in, a usual month (0 is fine)', big: true),
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Text('Does it change month to month?', style: theme.textTheme.titleMedium),
               const SizedBox(height: 10),
               SegmentedButton<bool>(
-                showSelectedIcon: false,
+                showSelectedIcon: true,
                 segments: const [
                   ButtonSegment(value: false, label: Text("It's steady")),
                   ButtonSegment(value: true, label: Text('It changes')),
@@ -391,18 +399,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ]);
       case 4:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 5 of $_steps', 'Rent and savings'),
-          _money(rent, 'Rent per month', hint: '0 if you do not pay rent'),
-          const SizedBox(height: 16),
-          _money(saved, 'Money already saved', hint: 'M-Shwari, SACCO, bank, cash'),
+          _title(theme, 'Step 5 of $_steps', 'Rent, and money you have saved',
+              'Both are optional: leave a box empty if it does not apply.'),
+          _money(rent, 'Rent per month (optional)', hint: 'Leave empty if you do not pay rent'),
+          const SizedBox(height: 20),
+          _money(saved, 'Money you already have saved (optional)', hint: 'M-Shwari, KCB M-PESA, SACCO, bank, cash'),
           const SizedBox(height: 8),
-          Text('Savings show whether a short-term cost can be carried.',
+          Text('All your savings together, today. Tosha uses it to tell you how long you could cover a short gap. '
+              'You can change it any time under You, then Household and income.',
               style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ]);
       default:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 6 of $_steps', 'Roughly, what does a usual month cost?',
-              'Leave any blank. This lets Tosha answer today.'),
+          _title(theme, 'Step 6 of $_steps', 'Roughly, what does a usual month cost? (optional)',
+              'Leave any box empty. Rough numbers let Tosha answer today; your M-PESA statement replaces them later.'),
           for (final k in _usualKeys) ...[
             _money(usual[k]!, spendingCategories[k]!),
             const SizedBox(height: 12),

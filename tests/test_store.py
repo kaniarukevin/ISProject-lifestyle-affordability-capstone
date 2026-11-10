@@ -106,9 +106,10 @@ def test_repeated_wrong_passwords_lock_the_account_for_a_while(client):
 
 
 def test_sign_ups_from_one_network_are_limited(client):
+    n = store.REGISTER_PER_HOUR                   # 30 since 10 Nov: volunteers often share one Wi-Fi
     codes = [client.post("/auth/register", json={"email": f"u{i}@example.com", "password": "strong-pass-1"}).status_code
-             for i in range(6)]
-    assert codes[:5] == [201] * 5 and codes[5] == 429
+             for i in range(n + 1)]
+    assert codes[:n] == [201] * n and codes[n] == 429
 
 
 def test_only_known_websites_may_call_from_a_browser(client):
@@ -748,6 +749,7 @@ def test_hand_entered_records_in_statement_months_are_replaced_not_doubled(clien
     assert prev["manual_overlap"] == {"count": 1, "months": ["2026-10"]}
     r = _import(client, h, prev)
     assert any("Replaced 1 hand-entered" in n for n in r["notes"])
+    assert r["notes"][0].startswith("Read ") and "already sorted" in r["notes"][0]     # says what it found (10 Nov)
     txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
     assert sum(1 for t in txs if t["amount"] == 1200) == 1
     assert any(t["date"] == "2026-06-10" for t in txs)
@@ -1305,6 +1307,18 @@ def test_a_check_says_what_it_does_to_savings_goals(client, monkeypatch):
     assert eff["goals"][0]["months_new"] is None or eff["goals"][0]["months_new"] > 6
     goal = client.post("/me/afford", headers=h, json={"preset": "savings_goal", "target": 3000, "months": 3}).get_json()
     assert "goals_effect" not in goal          # a goal check already weighs the goal itself
+
+
+def test_an_old_savings_balance_is_checked_not_rewritten(client, monkeypatch):
+    h = _earner(client, monkeypatch)                              # entered 15 Nov; saved 4,000 a month Jul-Oct
+    assert client.get("/me/overview", headers=h).get_json()["savings_check"] is None      # fresh: nothing to ask
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 12, 20))
+    client.post("/me/transactions", headers=h, json=[{"date": "2026-12-05", "amount": 5000, "category": "savings"}])
+    ask = client.get("/me/overview", headers=h).get_json()["savings_check"]
+    assert ask == {"balance_KES": 60000, "set_on": "2026-11-15", "saved_since_KES": 5000}   # past savings not added
+    assert client.post("/me/savings", headers=h, json={"balance": 65000}).status_code == 200
+    o = client.get("/me/overview", headers=h).get_json()
+    assert o["savings_check"] is None and o["savings_balance"] == 65000
 
 
 # ---------- low month: income that varies ----------

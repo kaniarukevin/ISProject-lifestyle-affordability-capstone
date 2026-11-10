@@ -78,7 +78,7 @@ class SuggestionBox extends StatelessWidget {
             style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime,
                 minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
             onPressed: onUse,
-            child: Text('Use: $label'),
+            child: Text('Looks like: $label. Use this?'),
           ),
       ]),
     );
@@ -348,8 +348,9 @@ class _PayeesScreenState extends State<PayeesScreen> {
                             color: AppColors.of(context).lime, backgroundColor: AppColors.of(context).range),
                       ),
                       const SizedBox(height: 10),
-                      Text('Tell Tosha who people and businesses are, once. It applies to every past and future '
-                          'payment. Suggestions are marked in lime; nothing is changed without you.',
+                      Text('Tell Tosha what each person or business is, once: food, rent, family, transport. It then '
+                          'sorts every past and future payment to them, so your budget is split right. Suggestions are '
+                          'marked in lime; nothing changes without you.',
                           style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
                       const SizedBox(height: 14),
                       Align(
@@ -358,7 +359,7 @@ class _PayeesScreenState extends State<PayeesScreen> {
                           showSelectedIcon: false,
                           segments: [
                             ButtonSegment(value: true, label: Text('Still to sort (${all.where(_toSort).length})')),
-                            ButtonSegment(value: false, label: Text('Everyone (${all.length})')),
+                            ButtonSegment(value: false, label: Text('Everyone you pay (${all.length})')),
                           ],
                           selected: {onlyToSort},
                           onSelectionChanged: (v) => setState(() => onlyToSort = v.first),
@@ -369,7 +370,9 @@ class _PayeesScreenState extends State<PayeesScreen> {
                   if (shown.isEmpty)
                     const Padding(
                       padding: EdgeInsets.only(top: 24),
-                      child: Center(child: Text('Nothing left to sort. Upload a statement to add more.')),
+                      child: Center(
+                          child: Text('All sorted. Your budget and score now use the right categories.',
+                              textAlign: TextAlign.center)),
                     ),
                   ...pay.map((p) => PayeeCard(
                         payee: p,

@@ -46,15 +46,32 @@ class _StatementScreenState extends State<StatementScreen> {
 
   Future<void> _pick() async {
     // file_picker 13: static pickFile(); bytes are read separately (withData was removed).
-    final f = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['pdf']);
-    if (f == null) return;
-    final data = await f.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      bytes = data;
-      filename = f.name;
-      error = null;
-    });
+    // Any file type (10 Nov): on an iPhone, asking for ".pdf" only can grey out a real statement (from Mail or
+    // Files), so the picker shows everything and Tosha checks the file itself.
+    try {
+      final f = await FilePicker.pickFile(type: FileType.any);
+      if (f == null) return;
+      final data = await f.readAsBytes();
+      if (!mounted) return;
+      final isPdf = data.length > 4 && String.fromCharCodes(data.take(5)) == '%PDF-';
+      setState(() {
+        if (!isPdf) {
+          bytes = null;
+          filename = null;
+          error = 'That file is not a PDF. Choose the M-PESA statement PDF that Safaricom emailed you. On an iPhone, '
+              'open the email, tap the PDF, then Share and Save to Files first.';
+          return;
+        }
+        bytes = data;
+        filename = f.name;
+        error = null;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => error = 'Could not open that file on this device. Save the statement PDF to your phone first '
+            '(on an iPhone: open it in Mail, tap Share, then Save to Files), then choose it again.');
+      }
+    }
   }
 
   Future<void> _read() async {
@@ -187,9 +204,11 @@ class _StatementScreenState extends State<StatementScreen> {
           Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about. '
               'You see everything before anything is saved.', style: TextStyle(color: c.muted)),
           const SizedBox(height: 18),
-          step('1', 'In the M-PESA app: Statements, then Request full statement (or dial *334#).'),
+          step('1', 'Dial *334#, then My Account, M-PESA Statement, Request Statement. Choose a full statement for 12 '
+              'months: a full year gives the most accurate answers.'),
           step('2', 'Safaricom emails you a PDF and texts you its password.'),
-          step('3', 'Choose the PDF here and type the password.'),
+          step('3', 'Save the PDF to your phone (iPhone: open the email, tap the PDF, Share, Save to Files), then '
+              'choose it here and type the password.'),
         ]),
       ),
       const SizedBox(height: 16),

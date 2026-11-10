@@ -226,16 +226,36 @@ FRAGILE_MONTHS = 3      # months in the last 12 with spending above income that 
 YEAR_MARGIN = 0.10      # the safe margin: the budget's 10% saving rate
 
 
+def carry_over(income, spent, saved):
+    """Money carried over from month to month (10 Nov). What is left at the end of a month (after spending and
+    after what was moved into savings) stays on M-PESA and can be spent next month; spending it is not
+    overspending. Months come oldest first. Returns, per month, the carry at its start and whether it was
+    'over' (spent more than came in plus the carry) or 'covered' (spent more than came in, paid from the carry)."""
+    carry, out = 0.0, []
+    for inc, sp, sv in zip(income, spent, saved):
+        inc, sp, sv = float(inc), float(sp), float(sv)
+        out.append({"carry_in": carry, "over": sp > inc + carry, "covered": inc < sp <= inc + carry,
+                    "short": max(0.0, sp - inc)})
+        carry = max(0.0, carry + inc - sp - sv)
+    return out
+
+
 def track_record(m):
     """How the last 12 months went, straight from the figures: months where spending (before savings) was more
-    than the money that came in. The score only sees the last 3 to 6 months, and the training labels do too
-    (adding 12-month history changed held-out accuracy from 0.728 to 0.735; docs/experiments.md, 5 Nov), so a
-    year of overspending followed by three calm months scored 100. This makes that history visible."""
-    last = m.sort_values("month").tail(12)
+    than the money that came in plus what was carried over from earlier months. The score only sees the last 3 to
+    6 months, and the training labels do too (adding 12-month history changed held-out accuracy from 0.728 to
+    0.735; docs/experiments.md, 5 Nov), so a year of overspending followed by three calm months scored 100. This
+    makes that history visible. Spending last month's leftover is not counted as overspending (10 Nov)."""
+    ordered = m.sort_values("month")
+    spent_all = ordered[[c for c in CATS if c != "savings"]].sum(axis=1)
+    income_all = ordered[INCOME].sum(axis=1)
+    flags = carry_over(income_all, spent_all, ordered["savings"])[-12:]
+    last = ordered.tail(12)
     spent = last[[c for c in CATS if c != "savings"]].sum(axis=1)
     income = last[INCOME].sum(axis=1)
-    over = int((spent > income).sum())
+    over = sum(1 for f in flags if f["over"])
     return {"months": int(len(last)), "overspent_months": over, "fragile": over >= FRAGILE_MONTHS,
+            "covered_months": sum(1 for f in flags if f["covered"]),
             # The average month over the whole year (calm and bad months together): income and what was left.
             "year_income_KES": round(float(income.mean())), "year_left_KES": round(float((income - spent).mean()))}
 
@@ -277,7 +297,11 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
                        + (" while you pay." if duration else "."))
     record = track_record(m)
     record["lowered_verdict"] = False
-    if track and record["fragile"] and verdict == "Affordable":
+    # A year with several heavy months (overspent, or paid from earlier leftovers) still needs the cost to fit the
+    # AVERAGE month. Carry-over (10 Nov) decides what counts as overspending, not whether the year is uneven: a
+    # leftover pays for one heavy month, it does not pay for a new cost every month.
+    heavy = record["overspent_months"] + record.get("covered_months", 0)
+    if track and heavy >= FRAGILE_MONTHS and verdict == "Affordable":
         # The score judges recent months; a fragile year asks whether the cost still fits the AVERAGE month of the
         # year (calm and bad months together) with the budget's 10% margin left. A first version lowered every
         # Affordable answer in a fragile year, whatever the amount (found on the developer's data, 5 Nov: KES 2,500
@@ -286,13 +310,16 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
         left_after = record["year_left_KES"] - cost
         record["year_left_after_KES"] = round(left_after)
         bad = f"you spent more than came in during {record['overspent_months']} of the last {record['months']} months"
+        uneven = (f"{heavy} of the last {record['months']} months cost more than came in"
+                  + (f", {record['covered_months']} of them paid from money left over earlier"
+                     if record.get("covered_months") else ""))
         if left_after < YEAR_MARGIN * record["year_income_KES"]:
             verdict = "Stretch"
             record["lowered_verdict"] = True
-            reasons.append(f"Your recent months make this look affordable, but {bad}. Across the whole year your "
+            reasons.append(f"Your recent months make this look affordable, but {uneven}. Across the whole year your "
                            f"average month would leave only KES {max(0, round(left_after)):,} after this, less than "
                            f"the 10% of income the budget keeps as a margin, so treat it as a stretch.")
-        else:
+        elif record["fragile"]:          # real overspending, not leftovers: worth a caution even when it fits
             reasons.append(f"A caution: {bad}. Even so, across the whole year your average month would still leave "
                            f"about KES {round(left_after):,} after this.")
     return {"score_before": round(sb), "score_after": round(sa), "verdict": verdict, "track_record": record,

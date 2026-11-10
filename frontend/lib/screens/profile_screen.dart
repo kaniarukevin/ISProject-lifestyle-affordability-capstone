@@ -127,7 +127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             }),
           ),
           _Counter(
-            label: 'Dependants (people you support)',
+            label: 'People who depend on your money (not you)',
             value: draft.dependants,
             min: 0,
             max: draft.householdSize - 1,

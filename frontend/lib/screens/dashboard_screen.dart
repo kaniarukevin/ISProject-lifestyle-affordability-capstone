@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/start_here.dart';
+import '../widgets/state_words.dart';
 import '../widgets/model_note.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -12,6 +14,7 @@ import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
 import '../widgets/rating_row.dart';
 import '../widgets/verdict.dart';
+import 'payees_screen.dart';
 import 'why_score_sheet.dart';
 
 /// Overview: lifestyle affordability and the budget forecast first (design canvas, 6 Nov).
@@ -22,7 +25,7 @@ class DashboardScreen extends StatefulWidget {
   final VoidCallback? onAddSpending;
   /// Open Records inside this tab at a month ('YYYY-MM').
   final ValueChanged<String>? onOpenRecords;
-  /// Switch to another tab: 1 = Can I afford it?, 2 = Forecast and budget, 3 = Plans.
+  /// Switch to another tab: 1 = Can I afford it?, 2 = Budget and next 3 months, 3 = Bills, debts and goals.
   final ValueChanged<int>? onOpenTab;
 
   @override
@@ -129,6 +132,19 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
                 Text('Showing your last figures, updating…', style: theme.textTheme.bodySmall),
               ]),
             ),
+          StartHere(
+            hasStatement: d['estimated'] != true,
+            sorted: d['estimated'] != true && ((d['unsorted_share'] ?? 0) as num) <= 0.10,
+            checked: lastCheck != null,
+            onAddStatement: () => widget.onAddSpending?.call(),
+            onSort: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PayeesScreen())),
+            onBudget: () => widget.onOpenTab?.call(2),
+            onCheck: () => widget.onOpenTab?.call(1),
+          ),
+          if (d['savings_check'] != null) ...[
+            _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>()),
+            const SizedBox(height: 20),
+          ],
           if (d['income_gap'] != null) ...[
             _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
             const SizedBox(height: 20),
@@ -196,12 +212,6 @@ class _ScoreCard extends StatelessWidget {
   final String state;
   final String? summary;
 
-  static const _says = {
-    'Stable': 'Your income covers your usual way of life, with room to save.',
-    'Strained': 'Money is tight: most of what comes in goes straight out.',
-    'Critical': 'More is going out than comes in. Acting early makes it easier.',
-  };
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -209,21 +219,30 @@ class _ScoreCard extends StatelessWidget {
     return Panel(
       color: c.lime,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Affordability score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
+        Text('Your money score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
         const SizedBox(height: 6),
         Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Text('$score',
               style: theme.textTheme.displayMedium
                   ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -1.5, height: 1, color: _onLime)),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, top: 14),
+            child: Text('/ 100', style: theme.textTheme.titleMedium?.copyWith(color: const Color(0xFF3A4214))),
+          ),
           const SizedBox(width: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(color: _onLime, borderRadius: BorderRadius.circular(16)),
-            child: Text(state, style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w600)),
+            child: Text(stateLabel(state),
+                style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w600)),
           ),
         ]),
         const SizedBox(height: 10),
-        Text(_says[state] ?? '', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
+        Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
+        const SizedBox(height: 4),
+        Text('The score runs from 0 to 100: the higher it is, the more room your money has. It is worked out from your '
+            'last few months.',
+            style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         if (summary != null) ...[
           const SizedBox(height: 4),
           Text(summary!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
@@ -635,8 +654,8 @@ class _YearCard extends StatelessWidget {
         Text('Your year', style: theme.textTheme.titleLarge),
         const SizedBox(height: 4),
         Text(
-            '${counts['Stable']} Stable, ${counts['Strained']} Strained and ${counts['Critical']} Critical '
-            'month${shown.length == 1 ? '' : 's'}. Tap a month to see it.',
+            'Each square is a month: ${counts['Stable']} doing fine, ${counts['Strained']} stretched and '
+            '${counts['Critical']} struggling. Tap a month to see it.',
             style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         const SizedBox(height: 16),
         LayoutBuilder(builder: (context, box) {
@@ -654,7 +673,7 @@ class _YearCard extends StatelessWidget {
             Row(mainAxisSize: MainAxisSize.min, children: [
               Container(width: 10, height: 10, decoration: BoxDecoration(color: _stateColor(c, s), borderRadius: BorderRadius.circular(3))),
               const SizedBox(width: 6),
-              Text(s, style: theme.textTheme.bodySmall),
+              Text(stateLabel(s), style: theme.textTheme.bodySmall),
             ]),
         ]),
       ]),
@@ -680,7 +699,7 @@ class _MonthTile extends StatelessWidget {
     final state = m['state'] as String;
     final fg = _stateInk(context, state);
     return Tooltip(
-      message: '$label: $state, score ${m['score']}',
+      message: '$label: ${stateLabel(state)}, ${scoreOutOf(m['score'] as num)}',
       child: Material(
         color: _stateColor(c, state),
         borderRadius: BorderRadius.circular(14),
@@ -692,7 +711,8 @@ class _MonthTile extends StatelessWidget {
             child: Column(children: [
               Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 12)),
               Text('${m['score']}', style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 18)),
-              Text(state[0], style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 11)),
+              // The score, not a letter: Stable and Strained both started with S.
+              Text('${m['score']}', style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 11)),
             ]),
           ),
         ),
@@ -712,12 +732,92 @@ class _StateTag extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(color: _stateColor(c, state), borderRadius: BorderRadius.circular(20)),
-      child: Text('$state · score $score',
+      child: Text('${stateLabel(state)} · ${scoreOutOf(score)}',
           style: TextStyle(color: _stateInk(context, state), fontWeight: FontWeight.w700)),
     );
   }
 }
 
+
+/// "Is your savings balance still KES X?" (10 Nov). The balance is a snapshot from the day it was typed, so past
+/// records are never added to it; once it is a month old Tosha asks, since checks look ahead using it.
+class _SavingsCheckCard extends StatefulWidget {
+  const _SavingsCheckCard({required this.check});
+  final Map<String, dynamic> check;
+
+  @override
+  State<_SavingsCheckCard> createState() => _SavingsCheckCardState();
+}
+
+class _SavingsCheckCardState extends State<_SavingsCheckCard> {
+  bool busy = false;
+  static const _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  Future<void> _save([double? balance]) async {
+    setState(() => busy = true);
+    try {
+      await context.read<AppState>().api.confirmSavings(balance);   // the overview reloads by itself
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _update() async {
+    final ctl = TextEditingController();
+    final v = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your savings today'),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(prefixText: 'KES ', helperText: 'All of it together: M-Shwari, SACCO, bank, cash'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () {
+              final x = double.tryParse(ctl.text.replaceAll(',', '').trim());
+              if (x != null && x.isFinite && x >= 0 && x < 100000000) Navigator.pop(ctx, x);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctl.dispose();
+    if (v != null) await _save(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final k = widget.check;
+    final since = k['set_on'] as String?;
+    final saved = (k['saved_since_KES'] as num?) ?? 0;
+    final when = since == null ? null : DateTime.tryParse(since);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Is your savings still KES ${money(k['balance_KES'] as num)}?', style: theme.textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+            '${when == null ? 'We are not sure when you entered it.' : 'You entered it on ${when.day} ${_monthNames[when.month - 1]}.'}'
+            '${saved > 0 ? ' Since then about KES ${money(saved)} went into savings in your records.' : ''}'
+            ' "Can I afford it?" uses it to see how long your savings could cover a gap.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(height: 12),
+        Wrap(spacing: 10, runSpacing: 8, children: [
+          FilledButton(onPressed: busy ? null : _update, child: const Text('Update it')),
+          OutlinedButton(onPressed: busy ? null : () => _save(), child: const Text('Yes, still right')),
+        ]),
+      ]),
+    );
+  }
+}
 
 /// The statement shows clearly less money coming in than the user said (8 Nov: a 16,000 salary on M-PESA, the
 /// rest of a 30,000 income paid to a bank). Tosha asks once instead of scoring the months as poorer.
