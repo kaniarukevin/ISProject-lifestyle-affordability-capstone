@@ -40,15 +40,15 @@ class AboutNumbersScreen extends StatelessWidget {
                 Text('What each number comes from', style: theme.textTheme.titleLarge),
                 const SizedBox(height: 8),
                 const _Model(
-                  title: 'Financial state (Stable, Strained, Critical)',
+                  title: 'How you\'re doing (doing fine, stretched, struggling)',
                   text: 'A Random Forest model reads your recent months. On test households it agreed with the expected '
                       'state 80% of the time. When much of your spending is not sorted yet, a second model that uses only '
                       'totals from your statement takes over.',
                 ),
                 const _Model(
                   title: 'Affordability score (0 to 100)',
-                  text: 'Gradient-boosting models give the chance your months look Stable or Strained, turned into a '
-                      'score. They are built so that a bigger cost never raises your score. "Why this score?" shows how '
+                  text: 'Gradient-boosting models give the chance your months look like doing fine or stretched, turned '
+                      'into a score from 0 to 100. They are built so that a bigger cost never raises your score. "Why this score?" shows how '
                       'each part of your figures moved it.',
                 ),
                 const _Model(

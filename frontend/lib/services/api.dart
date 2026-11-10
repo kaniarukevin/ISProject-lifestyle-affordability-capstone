@@ -249,6 +249,9 @@ class Api {
   /// "What the statement shows is right": stop asking about the income gap.
   Future<void> dismissIncomeGap() => post('/me/income-gap/dismiss', {});
 
+  /// "Still right" (no balance) or a new savings balance; either way it is dated today.
+  Future<void> confirmSavings([double? balance]) => post('/me/savings', {'balance': ?balance});
+
   /// One month's money in, set by the user (wins for that month only), or cleared.
   Future<void> setMonthIncome(int year, int month, double amount) =>
       put('/me/months/$year/$month/income', {'amount': amount});

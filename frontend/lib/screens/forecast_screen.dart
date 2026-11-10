@@ -64,7 +64,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
   }
 
   /// 0: the next three months; 1: this month's budget (both in this tab, no new page).
-  int _view = 0;
+  int _view = 1;   // 1 = this month's budget (opens first), 0 = the next 3 months
 
   void _editBudget() => _setView(1);
 
@@ -82,8 +82,9 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
           child: SegmentedButton<int>(
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: 0, label: Text('Next 3 months'), icon: Icon(Icons.show_chart_rounded)),
+              // Budget first: it is what people open this tab for (wording audit, 10 Nov).
               ButtonSegment(value: 1, label: Text("This month's budget"), icon: Icon(Icons.account_balance_wallet_rounded)),
+              ButtonSegment(value: 0, label: Text('The next 3 months'), icon: Icon(Icons.show_chart_rounded)),
             ],
             selected: {_view},
             onSelectionChanged: (v) => _setView(v.first),
@@ -111,7 +112,11 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
     final d = f!;
     if (d['has_data'] != true) {
       return Center(
-        child: Text('The forecast appears once there are some records.', style: theme.textTheme.bodyLarge),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text('Your forecast needs at least one full month of records. Add your M-PESA statement to see it.',
+              textAlign: TextAlign.center, style: theme.textTheme.bodyLarge),
+        ),
       );
     }
     final months = (d['months'] as List).cast<Map<String, dynamic>>();
@@ -136,7 +141,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Wrap(spacing: 14, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                Text('Spending: your months and the next three', style: theme.textTheme.titleLarge),
+                Text('What you spent, and what the next 3 months will probably cost', style: theme.textTheme.titleLarge),
                 _Key(mark: Container(width: 16, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
                 _Key(mark: Container(width: 16, height: 3, color: c.muted), text: 'Expected'),
                 _Key(mark: Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range,
@@ -175,8 +180,9 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Put aside ${kesAmount(putAside['per_month_KES'] as num)} a month for the next '
-                    '${putAside['months']} month(s), and ${monthLong[(putAside['for_month'] as int) - 1]} is covered.',
+                    '${monthLong[(putAside['for_month'] as int) - 1]} costs more than usual. Put aside '
+                    '${kesAmount(putAside['per_month_KES'] as num)} a month for the next ${putAside['months']} '
+                    'month${putAside['months'] == 1 ? '' : 's'} to be ready.',
                     style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF111111), fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -315,14 +321,14 @@ class _MonthCard extends StatelessWidget {
                 if (first) TextSpan(text: ' · this month', style: TextStyle(color: c.muted)),
               ]), style: theme.textTheme.bodyLarge),
               const SizedBox(height: 12),
-              Text(short ? 'Spending more than comes in' : 'Expected left',
+              Text(short ? 'Short this month: it would come from your savings' : 'About this much left at the end of the month',
                   style: theme.textTheme.bodyMedium?.copyWith(color: fg ?? c.muted)),
               Text(money(left.abs()),
                   style: theme.textTheme.headlineLarge?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -1, color: fg)),
               const SizedBox(height: 4),
               Text(
-                '${short ? 'Taken from savings · ' : ''}Spending ${money(month['spending'] as num)}'
-                '${fees > 0 ? ' · school fees ${money(fees)}' : range != null ? ' · likely ${money(range['low'] as num)} to ${money(range['high'] as num)}' : ''}',
+                'Spending about KES ${money(month['spending'] as num)}'
+                '${fees > 0 ? ' · school fees ${money(fees)}' : range != null ? ' (could be KES ${money(range['low'] as num)} to ${money(range['high'] as num)})' : ''}',
                 style: theme.textTheme.bodySmall?.copyWith(color: fg ?? c.muted),
               ),
             ]),

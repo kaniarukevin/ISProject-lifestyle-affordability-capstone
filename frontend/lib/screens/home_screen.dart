@@ -21,10 +21,11 @@ class NavDest {
 }
 
 const _dests = [
-  NavDest('Overview', 'Overview', Icons.home_rounded),
+  // 10 Nov: names people would look for (testers could not find the budget or where bills and goals live).
+  NavDest('Home: how you are doing', 'How you\'re doing', Icons.home_rounded),
   NavDest('Can I afford it?', 'Can I afford it?', Icons.verified_user_rounded),
-  NavDest('Forecast and budget', 'Forecast and budget', Icons.bar_chart_rounded),
-  NavDest('Plans: bills, debts and goals', 'Plans', Icons.calendar_month_rounded),
+  NavDest('Budget and the next 3 months', 'Budget and next 3 months', Icons.bar_chart_rounded),
+  NavDest('Bills, debts and goals', 'Bills, debts and goals', Icons.calendar_month_rounded),
   NavDest('You', 'You', Icons.person_rounded),
 ];
 

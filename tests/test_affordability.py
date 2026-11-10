@@ -156,6 +156,18 @@ def test_a_fragile_year_is_seen_even_when_the_last_months_look_fine():
     assert not aff.evaluate(steady)["track_record"]["fragile"]
 
 
+def test_spending_last_months_leftover_is_not_overspending():
+    flags = aff.carry_over([30000, 30000, 30000], [27000, 33000, 31000], [0, 0, 0])
+    assert [f["covered"] for f in flags] == [False, True, False]      # Feb pays 3,000 from January's leftover
+    assert [f["over"] for f in flags] == [False, False, True]          # March has nothing left to carry
+    saved = aff.carry_over([30000, 30000], [27000, 33000], [3000, 0])   # January's leftover went into M-Shwari
+    assert saved[1]["over"] and not saved[1]["covered"]
+    calm = dict(STUDENT, entertainment=200, savings=0)                   # 300 left each month
+    big = dict(STUDENT, entertainment=900, savings=0)                    # 400 over: covered by the months before
+    rec = aff.evaluate({**body(calm), "months": [calm] * 11 + [big]})["track_record"]
+    assert rec["overspent_months"] == 0 and rec["covered_months"] == 1
+
+
 def test_a_fragile_year_turns_affordable_into_stretch_without_cut_advice():
     calm = dict(EARNER)
     over = dict(EARNER, entertainment=EARNER["entertainment"] + 8000)
@@ -183,12 +195,26 @@ def test_a_small_cost_in_a_fragile_year_stays_affordable_when_the_average_month_
     small = aff.evaluate({**body(calm), "months": months,
                           "scenario": {"type": "monthly_change", "changes": {"mobile_money_transfers": 2500}}})
     assert small["verdict"] == "Affordable" and not small["track_record"]["lowered_verdict"]
-    assert any(r.startswith("A caution: you spent more than came in during 5 of the last 12") for r in small["reasons"])
+    # Since 10 Nov, leftovers carry over: 4 of the 5 heavy months were paid from the calm months before them
+    # (16,000 left each), so only the first counts as overspending and there is no caution.
+    rec = small["track_record"]
+    assert (rec["overspent_months"], rec["covered_months"]) == (1, 4)
+    assert not any(r.startswith("A caution") for r in small["reasons"])
     big = aff.evaluate({**body(calm), "months": months,
                         "scenario": {"type": "monthly_change", "changes": {"housing": 12000}}})
-    assert big["verdict"] in ("Stretch", "Not affordable")
+    assert big["verdict"] in ("Stretch", "Not affordable")       # a new cost every month must fit the average month
     if big["verdict"] == "Stretch":
         assert big["track_record"]["lowered_verdict"]
+
+
+def test_real_overspending_with_nothing_carried_still_gets_a_caution():
+    # The same heavy months, but first, with nothing left over from before to pay for them.
+    calm = {"food_groceries": 8000, "transport": 3000, "entertainment": 3000, "income_primary": 30000}
+    over = {"food_groceries": 20000, "transport": 6000, "entertainment": 6000, "income_primary": 30000}
+    small = aff.evaluate({**body(calm), "months": [over] * 5 + [calm] * 7,
+                          "scenario": {"type": "monthly_change", "changes": {"mobile_money_transfers": 2500}}})
+    assert small["track_record"]["overspent_months"] == 5
+    assert any(r.startswith("A caution: you spent more than came in during 5 of the last 12") for r in small["reasons"])
 
 
 def test_the_one_pass_timeline_matches_scoring_each_month_on_its_own():

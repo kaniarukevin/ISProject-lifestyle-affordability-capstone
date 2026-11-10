@@ -124,7 +124,9 @@ class _WhyBody extends StatelessWidget {
           Text('Your track record', style: theme.textTheme.titleMedium),
           const SizedBox(height: 4),
           Text('You spent more than came in during ${record['overspent_months']} of the last ${record['months']} '
-              'months.${record['fragile'] == true ? ' The score looks mostly at your last 3 to 6 months, so keep a buffer '
+              'months.${((record['covered_months'] ?? 0) as num) > 0 ? ' In ${record['covered_months']} more you used money '
+                  'left over from earlier months, which is fine and not counted.' : ''}'
+              '${record['fragile'] == true ? ' The score looks mostly at your last 3 to 6 months, so keep a buffer '
                   'until the calmer months last.' : ''}'),
         ],
         const SizedBox(height: 24),

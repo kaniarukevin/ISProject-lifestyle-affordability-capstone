@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/state_words.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -364,8 +365,8 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
                         Icon(Icons.help_rounded, color: c.onLime),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: Text('$unsorted payment${unsorted == 1 ? '' : 's'} need${unsorted == 1 ? 's' : ''} sorting. '
-                              'Tap to see ${unsorted == 1 ? 'it' : 'them'}.',
+                          child: Text('$unsorted payment${unsorted == 1 ? ' is' : 's are'} not sorted yet, so this month\'s '
+                              'split may be off. Tap to sort ${unsorted == 1 ? 'it' : 'them'}.',
                               style: TextStyle(color: c.onLime, fontWeight: FontWeight.w600)),
                         ),
                         Icon(Icons.chevron_right_rounded, color: c.onLime),
@@ -450,7 +451,8 @@ class _MonthSummary extends StatelessWidget {
           if (oneOff > 0) figure(kesAmount(oneOff), 'One-off, kept apart'),
           if (state != null) StateBadge(state: state, score: scored!['score'] as int),
           if (state == null)
-            Text('This month is not finished, so it has no state yet.', style: TextStyle(color: c.muted)),
+            Text('This month is still going, so it has no score yet. You will see one when it ends.',
+                style: TextStyle(color: c.muted)),
         ]),
         if (by.isNotEmpty) ...[
           const SizedBox(height: 24),
@@ -477,7 +479,7 @@ class StateBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Text('$state · score $score', style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
+      child: Text('${stateLabel(state)} · ${scoreOutOf(score)}', style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
     );
   }
 }
@@ -615,7 +617,7 @@ class _AddTxnDialogState extends State<_AddTxnDialog> {
               contentPadding: EdgeInsets.zero,
               title: const Text('One-off purchase'),
               subtitle: const Text('Big, rare payments like a plot, a car deposit or a wedding. '
-                  'Shown, but not counted as your usual spending. Put any loan for it under Commitments.'),
+                  'Shown, but not counted as your usual spending. Put any loan for it under Bills, debts and goals.'),
               value: oneOff,
               onChanged: (v) => setState(() => oneOff = v),
             ),

@@ -91,7 +91,7 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
                 _loadHistory();
               },
               icon: const Icon(Icons.history_rounded),
-              label: Text('Past checks (${history.length})'),
+              label: Text('Your past checks (${history.length})'),
             );
 
       if (sideBySide && _preset != null) {
@@ -134,8 +134,8 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
                 padding: const EdgeInsets.only(top: 56),
                 child: _result == null
                     ? Panel(
-                        child: Text('Your answer appears here: a verdict, your score before and after, what it does '
-                            'to your budget month by month, and what would make it work.',
+                        child: Text('Pick one of the changes on the left. You will see whether you can afford it, why, '
+                            'and what would make it work.',
                             style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
                       )
                     : ResultView(result: _result!, choice: _choice, onChanged: _loadHistory,
@@ -425,21 +425,27 @@ class ResultView extends StatelessWidget {
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           VerdictChip(verdict, large: true),
+          if (_verdictMeans[verdict] != null) ...[
+            const SizedBox(height: 6),
+            Text(_verdictMeans[verdict]!, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+          ],
           const SizedBox(height: 12),
           if (reasons.isNotEmpty) Text(reasons.first, style: theme.textTheme.bodyLarge),
           if (before != null && after != null) ...[
             const SizedBox(height: 18),
             Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-              _Num(label: 'Score now', value: '$before'),
+              _Num(label: 'Score now', value: '$before', outOf: true),
               const Padding(padding: EdgeInsets.fromLTRB(14, 0, 14, 12), child: Icon(Icons.arrow_forward_rounded)),
-              _Num(label: phases.length > 1 ? 'While paying' : 'After', value: '$after',
+              _Num(label: phases.length > 1 ? 'While paying' : 'After', value: '$after', outOf: true,
                   color: after < before ? c.warn : null),
             ]),
             const SizedBox(height: 14),
             ScoreScale(score: after, before: before),
             if ((result['track_record'] as Map?)?['lowered_verdict'] == true) ...[
               const SizedBox(height: 10),
-              Text('Lowered from Affordable because of your track record over the year.',
+              Text('We lowered this from Affordable: in ${_heavy(result['track_record'] as Map)} of the last '
+                  '${(result['track_record'] as Map)['months']} months you spent more than came in, so a new cost '
+                  'every month is a stretch.',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.warn)),
             ],
             if (result['score_note'] != null) ...[
@@ -510,7 +516,7 @@ class ResultView extends StatelessWidget {
         gap,
         Panel(
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text('Month by month', style: theme.textTheme.titleLarge),
+            Text('What happens each month if you go ahead', style: theme.textTheme.titleLarge),
             const SizedBox(height: 14),
             if (phases.length > 1)
               for (final p in phases)
@@ -530,7 +536,7 @@ class ResultView extends StatelessWidget {
                       ' · savings ${money(r['savings_balance_KES'] as num)}',
                 ),
             if (phases.length <= 1 && cash.length > 6)
-              Text('…and ${cash.length - 6} more month(s) like this.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              Text('The next ${cash.length - 6} month${cash.length - 6 == 1 ? ' looks' : 's look'} the same.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
           ]),
         ),
       ],
@@ -598,6 +604,16 @@ class ResultView extends StatelessWidget {
   }
 }
 
+/// Months that cost more than came in: overspent, plus those paid from earlier leftovers.
+int _heavy(Map record) => ((record['overspent_months'] ?? 0) as num).toInt() + ((record['covered_months'] ?? 0) as num).toInt();
+
+/// What each verdict means, in one line under the chip (wording audit, 10 Nov).
+const _verdictMeans = {
+  'Affordable': 'You would still have room each month.',
+  'Stretch': 'You could do it, but there would be very little room each month.',
+  'Not affordable': 'You would be short each month.',
+};
+
 /// One reason in the Why block: an icon, then the sentence.
 class _Because extends StatelessWidget {
   const _Because({required this.icon, required this.text, this.color});
@@ -620,17 +636,22 @@ class _Because extends StatelessWidget {
 }
 
 class _Num extends StatelessWidget {
-  const _Num({required this.label, required this.value, this.color});
+  const _Num({required this.label, required this.value, this.color, this.outOf = false});
   final String label;
   final String value;
   final Color? color;
+  final bool outOf;   // a score: "/ 100" beside it, so the number never stands alone
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final muted = AppColors.of(context).muted;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(label, style: theme.textTheme.bodySmall?.copyWith(color: AppColors.of(context).muted)),
-      Text(value, style: theme.textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w700, color: color)),
+      Text(label, style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+      Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
+        Text(value, style: theme.textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w700, color: color)),
+        if (outOf) Text(' / 100', style: theme.textTheme.titleMedium?.copyWith(color: muted)),
+      ]),
     ]);
   }
 }
@@ -681,7 +702,7 @@ class _BudgetTable extends StatelessWidget {
         style: (head ? theme.textTheme.bodySmall?.copyWith(color: c.muted) : theme.textTheme.bodyMedium)
             ?.copyWith(color: color, fontWeight: bold ? FontWeight.w700 : null));
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Text('Your budget, before and after', style: theme.textTheme.titleLarge),
+      Text('Your monthly budget if you go ahead', style: theme.textTheme.titleLarge),
       const SizedBox(height: 10),
       Table(
         columnWidths: const {0: FlexColumnWidth(2), 1: FlexColumnWidth(1), 2: FlexColumnWidth(1)},
@@ -690,7 +711,7 @@ class _BudgetTable extends StatelessWidget {
           TableRow(children: [
             Text('Each month', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             cell('Now', head: true),
-            cell('After', head: true),
+            cell('If you go ahead', head: true),
           ]),
           for (final l in shown)
             TableRow(
@@ -737,7 +758,7 @@ class _MoneyTable extends StatelessWidget {
       const SizedBox(height: 10),
       Table(columnWidths: const {0: FlexColumnWidth(2)}, children: [
         TableRow(children: [const SizedBox(), Text('Now', textAlign: TextAlign.right, style: muted),
-          Text('After', textAlign: TextAlign.right, style: muted)]),
+          Text('If you go ahead', textAlign: TextAlign.right, style: muted)]),
         row('Money in', 'income_KES'),
         row('Spending', 'spending_KES'),
         row('Left over', 'left_over_KES'),
@@ -775,7 +796,7 @@ class _GoAheadState extends State<_GoAhead> {
     final how = await showChoiceSheet<String>(
       context,
       title: 'Go ahead with this?',
-      message: 'Tosha adds it to your plans and updates your budget. You can remove it later in Plans.',
+      message: 'Tosha adds it to your bills, debts and goals and updates your budget. You can remove it there later.',
       choices: [
         if (canPayNow && widget.result['instalment_per_month_KES'] != null) ...[
           SheetChoice('Yes, in instalments (${kesAmount(widget.result['instalment_per_month_KES'] as num)} a month)',
@@ -823,7 +844,7 @@ class _GoAheadState extends State<_GoAhead> {
               app.openTab(3);
             },
             icon: const Icon(Icons.calendar_month_rounded),
-            label: const Text('See it in Plans'),
+            label: const Text('See it in Bills, debts and goals'),
           ),
         ]),
       );
