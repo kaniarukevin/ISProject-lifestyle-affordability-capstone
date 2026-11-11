@@ -86,9 +86,9 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
     if everyday < 0:
         savings = max(0.0, income - fixed_total)
         everyday = income - fixed_total - savings
-        notes.append("Your commitments leave little or nothing for everyday spending; savings reduced to fit.")
+        notes.append("Your bills leave almost nothing for everyday spending, so savings were cut to make room.")
     if everyday <= 0:
-        notes.append("Your commitments are more than your income. Start by reviewing rent or loan repayments.")
+        notes.append("Your bills come to more than your income. Rent and loan repayments are the place to start.")
         everyday = 0.0
 
     x = pd.DataFrame([{"total_income": income, "available": max(0.0, income - fixed_total - savings),
@@ -105,10 +105,10 @@ def recommend_budget(income, fixed, household_size=1, num_dependants=0, formal_j
         unused = [c for c in candidates if own[c] == 0]
         share[unused] = 0.0
         share = share / share.sum()
-        notes.append("Split using your own spending pattern and households like yours.")
+        notes.append("Split from your own spending, and from households like yours.")
         if "mobile_money_transfers" in unused and fixed.get("other_commitments", 0) > 0:
             unused.remove("mobile_money_transfers")
-            notes.append("Money you send (chama, family support) is already set aside under your commitments, "
+            notes.append("Money you send, like chama or family support, is already set aside under your bills, "
                          "so it has no separate line.")
         if unused:
             notes.append(f"No budget for {', '.join(LABELS.get(c, c) for c in unused)}: you have not spent on "

@@ -146,6 +146,14 @@ class _ChartPainter extends CustomPainter {
       tp.paint(canvas, Offset(bx + 12, 4 + (28 - tp.height) / 2));
     }
 
+    // Where the records stop and the guess begins. Without this line the two halves of the chart read as one
+    // measured series (11 Nov: testers could not tell which months had already happened).
+    if (firstNext >= 1) {
+      final cut = (x(firstNext - 1) + x(firstNext)) / 2;
+      _dashed(canvas, Offset(cut, top), Offset(cut, top + h + 6),
+          Paint()..color = theme.colorScheme.outlineVariant..strokeWidth = 1.5, 4, 4);
+    }
+
     // Month labels; fee months get a small lime dot.
     for (var i = 0; i < months.length; i++) {
       final tp = _layout(months[i].label,

@@ -113,7 +113,7 @@ def test_savings_balance_must_be_a_sensible_number():
 def test_a_single_payment_is_not_called_a_loan_and_the_score_is_explained():
     r = aff.evaluate({**body(EARNER, {"type": "purchase", "price": 20000, "months": 1}), "savings_balance": 30000})
     assert not any("instalments" in x.lower() or "loan" in x.lower() for x in r["reasons"])
-    assert "month(s) you pay" in r["score_note"]
+    assert "for the 1 month you pay" in r["score_note"]
     lasting = aff.evaluate(body(EARNER, {"type": "monthly_change", "changes": {"housing": 2000}}))
     assert lasting["score_note"] is None
 

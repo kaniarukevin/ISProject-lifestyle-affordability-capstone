@@ -60,25 +60,29 @@ class YouScreen extends StatelessWidget {
         const SizedBox(height: 16),
         if (p != null)
           Row(children: [
-            _Stat(value: '${p.householdSize}', label: p.householdSize == 1 ? 'Person' : 'People'),
+            _Stat(
+                icon: Icons.people_outline_rounded,
+                value: '${p.householdSize}',
+                label: p.householdSize == 1 ? 'Person' : 'People'),
             const SizedBox(width: 10),
-            _Stat(value: _short(p.monthlyIncome), label: 'A month'),
+            _Stat(icon: Icons.south_west_rounded, value: _short(p.monthlyIncome), label: 'A month'),
             const SizedBox(width: 10),
-            _Stat(value: _short(p.savingsBalance), label: 'Saved'),
+            _Stat(icon: Icons.savings_outlined, value: _short(p.savingsBalance), label: 'Saved'),
           ]),
         const SizedBox(height: 12),
         if (p != null)
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Row(children: [
-                Expanded(child: Text('Money coming in', style: theme.textTheme.titleMedium)),
-                FilledButton.tonal(
-                  style: FilledButton.styleFrom(backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
-                  onPressed: () => push(const ProfileScreen()),
-                  child: const Text('Edit'),
-                ),
-              ]),
-              const SizedBox(height: 8),
+              PanelTitle('Money coming in',
+                  icon: Icons.south_west_rounded,
+                  small: true,
+                  trailing: FilledButton.tonal(
+                    style: FilledButton.styleFrom(
+                        backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
+                    onPressed: () => push(const ProfileScreen()),
+                    child: const Text('Edit'),
+                  )),
+              const SizedBox(height: 12),
               if (p.incomes.isEmpty)
                 Text('No income added yet.', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
               for (final i in p.incomes)
@@ -103,7 +107,8 @@ class YouScreen extends StatelessWidget {
             ]),
           ),
         const SizedBox(height: 12),
-        Card(
+        Panel(
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(children: [
             ListTile(
               leading: const Icon(Icons.home_rounded),
@@ -160,25 +165,24 @@ class YouScreen extends StatelessWidget {
             ),
           ]),
         ),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text('Appearance', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 10),
-              SegmentedButton<ThemeMode>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: ThemeMode.light, label: Text('Light')),
-                  ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
-                  ButtonSegment(value: ThemeMode.system, label: Text('System')),
-                ],
-                selected: {themes.mode},
-                onSelectionChanged: (s) => context.read<ThemeController>().set(s.first),
-              ),
-            ]),
-          ),
+        const SizedBox(height: 12),
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const PanelTitle('Appearance', icon: Icons.brightness_6_rounded, small: true),
+            const SizedBox(height: 14),
+            SegmentedButton<ThemeMode>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: ThemeMode.light, label: Text('Light')),
+                ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
+                ButtonSegment(value: ThemeMode.system, label: Text('System')),
+              ],
+              selected: {themes.mode},
+              onSelectionChanged: (s) => context.read<ThemeController>().set(s.first),
+            ),
+          ]),
         ),
+        const SizedBox(height: 16),
         const SizedBox(height: 8),
         FilledButton(onPressed: logOut, child: const Text('Log out')),
         const SizedBox(height: 4),
@@ -196,20 +200,29 @@ class YouScreen extends StatelessWidget {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.value, required this.label});
+  const _Stat({required this.icon, required this.value, required this.label});
+  final IconData icon;
   final String value;
   final String label;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final c = AppColors.of(context);
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
         decoration: BoxDecoration(color: theme.colorScheme.surface, borderRadius: BorderRadius.circular(22)),
         child: Column(children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle),
+            child: Icon(icon, size: 17, color: c.onLime),
+          ),
+          const SizedBox(height: 8),
           Text(value, style: theme.textTheme.titleLarge),
-          Text(label, style: theme.textTheme.bodySmall?.copyWith(color: AppColors.of(context).muted)),
+          Text(label, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ]),
       ),
     );

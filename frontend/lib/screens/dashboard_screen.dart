@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../widgets/start_here.dart';
-import '../widgets/state_words.dart';
-import '../widgets/model_note.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
+import '../widgets/model_note.dart';
 import '../widgets/money_in.dart';
+import '../widgets/note_row.dart';
 import '../widgets/panel.dart';
 import '../widgets/rating_row.dart';
+import '../widgets/start_here.dart';
+import '../widgets/state_chip.dart';
+import '../widgets/state_words.dart';
 import '../widgets/verdict.dart';
 import 'payees_screen.dart';
 import 'why_score_sheet.dart';
@@ -181,19 +183,9 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             const SizedBox(height: 20),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Good to know', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 10),
-                for (final n in notes.take(5))
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 7, right: 10),
-                        child: CircleAvatar(radius: 3, backgroundColor: theme.colorScheme.onSurface),
-                      ),
-                      Expanded(child: Text(n, style: theme.textTheme.bodyMedium)),
-                    ]),
-                  ),
+                const PanelTitle('Good to know', icon: Icons.auto_awesome_rounded),
+                const SizedBox(height: 16),
+                for (final n in notes.take(5)) NoteRow(n),
               ]),
             ),
           ],
@@ -209,15 +201,19 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
 /// The figures behind the word, so anyone can check it against their own M-PESA (11 Nov: testers who never think
 /// of their money as a "state" had no way to tell whether the word was right).
 String? _scoreFacts(Map<String, dynamic> d) {
-  final latest = (d['latest'] as Map?)?.cast<String, dynamic>();
-  final income = (d['income_monthly'] as num?)?.round() ?? 0;
-  if (latest == null || income <= 0) return null;
-  final spent = (latest['spent'] as num).round();
-  final month = _monthShort[(latest['month'] as int) - 1];
+  // The LAST COMPLETE month, never the one in progress (11 Nov: a half-finished November read as "KES 1,363 went
+  // out", which made the card look broken).
+  final months = ((d['timeline'] as List?) ?? []).cast<Map<String, dynamic>>();
+  if (months.isEmpty) return null;
+  final m = months.last;
+  final spent = (m['spent'] as num?)?.round() ?? 0;
+  final income = (m['income'] as num?)?.round() ?? 0;
+  if (income <= 0) return null;
+  final line = 'In ${_monthShort[(m['month'] as int) - 1]} about KES ${money(spent)} went out and about '
+      'KES ${money(income)} came in.';
   final rec = (d['track_record'] as Map?)?.cast<String, dynamic>();
   final over = (rec?['overspent_months'] as num?)?.toInt() ?? 0;
   final of = (rec?['months'] as num?)?.toInt() ?? 0;
-  final line = 'In $month about KES ${money(spent)} went out and about KES ${money(income)} came in.';
   if (of >= 3 && over > 0) return '$line In $over of your last $of months you spent more than came in.';
   if (of >= 3) return '$line Your last $of months all stayed inside what came in.';
   return line;
@@ -243,6 +239,13 @@ class _ScoreCard extends StatelessWidget {
       color: c.lime,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+            child: const Icon(Icons.speed_rounded, size: 17, color: _onLime),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Text('Your money score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
           ),
@@ -264,12 +267,7 @@ class _ScoreCard extends StatelessWidget {
             child: Text('/ 100', style: theme.textTheme.titleMedium?.copyWith(color: const Color(0xFF3A4214))),
           ),
           const SizedBox(width: 12),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-            decoration: BoxDecoration(color: _onLime, borderRadius: BorderRadius.circular(16)),
-            child: Text(stateLabel(state),
-                style: theme.textTheme.labelLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
+          StateChip(state: state, background: Colors.white, ink: _onLime),
         ]),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
@@ -320,25 +318,46 @@ class _AffordCard extends StatelessWidget {
     final last = lastCheck;
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Can I afford it?', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 8),
+        const PanelTitle('Can I afford it?', icon: Icons.price_check_rounded),
+        const SizedBox(height: 12),
         Text('Check a purchase, a loan, a move or a new baby before you commit. Nothing is saved unless you go ahead.',
             style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         const SizedBox(height: 16),
-        FilledButton.icon(onPressed: onCheck, icon: const Icon(Icons.verified_user_rounded), label: const Text('Check something')),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: onCheck,
+            icon: const Icon(Icons.verified_user_rounded),
+            label: const Text('Check something'),
+          ),
+        ),
         if (last != null) ...[
-          const SizedBox(height: 16),
-          const Divider(),
-          const SizedBox(height: 12),
-          Row(children: [
-            Expanded(
-              child: Text.rich(TextSpan(children: [
-                TextSpan(text: 'Last check · ', style: TextStyle(color: c.muted)),
-                TextSpan(text: (last['title'] ?? 'Check') as String, style: const TextStyle(fontWeight: FontWeight.w600)),
-              ])),
+          const SizedBox(height: 18),
+          // The verdict above the thing it is about: side by side they fought for the same line and the chip
+          // was squeezed to nothing (11 Nov).
+          Material(
+            color: c.field,
+            borderRadius: BorderRadius.circular(18),
+            child: InkWell(
+              onTap: onCheck,
+              borderRadius: BorderRadius.circular(18),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('YOUR LAST CHECK',
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: c.muted, fontWeight: FontWeight.w700, letterSpacing: 0.6)),
+                  const SizedBox(height: 8),
+                  if (last['verdict'] is String) ...[
+                    VerdictChip(last['verdict'] as String),
+                    const SizedBox(height: 8),
+                  ],
+                  Text((last['title'] ?? 'Check') as String,
+                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                ]),
+              ),
             ),
-            if (last['verdict'] is String) VerdictChip(last['verdict'] as String),
-          ]),
+          ),
         ],
       ]),
     );
@@ -458,27 +477,49 @@ class _ForecastCard extends StatelessWidget {
     final notes = ((f?['notes'] as List?) ?? []).cast<String>();
     Widget key(Widget mark, String text) => Row(mainAxisSize: MainAxisSize.min, children: [
           mark,
-          const SizedBox(width: 6),
+          const SizedBox(width: 7),
           Text(text, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ]);
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Wrap(spacing: 14, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          Text('The next 3 months', style: theme.textTheme.titleLarge),
-          key(Container(width: 16, height: 3, color: theme.colorScheme.onSurface), 'What you spent'),
-          key(Container(width: 16, height: 3, color: c.muted), 'Expected'),
-          key(Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
-              'Could be anywhere in here'),
-        ]),
-        const SizedBox(height: 16),
+        const PanelTitle('The next 3 months', icon: Icons.show_chart_rounded),
+        const SizedBox(height: 12),
         if (f == null)
           Text('Add your income in Household and income to see the next three months.',
               style: theme.textTheme.bodyMedium?.copyWith(color: c.muted))
         else ...[
+          // One line of plain English before the chart: testers could not work out which line was which, or
+          // which months had already happened (11 Nov).
+          Text('Left of the dotted line is what you really spent. Right of it is what the app expects.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: c.muted, height: 1.35)),
+          const SizedBox(height: 14),
           ForecastChart(months: chartMonths(overview, f), income: ((overview['income_monthly'] ?? 0) as num).toDouble()),
-          const SizedBox(height: 12),
-          Text(notes.take(2).join(' '), style: theme.textTheme.bodyLarge),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          Wrap(spacing: 16, runSpacing: 8, children: [
+            key(Container(width: 18, height: 3, color: theme.colorScheme.onSurface), 'What you spent'),
+            key(_DottedKey(color: c.muted), 'What the app expects'),
+            key(
+                Container(
+                    width: 16,
+                    height: 11,
+                    decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
+                'Could land anywhere in here'),
+            key(_DottedKey(color: c.warn), 'Your income'),
+          ]),
+          const SizedBox(height: 16),
+          // Each note on its own line: run together in one paragraph they read as a broken sentence (11 Nov).
+          for (final n in notes.take(2))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 6, right: 10),
+                  child: CircleAvatar(radius: 3, backgroundColor: c.muted),
+                ),
+                Expanded(child: Text(n, style: theme.textTheme.bodyLarge?.copyWith(height: 1.35))),
+              ]),
+            ),
+          const SizedBox(height: 8),
           FilledButton.tonal(
             style: FilledButton.styleFrom(backgroundColor: c.field, foregroundColor: theme.colorScheme.onSurface),
             onPressed: onMore,
@@ -488,6 +529,20 @@ class _ForecastCard extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// A short dotted dash for the chart key, so a dotted line in the key looks like the dotted line on the chart.
+class _DottedKey extends StatelessWidget {
+  const _DottedKey({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) const SizedBox(width: 3),
+          Container(width: 4, height: 3, color: color),
+        ],
+      ]);
 }
 
 class _ComingUpCard extends StatelessWidget {
@@ -504,8 +559,8 @@ class _ComingUpCard extends StatelessWidget {
     final today = DateUtils.dateOnly(DateTime.now());
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Coming up', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 14),
+        const PanelTitle('Coming up', icon: Icons.event_outlined),
+        const SizedBox(height: 16),
         if (bills.isEmpty && goals.isEmpty)
           Text('Nothing due in the next week.', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         for (final b in bills) ...[
@@ -647,7 +702,7 @@ class _YearCard extends StatelessWidget {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('${_long[(m['month'] as int) - 1]} ${m['year']}', style: theme.textTheme.titleLarge),
             const SizedBox(height: 12),
-            Align(alignment: Alignment.centerLeft, child: _StateTag(state: m['state'] as String, score: m['score'] as int)),
+            Align(alignment: Alignment.centerLeft, child: StateChip(state: m['state'] as String, score: m['score'] as int)),
             const SizedBox(height: 16),
             Row(children: [
               Expanded(child: Text('Money in', style: TextStyle(color: c.muted))),
@@ -702,8 +757,8 @@ class _YearCard extends StatelessWidget {
     final counts = {for (final s in ['Stable', 'Strained', 'Critical']) s: shown.where((m) => m['state'] == s).length};
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('Your year', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 4),
+        const PanelTitle('Your year', icon: Icons.grid_view_rounded),
+        const SizedBox(height: 10),
         Text(
             'Each square is a month: ${counts['Stable']} doing fine, ${counts['Strained']} stretched and '
             '${counts['Critical']} struggling. Tap a month to see it.',
@@ -722,7 +777,11 @@ class _YearCard extends StatelessWidget {
         Wrap(spacing: 16, runSpacing: 6, children: [
           for (final s in ['Stable', 'Strained', 'Critical'])
             Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(width: 10, height: 10, decoration: BoxDecoration(color: _stateColor(c, s), borderRadius: BorderRadius.circular(3))),
+              Container(
+                  width: 11,
+                  height: 11,
+                  decoration: BoxDecoration(
+                      color: stateColor(c, s), shape: BoxShape.circle, border: Border.all(color: const Color(0x22000000)))),
               const SizedBox(width: 6),
               Text(stateLabel(s), style: theme.textTheme.bodySmall),
             ]),
@@ -731,12 +790,6 @@ class _YearCard extends StatelessWidget {
     );
   }
 }
-
-Color _stateColor(AppColors c, String s) => switch (s) { 'Stable' => c.stable, 'Strained' => c.strained, _ => c.critical };
-
-/// Text on a state colour: white only on the deep light-mode Critical brown, dark ink everywhere else.
-Color _stateInk(BuildContext context, String s) =>
-    s == 'Critical' && Theme.of(context).brightness == Brightness.light ? Colors.white : const Color(0xFF111111);
 
 class _MonthTile extends StatelessWidget {
   const _MonthTile({required this.m, required this.label, required this.onTap});
@@ -748,11 +801,11 @@ class _MonthTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
     final state = m['state'] as String;
-    final fg = _stateInk(context, state);
+    final fg = stateInk(context, state);
     return Tooltip(
       message: '$label: ${stateLabel(state)}, ${scoreOutOf(m['score'] as num)}',
       child: Material(
-        color: _stateColor(c, state),
+        color: stateColor(c, state),
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           borderRadius: BorderRadius.circular(14),
@@ -761,9 +814,8 @@ class _MonthTile extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 10),
             child: Column(children: [
               Text(label, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 12)),
+              // The score, not a letter: Stable and Strained both start with S.
               Text('${m['score']}', style: TextStyle(color: fg, fontWeight: FontWeight.w800, fontSize: 18)),
-              // The score, not a letter: Stable and Strained both started with S.
-              Text('${m['score']}', style: TextStyle(color: fg.withValues(alpha: 0.8), fontSize: 11)),
             ]),
           ),
         ),
@@ -771,24 +823,6 @@ class _MonthTile extends StatelessWidget {
     );
   }
 }
-
-class _StateTag extends StatelessWidget {
-  const _StateTag({required this.state, required this.score});
-  final String state;
-  final int score;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(color: _stateColor(c, state), borderRadius: BorderRadius.circular(20)),
-      child: Text('${stateLabel(state)} · ${scoreOutOf(score)}',
-          style: TextStyle(color: _stateInk(context, state), fontWeight: FontWeight.w700)),
-    );
-  }
-}
-
 
 /// "Is your savings balance still KES X?" (10 Nov). The balance is a snapshot from the day it was typed, so past
 /// records are never added to it; once it is a month old Tosha asks, since checks look ahead using it.

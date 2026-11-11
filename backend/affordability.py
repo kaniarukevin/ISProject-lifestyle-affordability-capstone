@@ -12,6 +12,12 @@ import pandas as pd
 
 import limits
 
+def _months_words(n):
+    """"1 month", "6 months": text a person can read out loud (11 Nov)."""
+    n = int(n)
+    return f"{n} month" if n == 1 else f"{n} months"
+
+
 CATS = ["housing", "food_groceries", "transport", "utilities", "airtime_data",
         "mobile_money_transfers", "loan_repayment", "school_fees", "entertainment", "savings"]
 INCOME = ["income_primary", "income_secondary", "informal_cash_income"]
@@ -119,12 +125,12 @@ def _score_rows(X):
 # (2^6 = 64 coalitions), so no sampling and no extra library: the contributions add up to the score exactly.
 SCORE_GROUPS = [
     ("income", "Your income", ["total_income", "zero_income_flag"]),
-    ("latest_month", "Spending against income, latest month",
+    ("latest_month", "Last month's spending against what came in",
      ["total_expenditure", "income_to_expenditure_ratio", "overspend_flag"]),
-    ("recent_months", "The last 3 to 6 months", ["ratio_roll3", "overspend_roll3", "exp_roll3", "exp_roll6"]),
-    ("saving", "How much of your income you save", ["savings_rate"]),
+    ("recent_months", "How the last few months went", ["ratio_roll3", "overspend_roll3", "exp_roll3", "exp_roll6"]),
+    ("saving", "How much you save", ["savings_rate"]),
     ("debt", "Loan repayments", ["debt_service_coverage_ratio"]),
-    ("household", "Household size and dependants", ["household_size", "num_dependants", "dependant_cost_factor"]),
+    ("household", "How many people your money covers", ["household_size", "num_dependants", "dependant_cost_factor"]),
 ]
 
 
@@ -279,13 +285,13 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
     reasons = []
     if gap > 0 and duration and gap * int(duration) <= balance:
         verdict = "Stretch"
-        reasons.append(f"For {int(duration)} month(s) you would be short KES {gap:,} a month even after pausing "
+        reasons.append(f"For {_months_words(duration)} you would be short KES {gap:,} a month even after pausing "
                        f"savings. Your savings of KES {balance:,} cover that, leaving KES {balance - gap * int(duration):,}.")
     elif gap > 0:
         verdict = "Not affordable"
         reasons.append(f"You would be short KES {shortfall:,} a month, more than the KES {b['savings_KES']:,} you save.")
         if balance > 0:
-            reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {balance // gap} month(s).")
+            reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {_months_words(balance // gap)}.")
     elif shortfall > 0:
         reasons.append(f"You would be short KES {shortfall:,} a month; you could cover it only by pausing savings.")
     else:
@@ -327,7 +333,7 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
             "savings_balance_KES": balance, "lasts_months": int(duration) if duration else None,
             # A short cost scores the months you pay, not your finances for good (found walking through the app:
             # a one-month repair showed "score 54 -> 2" with no explanation).
-            "score_note": (f"The score after is for the {int(duration)} month(s) you pay; it recovers once paid."
+            "score_note": (f"The score after is for the {_months_words(duration)} you pay; it recovers once paid."
                            if duration else None)}
 
 
@@ -466,15 +472,15 @@ def plan(m, sc, savings_balance=0.0, state_exact=False):
         paying["loan_repayment"] = paying.get("loan_repayment", 0.0) + per_month
         # While paying: the instalments last n months (or less, if the whole change is shorter).
         dur = min(n, lasts) if lasts else n
-        phases.append(("While you pay the instalments", f"{n} month(s)",
+        phases.append(("While you pay the instalments", _months_words(n),
                        assess(m, paying, inc, duration=dur, savings_balance=balance, state_exact=state_exact,
                               debt_label="These instalments and your loans")))
         if has_monthly and (lasts is None or lasts > n):
-            phases.append(("After the instalments", "for good" if lasts is None else f"{lasts - n} month(s)",
+            phases.append(("After the instalments", "for good" if lasts is None else _months_words(lasts - n),
                            assess(m, changes, inc, duration=(lasts - n) if lasts else None, savings_balance=balance,
                                   state_exact=state_exact)))
     elif has_monthly:
-        phases.append(("Each month", "for good" if lasts is None else f"{lasts} month(s)",
+        phases.append(("Each month", "for good" if lasts is None else _months_words(lasts),
                        assess(m, changes, inc, duration=lasts, savings_balance=balance, state_exact=state_exact)))
     else:                                            # only an upfront cost, paid from savings
         phases.append(("After paying upfront", "now", assess(m, {}, 0.0, savings_balance=balance,

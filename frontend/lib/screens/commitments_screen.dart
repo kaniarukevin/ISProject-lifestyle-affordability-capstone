@@ -197,6 +197,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
           CardRow(minWidth: 300, children: [
             _Section(
               title: 'Bills',
+              icon: Icons.receipt_long_outlined,
               note: 'Rent, school fees, chama, insurance',
               empty: 'No bills yet.',
               onAdd: () => _add('obligation'),
@@ -226,6 +227,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
             ),
             _Section(
               title: 'Debts',
+              icon: Icons.account_balance_outlined,
               note: 'Fuliza, M-Shwari, SACCO or bank loan, phone on credit',
               empty: 'No debts. Add Fuliza, a SACCO or bank loan, or a phone on credit if you have any.',
               onAdd: () => _add('debt'),
@@ -274,6 +276,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
             ),
             _Section(
               title: 'Goals',
+              icon: Icons.flag_outlined,
               note: 'An emergency fund, a plot, a trip',
               empty: 'No goals yet. Add one, like an emergency fund, and Tosha sets money aside for it in your budget.',
               onAdd: () => _add('goal'),
@@ -336,8 +339,10 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
 String _capital(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
 class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.note, required this.empty, required this.onAdd, required this.children});
+  const _Section({required this.title, required this.icon, required this.note, required this.empty,
+    required this.onAdd, required this.children});
   final String title, note, empty;
+  final IconData icon;
   final VoidCallback onAdd;
   final List<Widget> children;
 
@@ -348,12 +353,20 @@ class _Section extends StatelessWidget {
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(color: col.lime, shape: BoxShape.circle),
+            child: Icon(icon, size: 19, color: col.onLime),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(title, style: theme.textTheme.titleLarge),
               Text(note, style: theme.textTheme.bodySmall?.copyWith(color: col.muted)),
             ]),
           ),
+          const SizedBox(width: 8),
           IconButton.filledTonal(
             tooltip: 'Add to $title',
             style: IconButton.styleFrom(backgroundColor: col.field, foregroundColor: theme.colorScheme.onSurface),

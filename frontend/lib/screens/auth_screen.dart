@@ -74,7 +74,6 @@ class _AuthScreenState extends State<AuthScreen> {
     return AutofillGroup(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
         Text(_newAccount ? 'Create your account' : 'Welcome back', style: theme.textTheme.headlineMedium),
-        GoogleButton(onError: (m) => setState(() => _error = m)),
         const SizedBox(height: 6),
         Text(
             _newAccount
@@ -154,6 +153,8 @@ class _AuthScreenState extends State<AuthScreen> {
             child: Text(_newAccount ? 'Log in' : 'Create an account'),
           ),
         ]),
+        // Google goes last, under the email form, which is where people look for it.
+        GoogleButton(onError: (m) => setState(() => _error = m)),
       ]),
     );
   }

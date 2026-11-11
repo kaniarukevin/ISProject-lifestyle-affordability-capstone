@@ -143,8 +143,8 @@ class _StatementScreenState extends State<StatementScreen> {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Paste your M-PESA messages', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 6),
+          const PanelTitle('Paste your M-PESA messages', icon: Icons.sms_outlined),
+          const SizedBox(height: 10),
           Text('Keeps your figures current between statements. In your messages app, press and hold an M-PESA '
               'confirmation, copy it, and paste it here. Paste as many as you like, one after another.',
               style: TextStyle(color: c.muted)),
@@ -200,8 +200,8 @@ class _StatementScreenState extends State<StatementScreen> {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('Bring in months of spending at once', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 6),
+          const PanelTitle('Bring in months of spending at once', icon: Icons.file_upload_outlined),
+          const SizedBox(height: 10),
           Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about.',
               style: TextStyle(color: c.muted)),
           const SizedBox(height: 18),

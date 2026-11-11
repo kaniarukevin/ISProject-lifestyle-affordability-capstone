@@ -23,6 +23,9 @@ class OnboardingScreen extends StatefulWidget {
 
 const _steps = 6;
 
+/// What a setup step asks of you, shown as a badge beside the step number.
+enum _Need { needed, optional, some }
+
 class _OnboardingScreenState extends State<OnboardingScreen> {
   int step = 0;
   bool busy = false;
@@ -232,19 +235,35 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _ => '${_steps - 1 - step} more question${_steps - 1 - step == 1 ? '' : 's'}, then your first answer.',
       };
 
-  Widget _title(ThemeData theme, String step, String title, [String? help]) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(step, style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
-          const SizedBox(height: 8),
-          Text(title, style: theme.textTheme.headlineMedium?.copyWith(height: 1.2)),
-          if (help != null) ...[
-            const SizedBox(height: 10),
-            Text(help, style: theme.textTheme.bodyLarge),
-          ],
-          const SizedBox(height: 24),
-        ],
-      );
+  /// Every step says up front whether it has to be answered, so nobody wonders whether an empty box will block
+  /// them (11 Nov).
+  Widget _title(ThemeData theme, String step, String title, {String? help, _Need need = _Need.needed}) {
+    final c = AppColors.of(context);
+    final (bg, ink, words) = switch (need) {
+      _Need.needed => (theme.colorScheme.onSurface, theme.colorScheme.surface, 'Needed'),
+      _Need.optional => (c.lime, c.onLime, 'All optional — skip the lot'),
+      _Need.some => (c.field, theme.colorScheme.onSurface, 'Only what applies to you'),
+    };
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Text(step, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+          child: Text(words,
+              style: theme.textTheme.labelSmall?.copyWith(color: ink, fontWeight: FontWeight.w700)),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Text(title, style: theme.textTheme.headlineMedium?.copyWith(height: 1.2)),
+      if (help != null) ...[
+        const SizedBox(height: 10),
+        Text(help, style: theme.textTheme.bodyLarge),
+      ],
+      const SizedBox(height: 24),
+    ]);
+  }
 
   Widget _yesNo(String question, bool? value, ValueChanged<bool> onChanged) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -263,11 +282,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ],
       );
 
-  Widget _money(TextEditingController ctl, String label, {bool big = false, String? hint}) => TextField(
+  Widget _money(TextEditingController ctl, String label,
+          {bool big = false, String? hint, bool optional = false, String? helper}) =>
+      TextField(
         controller: ctl,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
         style: big ? Theme.of(context).textTheme.headlineSmall : null,
-        decoration: InputDecoration(labelText: label, hintText: hint, prefixText: 'KES '),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          prefixText: 'KES ',
+          helperMaxLines: 2,
+          helperText: helper ?? (optional ? 'Optional. Leave it empty if it does not apply.' : null),
+        ),
       );
 
   Widget _body(ThemeData theme, AppColors c) {
@@ -276,14 +303,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case 0:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 1 of $_steps', 'What should we call you?',
-              'A few quick questions, so Tosha\'s answers are about your household and not an average one.'),
+              help: 'A few quick questions, so Tosha\'s answers are about your household and not an average one. '
+                  'Each one says whether you have to answer it.'),
           TextField(
             controller: name,
             autofocus: true,
             textCapitalization: TextCapitalization.words,
             maxLength: 40,
             style: theme.textTheme.headlineSmall,
-            decoration: const InputDecoration(labelText: 'First name'),
+            decoration: const InputDecoration(labelText: 'First name', helperText: 'Needed'),
             onSubmitted: (_) => _next(),
           ),
           const InfoNote.why(text: 'Only so Tosha can greet you by name. It is never shown to anyone else.'),
@@ -291,7 +319,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case 1:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 2 of $_steps', 'How does money come in$who?',
-              'Pick all that apply. A tick shows what you picked. Tap again to take it off.'),
+              help: 'Pick all that apply. A tick shows what you picked. Tap again to take it off.'),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final e in incomeTypeLabels.entries)
               FilterChip(
@@ -344,7 +372,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ]),
             );
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 3 of $_steps', 'Who lives with you?', 'Use the + and − buttons. 0 is a fine answer.'),
+          _title(theme, 'Step 3 of $_steps', 'Who lives with you?',
+              help: 'Use the + and − buttons; 0 is a fine answer. The questions under them only show up if they '
+                  'apply to you, and you can leave any of them unanswered.',
+              need: _Need.some),
           Panel(
             child: Column(children: [
               counter('People at home, including you', 'Everyone who lives and eats with you.', people, 1, 20, (v) {
@@ -367,7 +398,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             _yesNo('Do you pay their school fees?', paysChildFees, (v) => setState(() => paysChildFees = v)),
             if (paysChildFees == true) ...[
               const SizedBox(height: 12),
-              _money(childFees, 'Fees per term, for all of them', hint: '15,000'),
+              _money(childFees, 'Fees per term, for all of them',
+                  hint: '15,000', helper: 'Needed, since you pay them. A rough figure is fine.'),
             ],
           ],
           const SizedBox(height: 20),
@@ -375,7 +407,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               (v) => setState(() => sendsMoney = v)),
           if (sendsMoney == true) ...[
             const SizedBox(height: 12),
-            _money(sendHome, 'Roughly how much a month', hint: '3,000'),
+            _money(sendHome, 'Roughly how much a month',
+                hint: '3,000', helper: 'Needed, since you send money. A rough figure is fine.'),
           ],
           const InfoNote.why(
               text: 'Money you send leaves your account every month like any other bill, so Tosha sets it aside '
@@ -391,16 +424,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
             if (paysOwnFees == true) ...[
               const SizedBox(height: 12),
-              _money(ownFees, 'Fees per semester'),
+              _money(ownFees, 'Fees per semester', helper: 'Needed, since you pay them. A rough figure is fine.'),
             ],
           ],
         ]);
       case 3:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 4 of $_steps', 'How much comes in each month$who?',
-              studying ? 'Allowance, HELB upkeep, gigs, all together. A rough number is fine.'
+              help: studying
+                  ? 'Allowance, HELB upkeep, gigs, all together. A rough number is fine.'
                   : 'Salary, business, support from family, all together. A rough number is fine.'),
-          _money(income, 'Money in, a usual month (0 is fine)', big: true),
+          _money(income, 'Money in, a usual month',
+              big: true, helper: 'Needed. Type 0 if nothing comes in right now.'),
           const InfoNote.why(
               text: 'Everything Tosha tells you is measured against what comes in. A rough figure is fine; your '
                   'statement will correct it.'),
@@ -420,7 +455,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               ),
               if (varies) ...[
                 const SizedBox(height: 14),
-                _money(low, 'A low month is about (optional)'),
+                _money(low, 'A low month is about', optional: true),
                 const InfoNote.why(
                     text: 'So Tosha never tells you something is affordable when it would only work in a good '
                         'month.'),
@@ -431,11 +466,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case 4:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 5 of $_steps', 'Rent, and money you have saved',
-              'Both are optional: leave a box empty if it does not apply.'),
-          _money(rent, 'Rent per month (optional)', hint: 'Leave empty if you do not pay rent'),
-          const SizedBox(height: 20),
-          _money(saved, 'Money you already have saved (optional)', hint: 'M-Shwari, KCB M-PESA, SACCO, bank, cash'),
-          const SizedBox(height: 8),
+              help: 'Neither is needed. Tosha just gets sharper if you have them.', need: _Need.optional),
+          _money(rent, 'Rent per month', optional: true, hint: 'Leave empty if you do not pay rent'),
+          const SizedBox(height: 24),
+          _money(saved, 'Money you already have saved',
+              optional: true, hint: 'M-Shwari, KCB M-PESA, SACCO, bank, cash'),
+          const SizedBox(height: 10),
           const InfoNote.why(
               text: 'Rent is set aside before everyday money. Savings are how Tosha works out how long you could '
                   'cover a gap if a month went wrong. Put all your savings together, as they are today. You can '
@@ -443,15 +479,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ]);
       default:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 6 of $_steps', 'Roughly, what does a usual month cost? (optional)',
-              'Leave any box empty.'),
+          _title(theme, 'Step 6 of $_steps', 'Roughly, what does a usual month cost?',
+              help: 'Fill in what you know and leave the rest. You can press Continue with every box empty.',
+              need: _Need.optional),
           const InfoNote.why(
               text: 'These let Tosha give you an answer today, before your statement is in. Once you add a '
                   'statement, your real records replace them.',
               margin: EdgeInsets.only(bottom: 18)),
           for (final k in _usualKeys) ...[
-            _money(usual[k]!, spendingCategories[k]!),
-            const SizedBox(height: 12),
+            _money(usual[k]!, spendingCategories[k]!, optional: true),
+            const SizedBox(height: 18),
           ],
         ]);
     }
