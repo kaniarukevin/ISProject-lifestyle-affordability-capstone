@@ -96,6 +96,13 @@ class Api {
     return token = d['token'] as String;
   }
 
+  /// Sign in with Google. The server checks the token with Google, then creates the account, or links it to an
+  /// existing email account with the same verified address.
+  Future<String> googleSignIn(String idToken) async {
+    final d = await post('/auth/google', {'id_token': idToken});
+    return token = d['token'] as String;
+  }
+
   // ---- privacy (Data Protection Act 2019) ----
   Future<Map<String, dynamic>> privacy() async => (await get('/privacy')) as Map<String, dynamic>;
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../models/commitments.dart';
 import '../models/profile.dart';
 import '../models/transaction.dart' show spendingCategories;
@@ -31,7 +32,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final types = <String>{};
   bool studying = false;
   int people = 1, support = 0, children = 0;
-  bool? paysChildFees, paysOwnFees;
+  bool? paysChildFees, paysOwnFees, sendsMoney;
+  final sendHome = TextEditingController();
   final childFees = TextEditingController();
   final ownFees = TextEditingController();
   final income = TextEditingController();
@@ -45,7 +47,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   void dispose() {
-    for (final c in [name, childFees, ownFees, income, low, rent, saved, ...usual.values]) {
+    for (final c in [name, childFees, ownFees, income, low, rent, saved, sendHome, ...usual.values]) {
       c.dispose();
     }
     super.dispose();
@@ -69,6 +71,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       case 2:
         if (children > 0 && paysChildFees == true && _amount(childFees) == null) return 'Add the fees per term.';
         if (studying && paysOwnFees == true && _amount(ownFees) == null) return 'Add your fees per semester.';
+        if (sendsMoney == true && _amount(sendHome) == null) return 'Add roughly how much you send a month.';
         return null;
       case 3:
         if (_amount(income) == null) return 'Add how much comes in a usual month (0 is fine).';
@@ -137,6 +140,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         Obligation(name: 'School fees', amount: _amount(childFees)!, frequency: 'termly', category: 'school_fees'),
       if (studying && paysOwnFees == true)
         Obligation(name: 'My fees', amount: _amount(ownFees)!, frequency: 'semester', category: 'school_fees'),
+      // Money sent to people who do not live with you: a monthly commitment, not a member of the household.
+      if (sendsMoney == true && (_amount(sendHome) ?? 0) > 0)
+        Obligation(name: 'Family support', amount: _amount(sendHome)!, category: 'other_commitments'),
     ]);
     setState(() {
       busy = true;
@@ -222,7 +228,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   String get _footnote => switch (step) {
         0 => 'About two minutes. You can change any answer later under You.',
-        5 => 'Optional. Your real records replace these once a full month is recorded.',
+        5 => 'Next: your first answer, from the figures you gave.',
         _ => '${_steps - 1 - step} more question${_steps - 1 - step == 1 ? '' : 's'}, then your first answer.',
       };
 
@@ -269,7 +275,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     switch (step) {
       case 0:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _title(theme, 'Step 1 of $_steps', 'What should we call you?'),
+          _title(theme, 'Step 1 of $_steps', 'What should we call you?',
+              'A few quick questions, so Tosha\'s answers are about your household and not an average one.'),
           TextField(
             controller: name,
             autofocus: true,
@@ -279,11 +286,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             decoration: const InputDecoration(labelText: 'First name'),
             onSubmitted: (_) => _next(),
           ),
+          const InfoNote.why(text: 'Only so Tosha can greet you by name. It is never shown to anyone else.'),
         ]);
       case 1:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 2 of $_steps', 'How does money come in$who?',
-              'Pick all that apply; a tick shows what you picked. Tap again to take it off.'),
+              'Pick all that apply. A tick shows what you picked. Tap again to take it off.'),
           Wrap(spacing: 8, runSpacing: 8, children: [
             for (final e in incomeTypeLabels.entries)
               FilterChip(
@@ -297,6 +305,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 }),
               ),
           ]),
+          const InfoNote.why(
+              text: 'A salary lands once a month. Casual work and business do not. Tosha plans your month around '
+                  'the way your own money arrives.'),
           const SizedBox(height: 24),
           Panel(
             padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
@@ -341,12 +352,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 support = support.clamp(0, v - 1);
                 children = children.clamp(0, v - 1);
               }),
-              counter('People who depend on your money', 'Of the people at home, those you pay for: children, a parent, '
-                  'a relative. Not you.', support, 0, people - 1, (v) => support = v),
+              counter('People at home who depend on your money', 'Those you pay for: children, a parent, a relative. '
+                  'Not you. People who live elsewhere come next.', support, 0, people - 1, (v) => support = v),
               counter('Children in school', 'Only children whose school fees your household pays.', children, 0,
                   people - 1, (v) => children = v),
             ]),
           ),
+          const InfoNote.why(
+              text: 'A family of five needs more than one person living alone on the same money. This is how Tosha '
+                  'judges your spending fairly, and how it sizes your budget. School fees land in some months and '
+                  'not others, so it puts them in the right months.'),
           if (children > 0) ...[
             const SizedBox(height: 20),
             _yesNo('Do you pay their school fees?', paysChildFees, (v) => setState(() => paysChildFees = v)),
@@ -355,6 +370,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               _money(childFees, 'Fees per term, for all of them', hint: '15,000'),
             ],
           ],
+          const SizedBox(height: 20),
+          _yesNo('Do you send money to family or anyone else who lives elsewhere?', sendsMoney,
+              (v) => setState(() => sendsMoney = v)),
+          if (sendsMoney == true) ...[
+            const SizedBox(height: 12),
+            _money(sendHome, 'Roughly how much a month', hint: '3,000'),
+          ],
+          const InfoNote.why(
+              text: 'Money you send leaves your account every month like any other bill, so Tosha sets it aside '
+                  'before sharing out what is left.'),
           if (studying) ...[
             const SizedBox(height: 20),
             _yesNo('Do you pay your own fees?', paysOwnFees, (v) => setState(() => paysOwnFees = v)),
@@ -376,6 +401,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               studying ? 'Allowance, HELB upkeep, gigs, all together. A rough number is fine.'
                   : 'Salary, business, support from family, all together. A rough number is fine.'),
           _money(income, 'Money in, a usual month (0 is fine)', big: true),
+          const InfoNote.why(
+              text: 'Everything Tosha tells you is measured against what comes in. A rough figure is fine; your '
+                  'statement will correct it.'),
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -393,6 +421,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               if (varies) ...[
                 const SizedBox(height: 14),
                 _money(low, 'A low month is about (optional)'),
+                const InfoNote.why(
+                    text: 'So Tosha never tells you something is affordable when it would only work in a good '
+                        'month.'),
               ],
             ]),
           ),
@@ -405,14 +436,19 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           const SizedBox(height: 20),
           _money(saved, 'Money you already have saved (optional)', hint: 'M-Shwari, KCB M-PESA, SACCO, bank, cash'),
           const SizedBox(height: 8),
-          Text('All your savings together, today. Tosha uses it to tell you how long you could cover a short gap. '
-              'You can change it any time under You, then Household and income.',
-              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          const InfoNote.why(
+              text: 'Rent is set aside before everyday money. Savings are how Tosha works out how long you could '
+                  'cover a gap if a month went wrong. Put all your savings together, as they are today. You can '
+                  'change both any time under You.'),
         ]);
       default:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           _title(theme, 'Step 6 of $_steps', 'Roughly, what does a usual month cost? (optional)',
-              'Leave any box empty. Rough numbers let Tosha answer today; your M-PESA statement replaces them later.'),
+              'Leave any box empty.'),
+          const InfoNote.why(
+              text: 'These let Tosha give you an answer today, before your statement is in. Once you add a '
+                  'statement, your real records replace them.',
+              margin: EdgeInsets.only(bottom: 18)),
           for (final k in _usualKeys) ...[
             _money(usual[k]!, spendingCategories[k]!),
             const SizedBox(height: 12),

@@ -91,8 +91,10 @@ Future<bool> editOutsideMoney(BuildContext context, {num? income, num? spending}
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text('Money outside M-PESA', style: theme.textTheme.titleLarge),
             const SizedBox(height: 6),
-            Text('Rough monthly amounts are fine. Tosha adds them to every month your statement covers, marked as '
-                'an estimate.', style: TextStyle(color: c.muted)),
+            Text('Why we ask: Tosha only sees M-PESA. If part of your money comes another way, like an allowance paid '
+                'into a bank or cash, your months would look poorer than they are and your budget too tight. Rough '
+                'monthly amounts are fine; they are added to every month your statement covers, marked as an '
+                'estimate.', style: TextStyle(color: c.muted)),
             const SizedBox(height: 16),
             TextField(
               controller: inCtl,

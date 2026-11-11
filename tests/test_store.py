@@ -105,6 +105,36 @@ def test_repeated_wrong_passwords_lock_the_account_for_a_while(client):
     assert r.status_code == 429                      # even the right password waits now
 
 
+def _google(monkeypatch, email, sub="g-123"):
+    """Stand in for Google's verifier: the real one checks Google's signature, which needs the network."""
+    monkeypatch.setattr(store, "GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(store, "_google_email", lambda token: (email, sub))
+
+
+def test_google_sign_in_creates_an_account_and_links_an_existing_one(client, monkeypatch):
+    _google(monkeypatch, "new@example.com")
+    r = client.post("/auth/google", json={"id_token": "x"})
+    assert r.status_code == 201 and r.get_json()["new_account"] is True and r.get_json()["token"]
+    again = client.post("/auth/google", json={"id_token": "x"})         # same person, second time
+    assert again.status_code == 200 and again.get_json()["new_account"] is False
+    assert again.get_json()["user_id"] == r.get_json()["user_id"]       # one account, not two
+
+    # Someone who already signed up with an email and password: linked, and the password still works.
+    client.post("/auth/register", json={"email": "old@example.com", "password": "strong-pass-1"})
+    _google(monkeypatch, "old@example.com", sub="g-456")
+    linked = client.post("/auth/google", json={"id_token": "x"})
+    assert linked.status_code == 200 and linked.get_json()["new_account"] is False
+    assert client.post("/auth/login", json={"email": "old@example.com", "password": "strong-pass-1"}).status_code == 200
+
+
+def test_google_sign_in_refuses_a_token_google_does_not_confirm(client, monkeypatch):
+    monkeypatch.setattr(store, "GOOGLE_CLIENT_ID", "test-client-id")
+    monkeypatch.setattr(store, "_google_email", lambda token: (None, None))
+    assert client.post("/auth/google", json={"id_token": "bad"}).status_code == 401
+    monkeypatch.setattr(store, "GOOGLE_CLIENT_ID", "")                  # not set up on this server
+    assert client.post("/auth/google", json={"id_token": "x"}).status_code == 503
+
+
 def test_sign_ups_from_one_network_are_limited(client):
     n = store.REGISTER_PER_HOUR                   # 30 since 10 Nov: volunteers often share one Wi-Fi
     codes = [client.post("/auth/register", json={"email": f"u{i}@example.com", "password": "strong-pass-1"}).status_code
@@ -749,7 +779,7 @@ def test_hand_entered_records_in_statement_months_are_replaced_not_doubled(clien
     assert prev["manual_overlap"] == {"count": 1, "months": ["2026-10"]}
     r = _import(client, h, prev)
     assert any("Replaced 1 hand-entered" in n for n in r["notes"])
-    assert r["notes"][0].startswith("Read ") and "already sorted" in r["notes"][0]     # says what it found (10 Nov)
+    assert r["notes"][0].startswith("Read ") and "sorted already" in r["notes"][0]     # says what it found (10 Nov)
     txs = client.get("/me/transactions", headers=h).get_json()["transactions"]
     assert sum(1 for t in txs if t["amount"] == 1200) == 1
     assert any(t["date"] == "2026-06-10" for t in txs)
@@ -1307,6 +1337,12 @@ def test_a_check_says_what_it_does_to_savings_goals(client, monkeypatch):
     assert eff["goals"][0]["months_new"] is None or eff["goals"][0]["months_new"] > 6
     goal = client.post("/me/afford", headers=h, json={"preset": "savings_goal", "target": 3000, "months": 3}).get_json()
     assert "goals_effect" not in goal          # a goal check already weighs the goal itself
+
+
+def test_the_home_card_says_what_next_month_looks_like(client, monkeypatch):
+    h = _earner(client, monkeypatch)                     # 45,000 in, about 32,000 spent a month; today 15 Nov
+    line = client.get("/me/overview", headers=h).get_json()["next_month"]
+    assert line.startswith("December ") and "KES" in line
 
 
 def test_an_old_savings_balance_is_checked_not_rewritten(client, monkeypatch):

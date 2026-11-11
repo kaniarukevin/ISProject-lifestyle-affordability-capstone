@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../widgets/state_words.dart';
 import '../widgets/model_note.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
@@ -250,10 +251,10 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('You can spend about', style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime)),
                 const SizedBox(height: 4),
-                Text('${kesAmount(d['safe_per_day'] as num)} a day',
+                Text(kesAmount(d['safe_per_day'] as num),
                     style: theme.textTheme.displaySmall?.copyWith(color: c.onLime, fontWeight: FontWeight.w700, letterSpacing: -1)),
                 const SizedBox(height: 4),
-                Text('until the end of the month and still keep to your plan: '
+                Text('a day until the end of the month and still keep to your plan. That is '
                     '${kesAmount(d['everyday_left'] as num)} left for everyday spending over the next $daysLeft '
                     'day${daysLeft == 1 ? '' : 's'}.', style: TextStyle(color: c.onLime)),
               ]),
@@ -268,6 +269,13 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                 Text('Every shilling of your ${kesAmount(plan['income'] as num)} has a job. '
                     'This month looks ${_monthLooks[plan['state']] ?? stateLabel(plan['state'] as String).toLowerCase()}.',
                     style: TextStyle(color: c.muted)),
+                const InfoNote(
+                  icon: Icons.auto_awesome_rounded,
+                  title: 'Where this came from',
+                  text: 'Your own last few months, with bills and savings taken out first. Change any line and '
+                      'Tosha keeps your change next month.',
+                  margin: EdgeInsets.only(top: 12, bottom: 4),
+                ),
                 const SizedBox(height: 16),
                 DonutWithLegend(centerLabel: 'KES planned', slices: [
                   if (bills > 0) Slice('Paid first: rent and bills', bills.toDouble(), ChartColors.slot(context, 0)),

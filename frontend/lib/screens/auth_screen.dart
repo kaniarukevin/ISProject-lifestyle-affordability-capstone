@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/google_button.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -73,6 +74,7 @@ class _AuthScreenState extends State<AuthScreen> {
     return AutofillGroup(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
         Text(_newAccount ? 'Create your account' : 'Welcome back', style: theme.textTheme.headlineMedium),
+        GoogleButton(onError: (m) => setState(() => _error = m)),
         const SizedBox(height: 6),
         Text(
             _newAccount
@@ -85,7 +87,10 @@ class _AuthScreenState extends State<AuthScreen> {
           keyboardType: TextInputType.emailAddress,
           autofillHints: const [AutofillHints.email],
           textInputAction: TextInputAction.next,
-          decoration: const InputDecoration(labelText: 'Email'),
+          decoration: const InputDecoration(
+              labelText: 'Email',
+              helperText: 'Only used to sign you in and to reset your password. No marketing.',
+              helperMaxLines: 2),
         ),
         const SizedBox(height: 14),
         PasswordField(
@@ -193,9 +198,9 @@ class _Banner extends StatelessWidget {
   final bool compact;
 
   static const _points = [
-    (Icons.verified_user_rounded, 'Ask "Can I afford it?" before you commit to a loan, rent or a big buy.'),
-    (Icons.insights_rounded, 'See your financial state and score, read from your own M-PESA statement.'),
-    (Icons.account_balance_wallet_rounded, 'A budget that adjusts as your month goes.'),
+    (Icons.verified_user_rounded, 'Ask "Can I afford it?" before you take a loan, move house or buy something big.'),
+    (Icons.insights_rounded, 'See how your money is really doing, read from your own M-PESA statement.'),
+    (Icons.account_balance_wallet_rounded, 'A budget built from the way you actually spend, not a fixed rule.'),
   ];
 
   @override
@@ -222,11 +227,13 @@ class _Banner extends StatelessWidget {
               style: (compact ? Theme.of(context).textTheme.headlineMedium : Theme.of(context).textTheme.displaySmall)
                   ?.copyWith(color: white, fontWeight: FontWeight.w700, letterSpacing: -1, height: 1.1)),
           const SizedBox(height: 12),
-          Text('Budgets and affordability for Kenyan households, built on how money really moves.',
+          Text('Tosha reads your M-PESA statement and shows you what your money is really doing. Then it checks a '
+              'big decision against it, before you make it.',
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: muted)),
-          if (!compact) ...[
-            const SizedBox(height: 32),
-            for (final (icon, text) in _points)
+          // 11 Nov: these three points were drawn only on a wide screen, so phone users, which is everyone,
+          // reached the password box without ever being told what the app does.
+          SizedBox(height: compact ? 20 : 32),
+          for (final (icon, text) in _points)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -244,10 +251,24 @@ class _Banner extends StatelessWidget {
                   ),
                 ]),
               ),
-            const Spacer(),
-            Text('Only you see your data. Statement files are never kept, and you can delete everything at any time.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
-          ],
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(16)),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.schedule_rounded, size: 18, color: c.lime),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text('You will need your M-PESA statement. Asking Safaricom for it is free and takes about '
+                    'five minutes. Setting up takes about ten.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: white)),
+              ),
+            ]),
+          ),
+          if (!compact) const Spacer(),
+          SizedBox(height: compact ? 16 : 24),
+          Text('Only you see your data. Tosha never moves your money, never messages anyone, and never shares what '
+              'it reads. Statement files are not kept, and you can delete everything at any time.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
         ],
       ),
     );

@@ -145,7 +145,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 _Key(mark: Container(width: 16, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
                 _Key(mark: Container(width: 16, height: 3, color: c.muted), text: 'Expected'),
                 _Key(mark: Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range,
-                    borderRadius: BorderRadius.circular(3))), text: 'Likely range'),
+                    borderRadius: BorderRadius.circular(3))), text: 'Could be anywhere in here'),
               ]),
               const SizedBox(height: 16),
               ForecastChart(
@@ -163,7 +163,8 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 ],
               ),
               const SizedBox(height: 6),
-              Text('The shaded band is a likely range, not a promise. Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              Text('Worked out from your own months, including school-fee months and December. Real months land '
+                  'inside the shaded band about 8 times in 10. Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ]),
           ),
           const SizedBox(height: 20),

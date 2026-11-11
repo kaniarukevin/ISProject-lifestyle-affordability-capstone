@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../screens/about_numbers_screen.dart';
+import '../screens/questions_screen.dart';
 import '../theme/app_theme.dart';
 
 /// The one-line reminder under every page of figures: estimates from a model, not financial advice, with a link
@@ -15,12 +15,12 @@ class ModelNote extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 20),
       child: Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, children: [
-        Text('Estimates from a model, not financial advice. ', style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+        Text('Estimates, not financial advice. ', style: theme.textTheme.bodySmall?.copyWith(color: muted)),
         InkWell(
-          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AboutNumbersScreen())),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuestionsScreen())),
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Text('About these numbers',
+            child: Text('Questions about these numbers',
                 style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurface, decoration: TextDecoration.underline, fontWeight: FontWeight.w600)),
           ),

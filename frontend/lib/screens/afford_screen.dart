@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../models/presets.dart';
 import '../models/profile.dart';
 import '../models/transaction.dart' show categoryLabel;
@@ -163,16 +164,28 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
           if (box.maxWidth >= 600)
             Row(children: [
               Expanded(
-                child: Text('Try a change before you make it. Nothing is saved unless you go ahead.',
+                child: Text('Pick something you are thinking about. Tosha runs it against your own last months and '
+                    'tells you whether it fits, what each month would look like, and what would make it work. '
+                    'Nothing changes unless you say you are doing it.',
                     style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
               ),
               ?pastLink,
             ])
           else ...[
-            Text('Try a change before you make it. Nothing is saved unless you go ahead.',
-                style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+            Text('Pick something you are thinking about.', style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
             if (pastLink != null) Align(alignment: Alignment.centerLeft, child: pastLink),
           ],
+          const InfoNote(
+            icon: Icons.verified_user_rounded,
+            title: 'What a check gives you',
+            points: [
+              'Whether it fits your money, and why.',
+              'What each month would look like if you went ahead.',
+              'What would make it work, if it does not.',
+            ],
+            text: 'Tosha runs it against your own last months. Nothing changes unless you say you are doing it.',
+            margin: EdgeInsets.only(top: 14),
+          ),
           const SizedBox(height: 20),
           Text('Suggested for you', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
@@ -431,6 +444,8 @@ class ResultView extends StatelessWidget {
           ],
           const SizedBox(height: 12),
           if (reasons.isNotEmpty) Text(reasons.first, style: theme.textTheme.bodyLarge),
+          const SizedBox(height: 6),
+          Text('Worked out on your own recent months.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
           if (before != null && after != null) ...[
             const SizedBox(height: 18),
             Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -443,9 +458,9 @@ class ResultView extends StatelessWidget {
             ScoreScale(score: after, before: before),
             if ((result['track_record'] as Map?)?['lowered_verdict'] == true) ...[
               const SizedBox(height: 10),
-              Text('We lowered this from Affordable: in ${_heavy(result['track_record'] as Map)} of the last '
-                  '${(result['track_record'] as Map)['months']} months you spent more than came in, so a new cost '
-                  'every month is a stretch.',
+              Text('We moved this down from Affordable. In ${_heavy(result['track_record'] as Map)} of your last '
+                  '${(result['track_record'] as Map)['months']} months, spending was more than what came in. A new '
+                  'cost every month would be a stretch.',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.warn)),
             ],
             if (result['score_note'] != null) ...[
@@ -610,7 +625,7 @@ int _heavy(Map record) => ((record['overspent_months'] ?? 0) as num).toInt() + (
 /// What each verdict means, in one line under the chip (wording audit, 10 Nov).
 const _verdictMeans = {
   'Affordable': 'You would still have room each month.',
-  'Stretch': 'You could do it, but there would be very little room each month.',
+  'Stretch': 'You could do it, but money would be very tight each month.',
   'Not affordable': 'You would be short each month.',
 };
 
