@@ -67,21 +67,20 @@ class _GoogleButtonState extends State<GoogleButton> {
     if (!GoogleButton.available || !_ready) return const SizedBox.shrink();
     final theme = Theme.of(context);
     return Column(children: [
-      const SizedBox(height: 20),
+      const SizedBox(height: 18),
       if (_busy)
         const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator())
       else
-        googleSignInButton(),
-      const SizedBox(height: 18),
+        Center(child: googleSignInButton()),
+      const SizedBox(height: 16),
       Row(children: [
         const Expanded(child: Divider()),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text('or use your email', style: theme.textTheme.bodySmall),
+          child: Text('or', style: theme.textTheme.bodySmall),
         ),
         const Expanded(child: Divider()),
       ]),
-      const SizedBox(height: 4),
     ]);
   }
 }

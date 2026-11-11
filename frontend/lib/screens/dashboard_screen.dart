@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'questions_screen.dart';
 import '../widgets/start_here.dart';
 import '../widgets/state_words.dart';
 import '../widgets/model_note.dart';
@@ -154,7 +153,6 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             _ScoreCard(
               score: (d['score'] as num).round(),
               state: d['state'] as String,
-              summary: d['timeline_summary'] as String?,
               nextMonth: d['next_month'] as String?,
               facts: _scoreFacts(d),
               estimated: d['estimated'] == true,
@@ -227,21 +225,12 @@ String? _scoreFacts(Map<String, dynamic> d) {
 
 const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/// What to do about each state. The screen used to name a problem and stop there (11 Nov).
-const _whatToDo = {
-  'Stable': 'Nothing to fix. Set a goal if you want the spare money to have a job.',
-  'Strained': 'Open Budget and next 3 months to see which line has room.',
-  'Critical': 'Start with your budget: it shows what to cut first to close the gap.',
-};
-
 const _onLime = Color(0xFF111111);
 
 class _ScoreCard extends StatelessWidget {
-  const _ScoreCard({required this.score, required this.state, this.summary, this.nextMonth, this.facts,
-      this.estimated = false});
+  const _ScoreCard({required this.score, required this.state, this.nextMonth, this.facts, this.estimated = false});
   final int score;
   final String state;
-  final String? summary;
   final String? nextMonth;   // what next month looks like: the score is a fair one-month warning (10 Nov)
   final String? facts;       // the figures behind the word, so anyone can check it
   final bool estimated;      // still the setup figures, not a real statement
@@ -288,14 +277,11 @@ class _ScoreCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(facts!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
         ],
-        const SizedBox(height: 6),
-        Text(estimated
-                ? 'Add your M-PESA statement and this becomes your real score.'
-                : _whatToDo[state] ?? '',
-            style: theme.textTheme.bodyMedium?.copyWith(color: _onLime, fontWeight: FontWeight.w600)),
-        const SizedBox(height: 4),
-        Text('0 is the worst score and 100 the best. It comes from your last few months.',
-            style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
+        if (estimated) ...[
+          const SizedBox(height: 6),
+          Text('Add your M-PESA statement and this becomes your real score.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: _onLime, fontWeight: FontWeight.w600)),
+        ],
         if (nextMonth != null) ...[
           const SizedBox(height: 12),
           Container(
@@ -311,24 +297,11 @@ class _ScoreCard extends StatelessWidget {
             ]),
           ),
         ],
-        if (summary != null) ...[
-          const SizedBox(height: 8),
-          Text(summary!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
-        ],
         const SizedBox(height: 16),
         FilledButton(
           style: FilledButton.styleFrom(backgroundColor: _onLime, foregroundColor: Colors.white),
           onPressed: () => showWhyScore(context),
           child: const Text('Why this score?'),
-        ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFF2B3110)),
-            onPressed: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const QuestionsScreen(openAt: 'What does my score mean'))),
-            child: const Text('What does my score mean?'),
-          ),
         ),
       ]),
     );

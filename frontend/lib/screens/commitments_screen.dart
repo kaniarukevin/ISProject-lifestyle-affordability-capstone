@@ -165,12 +165,8 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
           Text('Money you have to pay, or want to save, every month.', style: muted),
           const InfoNote(
             icon: Icons.calendar_month_rounded,
-            title: 'What this changes',
-            points: [
-              'Anything here is taken out of your budget first, before everyday money.',
-              '"Can I afford it?" counts it too, so its answers match your real obligations.',
-              'Leave it empty and Tosha uses what it can see in your records instead.',
-            ],
+            text: 'Anything here is set aside before everyday money, and counted in "Can I afford it?". Leave it '
+                'empty and Tosha uses what it sees in your records.',
           ),
           if (busy) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
           if (error != null)

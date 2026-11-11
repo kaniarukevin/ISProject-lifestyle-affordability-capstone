@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../widgets/info_note.dart';
 import '../models/presets.dart';
 import '../models/profile.dart';
 import '../models/transaction.dart' show categoryLabel;
@@ -172,20 +171,11 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
               ?pastLink,
             ])
           else ...[
-            Text('Pick something you are thinking about.', style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
+            Text('Pick something you are thinking about. Tosha checks it against your own months and shows what '
+                'would happen. Nothing changes unless you say you are doing it.',
+                style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
             if (pastLink != null) Align(alignment: Alignment.centerLeft, child: pastLink),
           ],
-          const InfoNote(
-            icon: Icons.verified_user_rounded,
-            title: 'What a check gives you',
-            points: [
-              'Whether it fits your money, and why.',
-              'What each month would look like if you went ahead.',
-              'What would make it work, if it does not.',
-            ],
-            text: 'Tosha runs it against your own last months. Nothing changes unless you say you are doing it.',
-            margin: EdgeInsets.only(top: 14),
-          ),
           const SizedBox(height: 20),
           Text('Suggested for you', style: theme.textTheme.titleLarge),
           const SizedBox(height: 12),
