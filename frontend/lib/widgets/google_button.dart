@@ -4,6 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 
 import '../services/api.dart';
+import '../theme/app_theme.dart';
 import '../state/app_state.dart';
 import 'google_button_target.dart' if (dart.library.js_interop) 'google_button_target_web.dart';
 
@@ -64,23 +65,49 @@ class _GoogleButtonState extends State<GoogleButton> {
 
   @override
   Widget build(BuildContext context) {
-    if (!GoogleButton.available || !_ready) return const SizedBox.shrink();
+    if (!GoogleButton.available) return const SizedBox.shrink();
     final theme = Theme.of(context);
-    return Column(children: [
-      const SizedBox(height: 18),
-      if (_busy)
-        const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator())
-      else
-        Center(child: googleSignInButton()),
-      const SizedBox(height: 16),
+    final c = AppColors.of(context);
+    // The space is held from the start, whether Google's button has arrived or not, so the form never jumps.
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const SizedBox(height: 4),
       Row(children: [
         const Expanded(child: Divider()),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text('or', style: theme.textTheme.bodySmall),
+          child: Text('or', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ),
         const Expanded(child: Divider()),
       ]),
+      const SizedBox(height: 18),
+      // Google's own button, in Tosha's lime. The button itself has to stay one of Google's approved looks, so
+      // the app's colour goes around it rather than on it (11 Nov).
+      Container(
+        padding: const EdgeInsets.all(5),
+        decoration: BoxDecoration(color: c.lime, borderRadius: BorderRadius.circular(30)),
+        child: SizedBox(
+          height: 44,
+          child: Align(
+            child: _ready && !_busy
+                ? googleSignInButton()
+                : DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(26),
+                    ),
+                    child: SizedBox(
+                      height: 44,
+                      width: double.infinity,
+                      child: Center(
+                        child: _busy
+                            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                            : null,
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+      ),
     ]);
   }
 }

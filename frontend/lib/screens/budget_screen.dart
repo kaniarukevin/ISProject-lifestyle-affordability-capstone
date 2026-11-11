@@ -1,9 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../widgets/info_note.dart';
-import '../widgets/state_words.dart';
-import '../widgets/model_note.dart';
 import '../models/transaction.dart' show categoryLabel, outsideCategories, spendingCategories;
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -12,7 +9,11 @@ import '../theme/app_theme.dart';
 import '../widgets/busy_words.dart';
 import '../widgets/charts.dart';
 import '../widgets/format.dart';
+import '../widgets/info_note.dart';
+import '../widgets/model_note.dart';
+import '../widgets/note_row.dart';
 import '../widgets/panel.dart';
+import '../widgets/state_words.dart';
 import 'budget_warnings.dart';
 
 const _fixedLabels = {
@@ -264,8 +265,9 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
           CardColumns(minWidth: 340, children: [
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('Your plan for ${monthNames[(d['month'] as int) - 1]}', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 4),
+                PanelTitle('Your plan for ${monthNames[(d['month'] as int) - 1]}',
+                    icon: Icons.pie_chart_outline_rounded),
+                const SizedBox(height: 10),
                 Text('Every shilling of your ${kesAmount(plan['income'] as num)} has a job. '
                     'This month looks ${_monthLooks[plan['state']] ?? stateLabel(plan['state'] as String).toLowerCase()}.',
                     style: TextStyle(color: c.muted)),
@@ -286,20 +288,18 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
             ),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('What changed this month', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 10),
-                if (notes.isEmpty) Text('Nothing special: a usual month.', style: TextStyle(color: c.muted)),
-                for (final n in notes)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 7, right: 10),
-                        child: CircleAvatar(radius: 3, backgroundColor: theme.colorScheme.onSurface),
-                      ),
-                      Expanded(child: Text(n)),
-                    ]),
-                  ),
+                const PanelTitle('What changed this month', icon: Icons.swap_vert_rounded),
+                const SizedBox(height: 16),
+                if (notes.isEmpty)
+                  Text('Nothing special: a usual month, so your plan follows your own normal pattern.',
+                      style: TextStyle(color: c.muted)),
+                for (final n in notes) NoteRow(n),
+                const SizedBox(height: 4),
+                const InfoNote(
+                  icon: Icons.edit_outlined,
+                  text: 'Change any limit below and Tosha keeps your change next month.',
+                  margin: EdgeInsets.zero,
+                ),
               ]),
             ),
           ]),
@@ -308,10 +308,12 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Row(children: [
-                Expanded(child: Text('Everyday spending', style: theme.textTheme.titleLarge)),
-                if (edited.isNotEmpty) TextButton(onPressed: _reset, child: const Text('Back to recommended')),
-              ]),
+              PanelTitle('Everyday spending',
+                  icon: Icons.shopping_basket_outlined,
+                  trailing: edited.isEmpty
+                      ? null
+                      : TextButton(onPressed: _reset, child: const Text('Back to recommended'))),
+              const SizedBox(height: 10),
               Text('Tap a line to change its limit. The thin mark shows where you would be today if you spread it '
                   'evenly over the month.',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
@@ -322,8 +324,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text('Set aside first', style: theme.textTheme.titleLarge),
-              const SizedBox(height: 8),
+              const PanelTitle('Set aside first', icon: Icons.lock_outline_rounded),
+              const SizedBox(height: 14),
               for (final k in fixed) _Plain(_fixedLabels[k]!, lines[k]!, spent[k]),
               _Plain('Savings', saving, spent['savings']),
             ]),
@@ -332,8 +334,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
             const SizedBox(height: 20),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('Other spending this month', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 4),
+                const PanelTitle('Other spending this month', icon: Icons.more_horiz_rounded),
+                const SizedBox(height: 10),
                 Text('No line of its own: it comes out of your everyday money and the daily amount above.',
                     style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                 const SizedBox(height: 8),
@@ -402,8 +404,9 @@ class _VersusRule extends StatelessWidget {
         );
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Text('How this compares with a one-size-fits-all budget (50/30/20)', style: theme.textTheme.titleLarge),
-        const SizedBox(height: 4),
+        const PanelTitle('How this compares with a one-size-fits-all budget (50/30/20)',
+            icon: Icons.balance_rounded),
+        const SizedBox(height: 10),
         Text('Fixed rules give everyone the same percentages. Tosha starts from your bills, your own spending and '
             'how your month is going, so the split is yours.', style: TextStyle(color: c.muted)),
         const SizedBox(height: 14),
@@ -494,8 +497,8 @@ class _PastBudgetsState extends State<_PastBudgets> with ReloadOnChange {
           if (withBudget.length >= 2)
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Text('Planned against spent', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 4),
+                const PanelTitle('Planned against spent', icon: Icons.bar_chart_rounded),
+                const SizedBox(height: 10),
                 Text(_trend(withBudget), style: TextStyle(color: c.muted)),
                 const SizedBox(height: 14),
                 Row(children: [

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../widgets/state_words.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -13,6 +12,7 @@ import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
 import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
+import '../widgets/state_chip.dart';
 import 'payees_screen.dart';
 import 'statement_screen.dart';
 
@@ -321,8 +321,8 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
           else if (months!.isEmpty) ...[
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('No records yet', style: theme.textTheme.titleLarge),
-                const SizedBox(height: 6),
+                const PanelTitle('No records yet', icon: Icons.inbox_outlined),
+                const SizedBox(height: 12),
                 Text('Tosha needs records before it can say anything about your money. Upload an M-PESA statement '
                     'to bring in months at once, or type in what you spend.',
                     style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
@@ -378,11 +378,10 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
               ),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Row(children: [
-                  Expanded(child: Text('Every record', style: theme.textTheme.titleLarge)),
-                  Text('${shown.length} of ${txs?.length ?? 0}', style: TextStyle(color: c.muted)),
-                ]),
-                const SizedBox(height: 12),
+                PanelTitle('Every record',
+                    icon: Icons.receipt_long_outlined,
+                    trailing: Text('${shown.length} of ${txs?.length ?? 0}', style: TextStyle(color: c.muted))),
+                const SizedBox(height: 14),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
@@ -450,7 +449,7 @@ class _MonthSummary extends StatelessWidget {
             ),
           if (scored != null) figure(kesAmount(scored['saved'] as num), 'Saved'),
           if (oneOff > 0) figure(kesAmount(oneOff), 'One-off, kept apart'),
-          if (state != null) StateBadge(state: state, score: scored!['score'] as int),
+          if (state != null) StateChip(state: state, score: scored!['score'] as int),
           if (state == null)
             Text('This month is still going, so it has no score yet. You will see one when it ends.',
                 style: TextStyle(color: c.muted)),
@@ -462,25 +461,6 @@ class _MonthSummary extends StatelessWidget {
           DonutWithLegend(slices: categorySlices(context, by), centerLabel: 'KES spent'),
         ],
       ]),
-    );
-  }
-}
-
-/// A month's financial state as a small badge: its colour, its word and its score (never colour alone).
-class StateBadge extends StatelessWidget {
-  const StateBadge({super.key, required this.state, required this.score});
-  final String state;
-  final int score;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = AppColors.of(context);
-    final bg = switch (state) { 'Stable' => c.stable, 'Strained' => c.strained, _ => c.critical };
-    final fg = state == 'Critical' && Theme.of(context).brightness == Brightness.light ? Colors.white : const Color(0xFF111111);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Text('${stateLabel(state)} · ${scoreOutOf(score)}', style: TextStyle(color: fg, fontWeight: FontWeight.w700)),
     );
   }
 }

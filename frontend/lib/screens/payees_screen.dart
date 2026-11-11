@@ -319,7 +319,10 @@ class _PayeesScreenState extends State<PayeesScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final c = AppColors.of(context);
     final all = ((data?['payees'] as List?) ?? []).cast<Map<String, dynamic>>();
+    final share = (((data?['sorted_share'] ?? 0) as num) * 100).round();
+    final left = all.where(_toSort).length;
     final shown = onlyToSort ? all.where(_toSort).toList() : all;
     final pay = shown.where((p) => p['direction'] != 'in').toList();
     final paidBy = shown.where((p) => p['direction'] == 'in').toList();
@@ -337,27 +340,66 @@ class _PayeesScreenState extends State<PayeesScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  // How far along you are, in lime: the one thing to look at when you open this page.
                   Panel(
+                    color: c.lime,
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Text('${((data!['sorted_share'] as num) * 100).round()}% of your statement money is sorted',
-                          style: theme.textTheme.titleLarge),
-                      const SizedBox(height: 10),
+                      Row(children: [
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+                          child: Icon(Icons.sort_rounded, size: 19, color: c.onLime),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text('Sorted so far',
+                              style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime, fontWeight: FontWeight.w600)),
+                        ),
+                      ]),
+                      const SizedBox(height: 12),
+                      Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                        Text('$share%',
+                            style: theme.textTheme.displaySmall
+                                ?.copyWith(color: c.onLime, fontWeight: FontWeight.w700, height: 1)),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8, bottom: 4),
+                          child: Text('of your statement money',
+                              style: theme.textTheme.bodyMedium?.copyWith(color: c.onLime)),
+                        ),
+                      ]),
+                      const SizedBox(height: 14),
                       ClipRRect(
                         borderRadius: BorderRadius.circular(7),
                         child: LinearProgressIndicator(
-                            value: (data!['sorted_share'] as num).toDouble(), minHeight: 14,
-                            color: AppColors.of(context).lime, backgroundColor: AppColors.of(context).range),
-                      ),
-                      const SizedBox(height: 10),
-                      Text('Tell Tosha what each person or business is, once: food, rent, family, transport. It then '
-                          'sorts every past and future payment to them.',
-                          style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
-                      const InfoNote(
-                        icon: Icons.insights_rounded,
-                        text: 'Your totals are already right; this splits them into food, transport and the rest. '
-                            'Biggest names first, and you can stop any time.',
+                            value: (data!['sorted_share'] as num).toDouble(),
+                            minHeight: 14,
+                            color: c.onLime,
+                            backgroundColor: Colors.white),
                       ),
                       const SizedBox(height: 14),
+                      Text(
+                          left == 0
+                              ? 'Every name is sorted. Your budget and score use the right categories.'
+                              : '$left name${left == 1 ? '' : 's'} still to go. Biggest ones first, and you can stop '
+                                  'any time.',
+                          style: theme.textTheme.bodyMedium?.copyWith(color: c.onLime)),
+                    ]),
+                  ),
+                  const SizedBox(height: 16),
+                  Panel(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      const PanelTitle('How this works', icon: Icons.lightbulb_outline_rounded, small: true),
+                      const SizedBox(height: 12),
+                      Text('Tell Tosha what each person or business is, once: food, rent, family, transport. It then '
+                          'sorts every past and future payment to them.',
+                          style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+                      const InfoNote(
+                        icon: Icons.insights_rounded,
+                        text: 'Your totals are already right. This only splits them into food, transport and the '
+                            'rest, so your budget knows where the money goes.',
+                      ),
+                      const SizedBox(height: 16),
                       Align(
                         alignment: Alignment.centerLeft,
                         child: SegmentedButton<bool>(
@@ -373,11 +415,25 @@ class _PayeesScreenState extends State<PayeesScreen> {
                     ]),
                   ),
                   if (shown.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 24),
-                      child: Center(
-                          child: Text('All sorted. Your budget and score now use the right categories.',
-                              textAlign: TextAlign.center)),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Panel(
+                        child: Column(children: [
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle),
+                            child: Icon(Icons.check_rounded, color: c.onLime),
+                          ),
+                          const SizedBox(height: 12),
+                          Text('Nothing left to sort here',
+                              textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
+                          const SizedBox(height: 6),
+                          Text('Your budget and score are using the right categories.',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+                        ]),
+                      ),
                     ),
                   ...pay.map((p) => PayeeCard(
                         payee: p,
@@ -385,14 +441,25 @@ class _PayeesScreenState extends State<PayeesScreen> {
                         onUntag: p['tag'] == null ? null : () => _untag(p),
                       )),
                   if (paidBy.isNotEmpty) ...[
-                    const SizedBox(height: 20),
-                    Text('Who pays you', style: theme.textTheme.titleMedium),
-                    Text('Money from a bank could be your pay or allowance, or your own money moving. If your '
-                        'allowance or salary is paid into your bank and you then move it to M-PESA, choose "My bank". '
-                        'It counts up to your usual income, so moving savings never inflates it. Money from family '
-                        'or friends for something specific is "Paid back or a gift". Church, chama and harambee count '
-                        'under "Family, friends and giving".',
-                        style: theme.textTheme.bodySmall),
+                    const SizedBox(height: 24),
+                    Panel(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        const PanelTitle('Who pays you', icon: Icons.south_west_rounded),
+                        const SizedBox(height: 12),
+                        Text('Money coming in needs sorting too, so your income is not counted twice.',
+                            style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+                        const InfoNote(
+                          icon: Icons.account_balance_outlined,
+                          title: 'Which one to pick',
+                          points: [
+                            'Pay or allowance that lands in your bank, then moves to M-PESA: "My bank". It counts '
+                                'only up to your usual income, so moving savings never inflates it.',
+                            'Family or friends sending money for something specific: "Paid back or a gift".',
+                            'Church, chama and harambee: "Family, friends and giving".',
+                          ],
+                        ),
+                      ]),
+                    ),
                     ...paidBy.map((p) => PayeeCard(
                           payee: p,
                           onTag: (tag) => _tag(p, tag),
@@ -439,17 +506,21 @@ class PayeeCard extends StatelessWidget {
     final hints = [if (s != null) s['why'] as String, ...((payee['hints'] as List?) ?? []).cast<String>()];
     final sTag = s?['tag'] as String?;
     final current = tag ?? payee['category'] as String?;
+    final done = tag != null || (current != null && current != 'unsorted');
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Panel(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Row(children: [
+            // Lime once you have told Tosha what this is, grey while it is still a question.
             CircleAvatar(
-              radius: 20,
-              backgroundColor: c.field,
-              child: Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(),
-                  style: TextStyle(fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface)),
+              radius: 22,
+              backgroundColor: done ? c.lime : c.field,
+              child: done
+                  ? Icon(Icons.check_rounded, color: c.onLime, size: 22)
+                  : Text(name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+                      style: TextStyle(fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface)),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -460,6 +531,7 @@ class PayeeCard extends StatelessWidget {
                     style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
               ]),
             ),
+            const SizedBox(width: 8),
             Text(kes(payee['total'] as num), style: const TextStyle(fontWeight: FontWeight.w700)),
           ]),
           // People remember when and how much, not account numbers.
@@ -469,8 +541,24 @@ class PayeeCard extends StatelessWidget {
               child: Text('${kes(pm['amount'] as num)} on ${pm['date']}',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ),
-          const SizedBox(height: 8),
-          Text('Now: ${_now(payee, tag)}', style: theme.textTheme.bodyMedium),
+          const SizedBox(height: 12),
+          // What it counts as right now, as a chip rather than a line of text that testers read straight past.
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                  color: done ? c.lime : c.field, borderRadius: BorderRadius.circular(18)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(done ? Icons.check_circle_rounded : Icons.help_outline_rounded,
+                    size: 15, color: done ? c.onLime : c.muted),
+                const SizedBox(width: 7),
+                Text(done ? 'Counts as ${_now(payee, tag)}' : 'Not sorted: ${_now(payee, tag)}',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: done ? c.onLime : null, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
           if (hints.isNotEmpty)
             SuggestionBox(
               lines: hints,
@@ -479,7 +567,10 @@ class PayeeCard extends StatelessWidget {
                   : (moneyIn ? inTagLabels[sTag] : tagLabels[sTag] ?? categoryLabel(sTag)),
               onUse: sTag == null || sTag == current ? null : () => onTag(sTag),
             ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          Text(done ? 'Change it to' : 'What is it?',
+              style: theme.textTheme.bodySmall?.copyWith(color: c.muted, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
           // The current category is highlighted, so you can see what it is and change it in one tap.
           TagChips(selected: current, suggested: sTag, moneyIn: moneyIn, onPick: onTag),
           if ((onPayments != null && (payee['count'] as num) > 1) || onUntag != null)

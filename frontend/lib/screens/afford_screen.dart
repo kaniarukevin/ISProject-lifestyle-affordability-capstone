@@ -177,12 +177,12 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
             if (pastLink != null) Align(alignment: Alignment.centerLeft, child: pastLink),
           ],
           const SizedBox(height: 20),
-          Text('Suggested for you', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 12),
+          const PanelTitle('Suggested for you', icon: Icons.star_rounded),
+          const SizedBox(height: 14),
           grid(suggested),
           const SizedBox(height: 28),
-          Text('More ideas', style: theme.textTheme.titleLarge),
-          const SizedBox(height: 12),
+          const PanelTitle('More ideas', icon: Icons.apps_rounded),
+          const SizedBox(height: 14),
           grid(more),
         ]),
       );
@@ -236,8 +236,10 @@ class AskForm extends StatefulWidget {
 class _AskFormState extends State<AskForm> {
   late final Map<String, TextEditingController> _ctl = {
     for (final f in widget.preset.fields)
-      f.key: TextEditingController(text: f.initial == null ? '' : f.initial!.round().toString()),
+      if (f.options == null)
+        f.key: TextEditingController(text: f.initial == null ? '' : f.initial!.round().toString()),
   };
+  final Map<String, String> _picked = {};
   bool _busy = false;
   String? _error;
 
@@ -250,12 +252,29 @@ class _AskFormState extends State<AskForm> {
   }
 
   Future<void> _check() async {
-    final values = <String, num>{};
+    final values = <String, dynamic>{};
     for (final f in widget.preset.fields) {
-      final v = num.tryParse(_ctl[f.key]!.text.replaceAll(',', '').trim());
+      if (f.options != null) {
+        final pick = _picked[f.key];
+        if (pick == null) {
+          setState(() => _error = 'Choose one: "${f.label}"');
+          return;
+        }
+        values[f.key] = pick;
+        continue;
+      }
+      final text = _ctl[f.key]!.text.replaceAll(',', '').trim();
+      if (text.isEmpty && f.optional) {
+        // An empty optional box has a meaning of its own: paying all at once, no interest, a cost with no end.
+        if (f.whenEmpty != null) values[f.key] = f.whenEmpty!;
+        continue;
+      }
+      final v = num.tryParse(text);
       // isFinite and the cap stop "Infinity", "NaN" and 1e15 (audit A-15).
       if (v == null || !v.isFinite || v.abs() > 100000000 || (v < 0 && !f.allowNegative)) {
-        setState(() => _error = 'Fill in "${f.label}" with a number.');
+        setState(() => _error = f.optional
+            ? 'Leave "${f.label}" empty, or put a number in it.'
+            : 'Fill in "${f.label}" with a number.');
         return;
       }
       values[f.key] = v;
@@ -285,13 +304,32 @@ class _AskFormState extends State<AskForm> {
       Text(widget.preset.subtitle, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
       const SizedBox(height: 18),
       for (final f in widget.preset.fields) ...[
-        TextField(
-          controller: _ctl[f.key],
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: InputDecoration(labelText: f.label, helperText: f.hint),
-          onSubmitted: (_) => _check(),
-        ),
-        const SizedBox(height: 14),
+        if (f.options != null)
+          DropdownButtonFormField<String>(
+            initialValue: _picked[f.key],
+            isExpanded: true,
+            decoration: InputDecoration(labelText: f.label, helperText: f.hint ?? 'Needed'),
+            hint: const Text('Pick one'),
+            items: [
+              for (final o in f.options!.entries) DropdownMenuItem(value: o.key, child: Text(o.value)),
+            ],
+            onChanged: (v) => setState(() {
+              if (v != null) _picked[f.key] = v;
+            }),
+          )
+        else
+          TextField(
+            controller: _ctl[f.key],
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: f.label,
+              helperMaxLines: 2,
+              // Every box says whether it has to be filled in, in the same words as setup (11 Nov).
+              helperText: f.hint ?? (f.optional ? 'Optional' : 'Needed'),
+            ),
+            onSubmitted: (_) => _check(),
+          ),
+        const SizedBox(height: 20),
       ],
       if (_error != null) Padding(padding: const EdgeInsets.only(bottom: 12), child: Text(_error!, style: TextStyle(color: c.warn))),
     ];
@@ -477,8 +515,8 @@ class ResultView extends StatelessWidget {
         gap,
         Panel(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Why', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 12),
+            const PanelTitle('Why', icon: Icons.help_outline_rounded),
+            const SizedBox(height: 14),
             for (final r in reasons.skip(1)) _Because(icon: Icons.info_outline_rounded, text: r),
             if (goals != null)
               _Because(
@@ -521,8 +559,8 @@ class ResultView extends StatelessWidget {
         gap,
         Panel(
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text('What happens each month if you go ahead', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 14),
+            const PanelTitle('What happens each month if you go ahead', icon: Icons.calendar_month_outlined),
+            const SizedBox(height: 16),
             if (phases.length > 1)
               for (final p in phases)
                 _Phase(
@@ -557,8 +595,8 @@ class ResultView extends StatelessWidget {
         gap,
         Panel(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Ways to pay', style: theme.textTheme.titleLarge),
-            const SizedBox(height: 10),
+            const PanelTitle('Ways to pay', icon: Icons.payments_outlined),
+            const SizedBox(height: 14),
             Text('In instalments: ${kesAmount(result['instalment_per_month_KES'] as num)} a month'
                 '${result['instalment_months'] != null ? ' for ${result['instalment_months']} months' : result['lasts_months'] != null ? ' for ${result['lasts_months']} months' : ''}'
                 '${result['total_paid_KES'] != null ? ', ${kesAmount(result['total_paid_KES'] as num)} in total' : ''}.',

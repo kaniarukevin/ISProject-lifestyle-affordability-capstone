@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 /// Tosha's card: white (or dark) with large rounded corners and generous padding, no shadow.
 class Panel extends StatelessWidget {
   const Panel({super.key, required this.child, this.color, this.padding});
@@ -90,4 +92,38 @@ class PageWidth extends StatelessWidget {
         alignment: Alignment.topCenter,
         child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
       );
+}
+
+/// How a [PanelTitle]'s icon is tinted: the app's lime by default, amber where the card is a caution.
+enum TitleTone { lime, warn }
+
+/// A card's heading: a circled icon, the words, and room for a control on the right. One shape for every card in
+/// the app, so a heading is never just text on some screens and an icon row on others (11 Nov).
+class PanelTitle extends StatelessWidget {
+  const PanelTitle(this.title, {super.key, required this.icon, this.trailing, this.tone = TitleTone.lime, this.small = false});
+  final String title;
+  final IconData icon;
+  final Widget? trailing;
+  final TitleTone tone;
+
+  /// For a card whose heading sits above a second line of its own, where titleLarge would shout.
+  final bool small;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final (bg, ink) = tone == TitleTone.warn ? (c.warnBg, c.warn) : (c.lime, c.onLime);
+    return Row(children: [
+      Container(
+        width: 34,
+        height: 34,
+        decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+        child: Icon(icon, size: 19, color: ink),
+      ),
+      const SizedBox(width: 12),
+      Expanded(child: Text(title, style: small ? theme.textTheme.titleMedium : theme.textTheme.titleLarge)),
+      ?trailing,
+    ]);
+  }
 }

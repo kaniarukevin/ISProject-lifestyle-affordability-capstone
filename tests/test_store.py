@@ -376,7 +376,7 @@ def test_a_temporary_new_cost_is_labelled(client, monkeypatch):
     h = _student(client)
     r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "school_fees",
                                                    "amount": 2000, "months": 3, "label": "Course"}).get_json()
-    assert r["lasts_months"] == 3 and r["title"].endswith("for 3 month(s)")
+    assert r["lasts_months"] == 3 and r["title"].endswith("for 3 months")
 
 
 def _check(client, h, choice):
@@ -1055,7 +1055,7 @@ def test_a_costly_month_ahead_gets_a_note(client, monkeypatch):
     o = client.get("/me/overview", headers=h).get_json()
     jan = o["outlook"][2]
     assert (jan["year"], jan["month"]) == (2027, 1) and jan["school_fees"] >= 20000 and jan["total"] > 30000
-    assert any(n.startswith("January is expected to cost") and "school fees" in n for n in o["notes"])
+    assert any(n.startswith("January looks like about") and "school fees" in n for n in o["notes"])
 
 
 def test_paying_a_bill_moves_its_due_date_and_the_dashboard_lists_what_is_due(client, monkeypatch):
@@ -1087,7 +1087,7 @@ def test_a_goal_that_cannot_be_reached_in_time_is_flagged(client, monkeypatch):
     o = client.get("/me/overview", headers=h).get_json()
     trip = o["goals_at_risk"][0]
     assert trip["name"] == "Trip" and trip["monthly_needed_KES"] == 6000 and trip["realistic_months"] == 2
-    assert any(n.startswith("To reach Trip in 1 month(s)") for n in o["notes"])
+    assert any(n.startswith("To reach Trip in 1 month ") for n in o["notes"])
 
 
 def test_lifestyle_shows_shares_of_income_with_simple_guides_and_betting(client, monkeypatch):

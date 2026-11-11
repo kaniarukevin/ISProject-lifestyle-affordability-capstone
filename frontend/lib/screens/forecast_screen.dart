@@ -10,6 +10,7 @@ import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
+import '../widgets/note_row.dart';
 import '../widgets/panel.dart';
 import '../widgets/busy_words.dart';
 import 'budget_screen.dart';
@@ -140,14 +141,12 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
           const SizedBox(height: 16),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Wrap(spacing: 14, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                Text('What you spent, and what the next 3 months will probably cost', style: theme.textTheme.titleLarge),
-                _Key(mark: Container(width: 16, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
-                _Key(mark: Container(width: 16, height: 3, color: c.muted), text: 'Expected'),
-                _Key(mark: Container(width: 14, height: 10, decoration: BoxDecoration(color: c.range,
-                    borderRadius: BorderRadius.circular(3))), text: 'Could be anywhere in here'),
-              ]),
-              const SizedBox(height: 16),
+              const PanelTitle('What you spent, and what the next 3 months will probably cost',
+                  icon: Icons.show_chart_rounded),
+              const SizedBox(height: 10),
+              Text('Left of the dotted line is what you really spent. Right of it is what the app expects.',
+                  style: theme.textTheme.bodyMedium?.copyWith(color: c.muted, height: 1.35)),
+              const SizedBox(height: 14),
               ForecastChart(
                 height: 260,
                 income: ((months.first['income'] ?? 0) as num).toDouble(),
@@ -162,7 +161,19 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                         fees: ((m['school_fees'] ?? 0) as num).toDouble(), forecast: true),
                 ],
               ),
-              const SizedBox(height: 6),
+              const SizedBox(height: 10),
+              Wrap(spacing: 16, runSpacing: 8, children: [
+                _Key(mark: Container(width: 18, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
+                _Key(mark: _Dotted(color: c.muted), text: 'What the app expects'),
+                _Key(
+                    mark: Container(
+                        width: 16,
+                        height: 11,
+                        decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
+                    text: 'Could land anywhere in here'),
+                _Key(mark: _Dotted(color: c.warn), text: 'Your income'),
+              ]),
+              const SizedBox(height: 12),
               Text('Worked out from your own months, including school-fee months and December. Real months land '
                   'inside the shaded band about 8 times in 10. Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ]),
@@ -194,17 +205,11 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
           CardRow(minWidth: 340, flex: const [2, 1], children: [
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 12,
-                  runSpacing: 6,
-                  children: [
-                    Text('${monthLong[(sel['month'] as int) - 1]} budget', style: theme.textTheme.titleLarge),
-                    Text('KES ${money(planned)} for everyday spending',
-                        style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
-                  ],
-                ),
+                PanelTitle('${monthLong[(sel['month'] as int) - 1]} budget',
+                    icon: Icons.pie_chart_outline_rounded),
+                const SizedBox(height: 10),
+                Text('KES ${money(planned)} for everyday spending',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
                 const SizedBox(height: 16),
                 for (final l in lines) _BudgetBar(line: l, max: lines.fold<num>(1, (m, x) =>
                     [m, x['budget'] as num, x['usual'] as num].reduce((a, b) => a > b ? a : b))),
@@ -232,8 +237,8 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
               if (path.isNotEmpty)
                 Panel(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    Text('Your savings', style: theme.textTheme.titleLarge),
-                    const SizedBox(height: 12),
+                    const PanelTitle('Your savings', icon: Icons.savings_outlined),
+                    const SizedBox(height: 14),
                     _SavingsChart(now: d['savings_now'] as num, path: path),
                     const SizedBox(height: 12),
                     _SavingsLine(label: 'Now', value: d['savings_now'] as num),
@@ -254,10 +259,9 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
               const SizedBox(height: 20),
               Panel(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('What this means', style: theme.textTheme.titleLarge),
-                  const SizedBox(height: 10),
-                  for (final n in notes)
-                    Padding(padding: const EdgeInsets.only(bottom: 8), child: Text(n, style: theme.textTheme.bodyMedium)),
+                  const PanelTitle('What this means', icon: Icons.lightbulb_outline_rounded),
+                  const SizedBox(height: 16),
+                  for (final n in notes) NoteRow(n),
                 ]),
               ),
             ]),
@@ -501,3 +505,17 @@ class _SavingsPainter extends CustomPainter {
   bool shouldRepaint(_SavingsPainter old) => old.now != now || old.path != path || old.theme != theme;
 }
 
+
+/// A short dotted dash for the chart key, so the key looks like the dotted line on the chart.
+class _Dotted extends StatelessWidget {
+  const _Dotted({required this.color});
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+        for (var i = 0; i < 3; i++) ...[
+          if (i > 0) const SizedBox(width: 3),
+          Container(width: 4, height: 3, color: color),
+        ],
+      ]);
+}

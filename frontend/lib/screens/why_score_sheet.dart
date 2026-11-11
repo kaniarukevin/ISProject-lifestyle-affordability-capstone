@@ -17,7 +17,7 @@ Future<void> showWhyScore(BuildContext context, {Map<String, dynamic>? choice}) 
     showDragHandle: true,
     builder: (_) => DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.7,
+      initialChildSize: 0.75,
       maxChildSize: 0.95,
       builder: (context, controller) => FutureBuilder<Map<String, dynamic>>(
         future: api.explain(choice),
@@ -42,7 +42,8 @@ class _WhyBody extends StatelessWidget {
   final Map<String, dynamic> data;
   final ScrollController controller;
 
-  List<Map<String, dynamic>> _parts(dynamic v) => ((v as List?) ?? []).map((p) => (p as Map).cast<String, dynamic>()).toList();
+  List<Map<String, dynamic>> _parts(dynamic v) =>
+      ((v as List?) ?? []).map((p) => (p as Map).cast<String, dynamic>()).toList();
 
   @override
   Widget build(BuildContext context) {
@@ -52,168 +53,217 @@ class _WhyBody extends StatelessWidget {
     final after = data['after'] is Map ? (data['after'] as Map).cast<String, dynamic>() : null;
     final record = (data['track_record'] as Map?)?.cast<String, dynamic>();
     final shown = after ?? now;
-    final parts = _parts(shown['parts'])..sort((a, b) => (b['points'] as num).abs().compareTo((a['points'] as num).abs()));
+    final parts = _parts(shown['parts'])
+      ..sort((a, b) => (b['points'] as num).abs().compareTo((a['points'] as num).abs()));
     final score = (shown['score'] as num).round();
     final typical = (shown['typical_score'] as num).round();
     final diff = score - typical;
+    // Rows worth less than half a point are left out: a line reading "0" is noise (11 Nov).
     final ups = parts.where((p) => (p['points'] as num) >= 0.5).toList();
     final downs = parts.where((p) => (p['points'] as num) <= -0.5).toList();
-    final muted = theme.textTheme.bodySmall?.copyWith(color: c.muted);
-    final steps = <Widget>[];
-    var run = typical.toDouble();
-    for (final p in parts) {
-      final pts = (p['points'] as num).toDouble();
-      steps.add(_Step(label: p['label'] as String, from: run, to: run + pts, value: _signed(pts)));
-      run += pts;
-    }
+    final widest = parts.isEmpty
+        ? 1.0
+        : parts.map((p) => (p['points'] as num).abs().toDouble()).reduce((a, b) => a > b ? a : b);
+    final moved = _parts(data['moved']).where((p) => (p['points'] as num).abs() >= 0.5).toList();
+    final movedWidest = moved.isEmpty
+        ? 1.0
+        : moved.map((p) => (p['points'] as num).abs().toDouble()).reduce((a, b) => a > b ? a : b);
+    final muted = theme.textTheme.bodyMedium?.copyWith(color: c.muted);
 
-    return ListView(
-      controller: controller,
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 32),
-      children: [
-        Text(after == null ? 'Why your score is $score' : 'Why the score would be $score', style: theme.textTheme.titleLarge),
-        if (data['title'] != null) Text(data['title'] as String, style: muted),
-        const SizedBox(height: 16),
-        // The answer first: the score against a typical household, then the biggest help and drag in one line.
-        Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('$score', style: theme.textTheme.displayMedium?.copyWith(fontWeight: FontWeight.w700)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
+    return Stack(children: [
+      ListView(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 44),
+        children: [
+          Text(after == null ? 'Why your score is $score' : 'Why the score would be $score',
+              style: theme.textTheme.titleLarge),
+          if (data['title'] != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(data['title'] as String, style: muted),
+            ),
+          const SizedBox(height: 18),
+
+          // The whole answer in one lime card: your score, and how it sits against a typical household.
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: c.lime, borderRadius: BorderRadius.circular(24)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('$score',
+                    style: theme.textTheme.displaySmall
+                        ?.copyWith(fontWeight: FontWeight.w700, height: 1, color: c.onLime)),
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 3),
+                  child: Text('/ 100',
+                      style: theme.textTheme.titleMedium?.copyWith(color: c.onLime.withValues(alpha: 0.6))),
+                ),
+              ]),
+              const SizedBox(height: 10),
+              Text(
                   diff == 0
-                      ? 'The same as a typical household ($typical)'
-                      : '${diff.abs()} points ${diff > 0 ? 'above' : 'below'} a typical household ($typical)',
-                  style: theme.textTheme.bodyLarge),
+                      ? 'That is right where a typical household sits, which also scores $typical.'
+                      : 'That is ${diff.abs()} point${diff.abs() == 1 ? '' : 's'} ${diff > 0 ? 'better' : 'worse'} '
+                          'than a typical household, which scores $typical.',
+                  style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime, height: 1.35)),
+            ]),
+          ),
+
+          if (ups.isNotEmpty) ...[
+            const SizedBox(height: 26),
+            _GroupTitle(icon: Icons.trending_up_rounded, text: "What's helping you", color: _good(context)),
+            for (final p in ups)
+              _Line(
+                  label: p['label'] as String,
+                  points: (p['points'] as num).toDouble(),
+                  widest: widest,
+                  up: true),
+          ],
+          if (downs.isNotEmpty) ...[
+            const SizedBox(height: 26),
+            _GroupTitle(icon: Icons.trending_down_rounded, text: "What's holding you back", color: c.warn),
+            for (final p in downs)
+              _Line(
+                  label: p['label'] as String,
+                  points: (p['points'] as num).toDouble(),
+                  widest: widest,
+                  up: false),
+          ],
+
+          const SizedBox(height: 18),
+          Text('Every household starts at $typical. Each line above adds or takes away points, and together they '
+              'make your $score.', style: muted),
+
+          if (after != null) ...[
+            const SizedBox(height: 28),
+            Text('What this choice changes', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 2),
+            Text('From ${now['score']} today to ${after['score']}.', style: muted),
+            const SizedBox(height: 10),
+            for (final p in moved)
+              _Line(
+                  label: p['label'] as String,
+                  points: (p['points'] as num).toDouble(),
+                  widest: movedWidest,
+                  up: (p['points'] as num) >= 0,
+                  indent: false),
+          ],
+
+          if (record != null && (record['months'] as num) >= 2) ...[
+            const SizedBox(height: 28),
+            Text('Your track record', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(
+                'You spent more than came in during ${record['overspent_months']} of the last '
+                '${record['months']} months.'
+                '${((record['covered_months'] ?? 0) as num) > 0 ? ' In ${record['covered_months']} more you spent money left over from earlier, which does not count against you.' : ''}'
+                '${record['fragile'] == true ? ' The score leans on your last few months, so keep a buffer until the calmer months last.' : ''}',
+                style: theme.textTheme.bodyMedium?.copyWith(height: 1.4)),
+          ],
+
+          const SizedBox(height: 26),
+          Text((data['note'] ?? '') as String, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          const SizedBox(height: 4),
+          Text('Worked out on your numbers as they are today. An estimate from a model, not financial advice.',
+              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ],
+      ),
+      // A fade at the bottom edge, so it is obvious there is more below (11 Nov: testers could not tell the
+      // sheet scrolled).
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 32,
+        child: IgnorePointer(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  theme.colorScheme.surface.withValues(alpha: 0),
+                  theme.colorScheme.surface,
+                ],
+              ),
             ),
           ),
-        ]),
-        const SizedBox(height: 8),
-        if (ups.isNotEmpty) _Lead(sign: '+', text: 'Biggest help: ${(ups.first['label'] as String).toLowerCase()}', color: _good(context)),
-        if (downs.isNotEmpty) _Lead(sign: '−', text: 'Biggest drag: ${(downs.first['label'] as String).toLowerCase()}', color: c.warn),
-        const SizedBox(height: 20),
-        Text('From a typical household to you', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 4),
-        Text('Start at the typical score. Each line adds or takes away points; together they make your score.', style: muted),
-        const SizedBox(height: 14),
-        // A waterfall on the 0-100 scale: each bar starts where the one above ended.
-        _Step(label: 'Typical household', from: 0, to: typical.toDouble(), value: '$typical', total: true),
-        ...steps,
-        _Step(label: after == null ? 'Your score' : 'Score after this choice', from: 0, to: score.toDouble(), value: '$score', total: true),
-        if (after != null) ...[
-          const SizedBox(height: 24),
-          Text('What this choice changes', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text('From ${now['score']} today to ${after['score']}:', style: muted),
-          const SizedBox(height: 8),
-          ..._parts(data['moved']).where((p) => (p['points'] as num).abs() >= 0.5).map((p) {
-            final pts = (p['points'] as num).toDouble();
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(children: [
-                Expanded(child: Text(p['label'] as String)),
-                Text('${_signed(pts)} points',
-                    style: TextStyle(fontWeight: FontWeight.w700, color: pts < 0 ? c.warn : _good(context))),
-              ]),
-            );
-          }),
-        ],
-        if (record != null && (record['months'] as num) >= 2) ...[
-          const SizedBox(height: 24),
-          Text('Your track record', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text('You spent more than came in during ${record['overspent_months']} of the last ${record['months']} '
-              'months.${((record['covered_months'] ?? 0) as num) > 0 ? ' In ${record['covered_months']} more you used money '
-                  'left over from earlier months, which is fine and not counted.' : ''}'
-              '${record['fragile'] == true ? ' The score looks mostly at your last 3 to 6 months, so keep a buffer '
-                  'until the calmer months last.' : ''}'),
-        ],
-        const SizedBox(height: 24),
-        Text((data['note'] ?? '') as String, style: muted),
-        const SizedBox(height: 4),
-        Text('Worked out on your numbers as they are today. This is an estimate from a model, not financial advice.',
-            style: muted),
-      ],
-    );
-  }
-
-  static String _signed(double pts) {
-    final r = pts.round();
-    if (r == 0) return '0';
-    return r > 0 ? '+$r' : '−${r.abs()}';
+        ),
+      ),
+    ]);
   }
 }
 
-/// One line of the summary: a sign in a round badge (so up and down never depend on colour alone) and the words.
-class _Lead extends StatelessWidget {
-  const _Lead({required this.sign, required this.text, required this.color});
-  final String sign, text;
+/// "What's helping you" / "What's holding you back": a circled icon and the heading.
+class _GroupTitle extends StatelessWidget {
+  const _GroupTitle({required this.icon, required this.text, required this.color});
+  final IconData icon;
+  final String text;
   final Color color;
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.only(bottom: 4),
         child: Row(children: [
           Container(
-            width: 22,
-            height: 22,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Text(sign, style: TextStyle(color: Theme.of(context).colorScheme.surface, fontWeight: FontWeight.w700, height: 1)),
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.14), shape: BoxShape.circle),
+            child: Icon(icon, size: 18, color: color),
           ),
           const SizedBox(width: 10),
-          Expanded(child: Text(text, style: Theme.of(context).textTheme.bodyLarge)),
+          Expanded(child: Text(text, style: Theme.of(context).textTheme.titleMedium)),
         ]),
       );
 }
 
-/// One bar of the waterfall, on a 0-100 track. Totals are drawn in the ink colour; parts in green (up) or amber
-/// (down), with the signed points written beside them.
-class _Step extends StatelessWidget {
-  const _Step({required this.label, required this.from, required this.to, required this.value, this.total = false});
-  final String label, value;
-  final double from, to;
-  final bool total;
+/// One part of the score: what it is, how many points it is worth, and a bar showing how it compares with the
+/// other parts. No axis and no running total: testers read the waterfall as a chart to decode (11 Nov).
+class _Line extends StatelessWidget {
+  const _Line({
+    required this.label,
+    required this.points,
+    required this.widest,
+    required this.up,
+    this.indent = true,
+  });
+  final String label;
+  final double points, widest;
+  final bool up, indent;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
-    final up = to >= from;
-    final zero = (to - from).abs() < 0.5 && !total;
-    final color = total ? theme.colorScheme.onSurface : (zero ? theme.disabledColor : (up ? _good(context) : c.warn));
-    final lo = (from < to ? from : to).clamp(0.0, 100.0) / 100;
-    final hi = (from < to ? to : from).clamp(0.0, 100.0) / 100;
+    final colour = up ? _good(context) : c.warn;
+    final n = points.round().abs();
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: EdgeInsets.only(left: indent ? 40 : 0, top: 12),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(
-            child: Text(label,
-                style: total ? theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700) : theme.textTheme.bodyMedium),
-          ),
-          Text(value, style: TextStyle(fontWeight: FontWeight.w700, color: total ? null : color)),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Text(label, style: theme.textTheme.bodyLarge)),
+          const SizedBox(width: 12),
+          Text('${up ? '+' : '−'}$n point${n == 1 ? '' : 's'}',
+              style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700, color: colour)),
         ]),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         SizedBox(
-          height: 10,
+          height: 8,
           child: Stack(children: [
-            Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(color: c.field, borderRadius: BorderRadius.circular(5)))),
-            if (!zero)
-              Positioned.fill(
-                child: FractionallySizedBox(
-                  alignment: Alignment.centerLeft,
-                  widthFactor: hi,
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: FractionallySizedBox(
-                      widthFactor: hi == 0 ? 0 : ((hi - lo) / hi).clamp(0.02, 1.0),
-                      child: DecoratedBox(decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5))),
-                    ),
-                  ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: c.field, borderRadius: BorderRadius.circular(4)),
+              ),
+            ),
+            Positioned.fill(
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: widest <= 0 ? 0.02 : (points.abs() / widest).clamp(0.04, 1.0),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(color: colour, borderRadius: BorderRadius.circular(4)),
                 ),
               ),
+            ),
           ]),
         ),
       ]),

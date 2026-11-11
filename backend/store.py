@@ -1734,7 +1734,7 @@ def _checks_sentence(checks):
     last = fair[-1]
     word = "more" if last["diff"] > 0 else "less"
     return (f"{calendar.month_name[last['month']]}: we expected KES {last['expected']:,}; you spent KES "
-            f"{last['actual']:,}, KES {abs(last['diff']):,} {word}. Over {len(fair)} month(s) the forecast was "
+            f"{last['actual']:,}, KES {abs(last['diff']):,} {word}. Over {_months_words(len(fair))} the forecast was "
             f"off by {off:.0%} on average, and {inside} of {len(fair)} fell inside its range.")
 
 
@@ -1912,9 +1912,9 @@ def overview():
     if later:
         f = later[0]
         fees = f["breakdown"].get("school_fees", 0)
-        notes.append(f"{calendar.month_name[f['month']]} is expected to cost about KES {f['total']:,}, more than your "
-                     f"income" + (f", including about KES {fees:,} in school fees" if fees else "") +
-                     ". Setting a little aside now will help.")
+        notes.append(f"{calendar.month_name[f['month']]} looks like about KES {f['total']:,}, more than comes in"
+                     + (f", with about KES {fees:,} of it school fees" if fees else "") +
+                     ". Set a little aside now.")
     due = _bills_due(pic)
     warnings = []
     if saved_budget and current is not None:
@@ -1924,7 +1924,7 @@ def overview():
     at_risk = _goals_at_risk(pic)
     if at_risk:
         r = at_risk[0]
-        notes.append(f"To reach {r['name']} in {r['months_left']} month(s) you need KES {r['monthly_needed_KES']:,} a "
+        notes.append(f"To reach {r['name']} in {_months_words(r['months_left'])} you need KES {r['monthly_needed_KES']:,} a "
                      f"month, but you usually have about KES {r['put_aside_KES']:,} to put aside"
                      + (f", so it would take about {r['realistic_months']} months." if r["realistic_months"]
                         else ", and nothing is left after your other goals.")
@@ -1940,7 +1940,7 @@ def overview():
     record = health["track_record"]
     if record["fragile"] and health["score_before"] >= aff.engine()["cutoffs"]["affordable"]:
         notes.append(f"Your score looks at your recent months, which went well. But you spent more than came in during "
-                     f"{record['overspent_months']} of the last {record['months']} months, so keep a buffer before "
+                     f"{record['overspent_months']} of the last {record['months']} months. Keep a buffer before "
                      "taking on new costs.")
     return jsonify(has_data=True, income_monthly=round(income), months_count=len(complete),
                    state=health["state_now"], score=health["score_before"], score_explained=SCORE_EXPLAINED, estimated=pic["estimated"],
@@ -2482,7 +2482,8 @@ def budget_forecast():
     short = next((i for i, r in enumerate(rows) if r["left_over"] < 0), None)
     if runs_out is None and short is None:
         status = "fine"
-        notes.append(f"At your usual pace every month of the next {len(rows)} has money left over.")
+        notes.append(f"If you keep spending the way you do now, all {len(rows)} of the next months have money left "
+                     "over.")
     elif runs_out is None:
         status = "tight"
         r = rows[short]
@@ -2499,7 +2500,7 @@ def budget_forecast():
     else:
         status = "runs_out"
         r = rows[runs_out]
-        notes.append(f"At your usual pace your money runs out in {name(r)}{fees(r)}.")
+        notes.append(f"If you keep spending the way you do now, your money runs out in {name(r)}{fees(r)}.")
         over = max(0.0, statistics.mean(sum(line["usual"] for line in x["lines"]) for x in rows) - plan_everyday)
         if all(x["on_budget"] >= 0 for x in path):
             notes.append(f"Keeping to your budget gets you through: about KES {round(over, -2):,.0f} a month less on "
@@ -2517,8 +2518,8 @@ def budget_forecast():
     top = sorted(watch.items(), key=lambda kv: -kv[1])[:3]
     if top:
         c, total_gap = top[0]
-        notes.append(f"At your usual pace {NOTE_LABELS.get(c, c)} runs about KES {round(total_gap / len(rows)):,} a "
-                     "month over its budget.")
+        notes.append(f"{NOTE_LABELS.get(c, c).capitalize()} is running about KES {round(total_gap / len(rows)):,} a month "
+                     "over its budget.")
     at_risk = _goals_at_risk(pic)
     based_on = "setup" if pic["estimated"] else "records"
     if pic["estimated"]:
@@ -2561,6 +2562,12 @@ PER = {"month": 1, "term": 3 / 12, "semester": 2 / 12, "year": 1 / 12}     # to 
 MAX_PLAN_COSTS = 10
 
 
+def _months_words(n):
+    """"1 month", "6 months": a title that reads like English (11 Nov)."""
+    n = int(n)
+    return f"{n} month" if n == 1 else f"{n} months"
+
+
 def _scenario_from_preset(p, months):
     """Turn a choice from the app ('move house, new rent 18,000') into an affordability-engine scenario.
     Kept on the server so the logic is in one tested place."""
@@ -2588,7 +2595,7 @@ def _scenario_from_preset(p, months):
         sc, title = {"type": "monthly_change", "changes": {cat: amount}}, f"{label}: KES {round(amount):,} a month"
         if p.get("months"):                       # a temporary cost, e.g. a 3-month course
             sc["months"] = int(_num(p["months"], "months", 1))
-            title += f" for {sc['months']} month(s)"
+            title += f" for {_months_words(sc['months'])}"
         return sc, title
     if kind == "new_baby":
         food, utilities = _num(p.get("food", 6000), "food"), _num(p.get("utilities", 1500), "utilities")
@@ -2602,14 +2609,16 @@ def _scenario_from_preset(p, months):
         months_n = int(_num(p.get("months", 6), "months", 1))
         rate = _num(p.get("annual_rate", 0), "annual_rate")
         label = str(p.get("label") or ("A purchase" if kind == "purchase" else "A loan"))[:60]
+        # One month is paying for it all at once, which is how the engine reads months=1.
+        how = "all at once" if months_n == 1 else f"over {_months_words(months_n)}"
         return ({"type": "purchase", "price": price, "months": months_n, "monthly_interest": rate / 1200},
-                f"{label}: KES {round(price):,} over {months_n} months")
+                f"{label}: KES {round(price):,} {how}")
     if kind == "savings_goal":
         target = _num(p.get("target"), "target", 1)
         months_n = int(_num(p.get("months", 6), "months", 1))
         label = str(p.get("label") or "A savings goal")[:60]
         return ({"type": "savings_goal", "extra_per_month": target / months_n},
-                f"{label}: KES {round(target):,} in {months_n} months")
+                f"{label}: KES {round(target):,} in {_months_words(months_n)}")
     try:
         delta = float(p.get("amount"))
     except (TypeError, ValueError, OverflowError):
@@ -2620,7 +2629,7 @@ def _scenario_from_preset(p, months):
     sc, title = {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
     if p.get("months"):                           # e.g. HELB delayed for 2 months
         sc["months"] = int(_num(p["months"], "months", 1))
-        title += f" for {sc['months']} month(s)"
+        title += f" for {_months_words(sc['months'])}"
     return sc, title
 
 
@@ -2693,7 +2702,7 @@ def _plan_scenario(p, usual):
     label = str(p.get("label") or "Your plan")[:60]
     title = f"{label}: " + ", ".join(parts)
     if sc.get("months"):
-        title += f", for {sc['months']} month(s)"
+        title += f", for {_months_words(sc['months'])}"
     return sc, title[:200]
 
 
@@ -3088,7 +3097,7 @@ def _apply_plan(s, user_id, req, result, data, profile, label, obligation):
         else:
             notes.append("Lower your income under Your household when the new pay starts.")
     if req.get("months"):
-        notes.append(f"It lasts {int(req['months'])} month(s): remove the commitments when it ends.")
+        notes.append(f"It lasts {_months_words(req['months'])}: remove the commitments when it ends.")
     return notes
 
 
@@ -3108,7 +3117,7 @@ def _apply_choice(s, user_id, req, result, how):
         data["obligations"].append({"from_check": _today().isoformat(), "name": name, "category": cat, "amount": round(amount), "frequency": "monthly"})
         notes.append(f"Added {name} (KES {round(amount):,} a month) to your commitments.")
         if months:
-            notes.append(f"It lasts {months} month(s): remove it under Bills, debts and goals when it ends.")
+            notes.append(f"It lasts {_months_words(months)}: remove it under Bills, debts and goals when it ends.")
 
     if kind in ("purchase", "loan"):
         price = float(req.get("price" if kind == "purchase" else "amount"))
