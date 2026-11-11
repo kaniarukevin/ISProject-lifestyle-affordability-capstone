@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../models/commitments.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -161,8 +162,16 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
       child: ListView(
         padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
         children: [
-          Text('Money you have to pay, or want to save, every month. Tosha sets it aside first, then plans the rest.',
-              style: muted),
+          Text('Money you have to pay, or want to save, every month.', style: muted),
+          const InfoNote(
+            icon: Icons.calendar_month_rounded,
+            title: 'What this changes',
+            points: [
+              'Anything here is taken out of your budget first, before everyday money.',
+              '"Can I afford it?" counts it too, so its answers match your real obligations.',
+              'Leave it empty and Tosha uses what it can see in your records instead.',
+            ],
+          ),
           if (busy) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
           if (error != null)
             Padding(padding: const EdgeInsets.only(top: 10), child: Text(error!, style: TextStyle(color: col.warn))),

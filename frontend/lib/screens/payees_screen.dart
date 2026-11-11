@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../models/transaction.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
@@ -349,9 +350,17 @@ class _PayeesScreenState extends State<PayeesScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text('Tell Tosha what each person or business is, once: food, rent, family, transport. It then '
-                          'sorts every past and future payment to them, so your budget is split right. Suggestions are '
-                          'marked in lime; nothing changes without you.',
+                          'sorts every past and future payment to them.',
                           style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
+                      const InfoNote(
+                        icon: Icons.insights_rounded,
+                        title: 'Why this matters, and when you can stop',
+                        points: [
+                          'Your totals are already right. This splits them into food, transport and the rest.',
+                          'Start at the top: the names you pay most are first, so a few of them fix most of it.',
+                          'You can stop any time. Anything left still counts in your totals.',
+                        ],
+                      ),
                       const SizedBox(height: 14),
                       Align(
                         alignment: Alignment.centerLeft,

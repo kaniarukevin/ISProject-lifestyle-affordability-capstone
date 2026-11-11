@@ -9,6 +9,7 @@ import '../widgets/format.dart';
 import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
 import 'about_numbers_screen.dart';
+import 'questions_screen.dart';
 import 'privacy_screen.dart';
 import 'payees_screen.dart';
 import 'profile_screen.dart';
@@ -136,6 +137,13 @@ class YouScreen extends StatelessWidget {
               subtitle: const Text('What each person and business is'),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: () => push(const PayeesScreen()),
+            ),
+            ListTile(
+              leading: const Icon(Icons.help_outline_rounded),
+              title: const Text('Questions'),
+              subtitle: const Text('What my score means, why Tosha asks what it asks'),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => push(const QuestionsScreen()),
             ),
             ListTile(
               leading: const Icon(Icons.info_outline_rounded),

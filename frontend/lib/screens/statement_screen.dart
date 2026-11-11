@@ -2,6 +2,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -58,8 +59,8 @@ class _StatementScreenState extends State<StatementScreen> {
         if (!isPdf) {
           bytes = null;
           filename = null;
-          error = 'That file is not a PDF. Choose the M-PESA statement PDF that Safaricom emailed you. On an iPhone, '
-              'open the email, tap the PDF, then Share and Save to Files first.';
+          error = 'That file is not a PDF. Choose the statement Safaricom emailed you. On an iPhone, open the email, '
+              'tap the PDF, then Share, then Save to Files.';
           return;
         }
         bytes = data;
@@ -209,6 +210,15 @@ class _StatementScreenState extends State<StatementScreen> {
           step('2', 'Safaricom emails you a PDF and texts you its password.'),
           step('3', 'Save the PDF to your phone (iPhone: open the email, tap the PDF, Share, Save to Files), then '
               'choose it here and type the password.'),
+          const InfoNote(
+            icon: Icons.lock_rounded,
+            title: 'Your statement is safe here',
+            points: [
+              'The file and its password are used to read it, then thrown away. Neither is ever stored.',
+              'Next you will see everything Tosha read. Nothing is saved until you press Import.',
+            ],
+            margin: EdgeInsets.only(top: 14),
+          ),
         ]),
       ),
       const SizedBox(height: 16),
@@ -238,7 +248,9 @@ class _StatementScreenState extends State<StatementScreen> {
         controller: _password,
         obscureText: true,
         decoration: const InputDecoration(
-            labelText: 'Password (if the PDF is locked)', helperText: 'The code Safaricom sent you by SMS'),
+            labelText: 'Password (if the PDF is locked)',
+            helperText: 'Safaricom locks the PDF. Tosha needs the code it texted you to open it, and never keeps it.',
+            helperMaxLines: 3),
       ),
       if (error != null) _Problem(error!),
       const SizedBox(height: 18),
@@ -248,15 +260,6 @@ class _StatementScreenState extends State<StatementScreen> {
         onPressed: busy || bytes == null ? null : _read,
         child: busy ? const BusyWords(lines: statementWords) : const Text('Read statement'),
       ),
-      const SizedBox(height: 12),
-      Row(children: [
-        Icon(Icons.lock_rounded, size: 16, color: c.muted),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text('The file and its password are only used to read it, then thrown away. They are never stored.',
-              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
-        ),
-      ]),
     ]);
   }
 

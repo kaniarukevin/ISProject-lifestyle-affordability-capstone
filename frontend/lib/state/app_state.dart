@@ -82,6 +82,12 @@ class AppState extends ChangeNotifier {
     await _afterLogin();
   }
 
+  /// Google sign-in: the server does the checking, then this is an ordinary logged-in session.
+  Future<void> signInWithGoogle(String idToken) async {
+    await api.googleSignIn(idToken);
+    await _afterLogin();
+  }
+
   /// Forgot password: the emailed code and a new password. Every other device is logged out; this one is in.
   Future<void> resetPassword(String email, String code, String newPassword) async {
     await api.resetPassword(email, code, newPassword);

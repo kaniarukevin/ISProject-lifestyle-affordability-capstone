@@ -100,6 +100,9 @@ class User(Base):
     session_epoch: Mapped[int] = mapped_column(Integer, default=0)
     # Set when an admin pauses the account: it cannot log in or use the app, and its data is kept.
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Google's own permanent id for the person ("sub"), set once they sign in with Google. An account keeps its
+    # password as well, so either way in works, and an email account is linked rather than duplicated.
+    google_sub: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
 
 
 class Rating(Base):
@@ -353,7 +356,7 @@ def _upgrade(engine):
                                      "outside_spending": "FLOAT NOT NULL DEFAULT 0",
                                      "income_gap_answered": f"BOOLEAN NOT NULL DEFAULT {false}",
                                      "savings_set_on": "DATE"},
-                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP",
+                        "users": {"consent_version": "VARCHAR(20)", "consent_at": "TIMESTAMP", "google_sub": "VARCHAR(40)",
                                   "session_epoch": "INTEGER NOT NULL DEFAULT 0", "blocked_at": "TIMESTAMP"}}.items():
         have = {c["name"] for c in inspect(engine).get_columns(table)}
         for name, ddl in cols.items():
@@ -690,6 +693,66 @@ def login():
         if user.blocked_at is not None:
             return jsonify(error=BLOCKED), 403
         return jsonify(token=_token(user), user_id=user.id), 200
+
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+
+
+def _google_email(id_token):
+    """The verified email behind a Google sign-in token, or None.
+
+    Google signs the token; verifying the signature against Google's public keys is what proves the person really
+    signed in, so a token is never trusted on its own. Returns (email, google_sub) and only when Google says it
+    has verified the address itself, because the email is what links a Google sign-in to an existing account."""
+    from google.auth.transport import requests as ga_requests
+    from google.oauth2 import id_token as ga_id_token
+    try:
+        claims = ga_id_token.verify_oauth2_token(id_token, ga_requests.Request(), GOOGLE_CLIENT_ID)
+    except Exception:
+        return None, None
+    if claims.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
+        return None, None
+    if not claims.get("email") or claims.get("email_verified") not in (True, "true"):
+        return None, None
+    return str(claims["email"]).strip().lower(), str(claims.get("sub") or "")[:40]
+
+
+@bp.post("/auth/google")
+def google_sign_in():
+    """Sign in (or sign up) with Google.
+
+    Three cases, all ending in the same session token:
+      no account with that email   -> a new account is created, with no password; consent is recorded here
+      an email-and-password account -> it is LINKED, not duplicated: Google's id is saved on the same account and
+                                       the password keeps working, because Google has verified the same address
+      an account already linked     -> straight in
+    """
+    if not GOOGLE_CLIENT_ID:
+        return jsonify(error="signing in with Google is not set up on this server"), 503
+    ip = _client_ip()
+    if _recent(("google-ip", ip), 300) >= 20:
+        return jsonify(error="too many sign-in attempts, wait a few minutes"), 429
+    _record(("google-ip", ip))
+    email, sub = _google_email(str(_body().get("id_token", "")))
+    if not email:
+        return jsonify(error="Google could not confirm that sign-in. Try again, or use your email and password."), 401
+    with session() as s:
+        user = s.scalar(select(User).where(User.email == email))
+        created = False
+        if user is None:
+            if _recent(("register", ip), 3600) >= REGISTER_PER_HOUR:
+                return jsonify(error="too many new accounts from this network, try again later"), 429
+            _record(("register", ip))
+            # No password: this account is opened with Google. "Forgot password" still works and sets one.
+            user = User(email=email, password_hash=generate_password_hash(secrets.token_urlsafe(32)),
+                        consent_version=PRIVACY["version"], consent_at=_now())
+            created = True
+        if user.blocked_at is not None:
+            return jsonify(error=BLOCKED), 403
+        user.google_sub = sub or user.google_sub
+        s.add(user)
+        s.commit()
+        return jsonify(token=_token(user), user_id=user.id, new_account=created), 201 if created else 200
 
 
 @bp.post("/auth/logout")
@@ -1822,11 +1885,11 @@ def overview():
         notes.append("Based on the rough figures you gave when setting up. Record your spending or upload a "
                      "statement and your real numbers take over.")
     if pic["not_sorted_share"] > 0.10:
-        notes.append(f"{pic['not_sorted_share']:.0%} of your spending is not sorted yet. Your totals are right, but the "
-                     "split between food, transport and the rest is a guess. Sort them under Who you pay.")
+        notes.append(f"{pic['not_sorted_share']:.0%} of your spending is not sorted yet. Your totals are right. The "
+                     "split between food, transport and the rest is still a guess. Sort it under Who you pay.")
     if not pic["estimated"] and not complete:
-        notes.append("You only have this month so far, and it is not finished. Your score and forecast appear after "
-                     "one full month. Add your M-PESA statement to see them now.")
+        notes.append("You only have this month so far, and it is not over yet. Your score and forecast need one full "
+                     "month. Add your M-PESA statement to see them now.")
     elif not pic["estimated"] and len(complete) < 3:
         notes.append(f"Based on {len(complete)} month{'s' if len(complete) != 1 else ''} of records. A full year gives "
                      "the most accurate answers.")
@@ -2119,11 +2182,12 @@ def _next_month_sentence(pic, outlook, income):
     fees = round(nxt.get("breakdown", {}).get("school_fees", 0))
     why = f", including about KES {fees:,} in school fees" if fees else ""
     if total > income:
-        return (f"{name} could be hard: spending is expected to be about KES {total:,}{why}, more than the "
+        return (f"{name} could be hard. Spending looks like about KES {total:,}{why}, more than the "
                 f"KES {round(income):,} that usually comes in.")
     if usual and total > 1.10 * usual:
-        return f"{name} could be tighter than usual: about KES {total:,} expected{why}, against your usual KES {round(usual):,}."
-    return (f"{name} looks like a usual month: about KES {total:,} of spending expected, leaving about "
+        return (f"{name} could be tighter than usual. About KES {total:,} of spending{why}, against your usual "
+                f"KES {round(usual):,}.")
+    return (f"{name} looks like a usual month. About KES {total:,} of spending, leaving about "
             f"KES {round(income - total):,} before saving.")
 
 
@@ -2137,9 +2201,8 @@ def _carry_sentence(scored):
     for mo, f in reversed(list(zip(scored, flags))[-12:]):
         if f["covered"]:
             prev = calendar.month_name[mo["month"] - 1 if mo["month"] > 1 else 12]
-            return (f"In {calendar.month_name[mo['month']]} you spent KES {round(f['short']):,} more than came in, "
-                    f"paid from money left over from {prev} and before. That is not counted as overspending in your "
-                    "track record.")
+            return (f"{calendar.month_name[mo['month']]} cost KES {round(f['short']):,} more than came in. That came "
+                    f"from money left over from {prev}, so it does not count against you.")
     return None
 
 
@@ -2777,22 +2840,22 @@ def _goals_effect(pic, result, scenario):
     out = {"need_KES": round(need), "left_after_KES": round(max(0.0, after)), "less_KES": max(0, less),
            "fits": gap_after <= 0, "goals": []}
     if out["fits"]:
-        out["sentence"] = (f"Your goals still fit: they need KES {round(need):,} a month and about "
+        out["sentence"] = (f"Your goals still fit. They need KES {round(need):,} a month, and about "
                            f"KES {round(after):,} would be left.")
         return out
     if less < 1:            # already short for the goals before this choice; this does not make it worse
-        out["sentence"] = (f"Your goals need KES {round(need):,} a month, more than is left even now; "
-                           "this choice does not change that.")
+        out["sentence"] = (f"Your goals need KES {round(need):,} a month. That is already more than you have left, "
+                           "and this change does not make it worse.")
         return out
     share = max(0.0, min(1.0, max(0.0, after) / need))
     for gl in sorted(goals, key=lambda x: -x["monthly_needed_KES"])[:3]:
         later = math.ceil(gl["months_left"] / share) if share > 0 else None
         out["goals"].append({"name": gl["name"], "months_left": gl["months_left"], "months_new": later})
-    slips = "; ".join(f"{x['name']}: about {x['months_new']} months instead of {x['months_left']}"
-                      if x["months_new"] else f"{x['name']}: on hold while this lasts" for x in out["goals"])
-    left = (f"about KES {round(after):,} is left" if after > 0 else "nothing is left")
-    out["sentence"] = (f"Your goals need KES {round(need):,} a month. After this, {left}, so your goals get "
-                       f"KES {less:,} a month less. {slips}.")
+    slips = ". ".join(f"{x['name']} would take about {x['months_new']} months instead of {x['months_left']}"
+                      if x["months_new"] else f"{x['name']} would stop while this lasts" for x in out["goals"])
+    left = (f"about KES {round(after):,} would be left" if after > 0 else "nothing would be left")
+    out["sentence"] = (f"Your goals would get KES {less:,} a month less. They need KES {round(need):,} a month, and "
+                       f"{left}. {slips}.")
     return out
 
 
@@ -3445,18 +3508,17 @@ def statement_import():
     to_sort = len({x["payee_key"] for x in spend if x["category"] == UNSORTED and x["payee_key"]})
     found = [f"Read {len(spend)} payment{'s' if len(spend) != 1 else ''}"
              + (f" over {len(months_in)} month{'s' if len(months_in) != 1 else ''}" if months_in else "")
-             + f"; {sorted_n} are already sorted"
-             + (f", and {to_sort} people or businesses are left for you to sort under Who you pay." if to_sort
-                else ".")]
+             + f". {sorted_n} are sorted already."
+             + (f" {to_sort} name{'s' if to_sort != 1 else ''} still need{'' if to_sort != 1 else 's'} you to say "
+                "what they are, under Who you pay." if to_sort else "")]
     saved = (sum(x["amount"] for x in spend if x["category"] == "savings") + sum(x["amount"] for x in sms_saved)
              + sum(k for k in net.values() if k > 0))
     if saved > 0:
         with session() as s2:
             p = s2.get(Profile, g.user_id)
             bal = float(p.savings_balance or 0) if p else 0.0
-        found.append(f"About KES {round(saved):,} went into savings in these months. Your savings balance stays at the "
-                     f"KES {round(bal):,} you entered; if that is out of date, update it under You, then Household "
-                     "and income.")
+        found.append(f"About KES {round(saved):,} went into savings in these months. Your savings balance still says "
+                     f"KES {round(bal):,}, the figure you gave. Change it under You if it is out of date.")
     notes = found + notes
     if replaced:
         notes.append(f"Replaced {replaced} hand-entered record(s) in the same months, so nothing is counted twice.")

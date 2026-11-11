@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'questions_screen.dart';
 import '../widgets/start_here.dart';
 import '../widgets/state_words.dart';
 import '../widgets/model_note.dart';
@@ -155,6 +156,8 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               state: d['state'] as String,
               summary: d['timeline_summary'] as String?,
               nextMonth: d['next_month'] as String?,
+              facts: _scoreFacts(d),
+              estimated: d['estimated'] == true,
             ),
             _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
             _LeftCard(overview: d, forecast: bf),
@@ -205,14 +208,43 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
   }
 }
 
+/// The figures behind the word, so anyone can check it against their own M-PESA (11 Nov: testers who never think
+/// of their money as a "state" had no way to tell whether the word was right).
+String? _scoreFacts(Map<String, dynamic> d) {
+  final latest = (d['latest'] as Map?)?.cast<String, dynamic>();
+  final income = (d['income_monthly'] as num?)?.round() ?? 0;
+  if (latest == null || income <= 0) return null;
+  final spent = (latest['spent'] as num).round();
+  final month = _monthShort[(latest['month'] as int) - 1];
+  final rec = (d['track_record'] as Map?)?.cast<String, dynamic>();
+  final over = (rec?['overspent_months'] as num?)?.toInt() ?? 0;
+  final of = (rec?['months'] as num?)?.toInt() ?? 0;
+  final line = 'In $month about KES ${money(spent)} went out and about KES ${money(income)} came in.';
+  if (of >= 3 && over > 0) return '$line In $over of your last $of months you spent more than came in.';
+  if (of >= 3) return '$line Your last $of months all stayed inside what came in.';
+  return line;
+}
+
+const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// What to do about each state. The screen used to name a problem and stop there (11 Nov).
+const _whatToDo = {
+  'Stable': 'Nothing to fix. Set a goal if you want the spare money to have a job.',
+  'Strained': 'Open Budget and next 3 months to see which line has room.',
+  'Critical': 'Start with your budget: it shows what to cut first to close the gap.',
+};
+
 const _onLime = Color(0xFF111111);
 
 class _ScoreCard extends StatelessWidget {
-  const _ScoreCard({required this.score, required this.state, this.summary, this.nextMonth});
+  const _ScoreCard({required this.score, required this.state, this.summary, this.nextMonth, this.facts,
+      this.estimated = false});
   final int score;
   final String state;
   final String? summary;
   final String? nextMonth;   // what next month looks like: the score is a fair one-month warning (10 Nov)
+  final String? facts;       // the figures behind the word, so anyone can check it
+  final bool estimated;      // still the setup figures, not a real statement
 
   @override
   Widget build(BuildContext context) {
@@ -221,7 +253,18 @@ class _ScoreCard extends StatelessWidget {
     return Panel(
       color: c.lime,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Your money score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
+        Row(children: [
+          Expanded(
+            child: Text('Your money score', style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF3A4214))),
+          ),
+          if (estimated)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: _onLime, borderRadius: BorderRadius.circular(12)),
+              child: const Text('A guess for now',
+                  style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
+            ),
+        ]),
         const SizedBox(height: 6),
         Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
           Text('$score',
@@ -241,9 +284,17 @@ class _ScoreCard extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
+        if (facts != null) ...[
+          const SizedBox(height: 6),
+          Text(facts!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
+        ],
+        const SizedBox(height: 6),
+        Text(estimated
+                ? 'Add your M-PESA statement and this becomes your real score.'
+                : _whatToDo[state] ?? '',
+            style: theme.textTheme.bodyMedium?.copyWith(color: _onLime, fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
-        Text('The score runs from 0 to 100: the higher it is, the more room your money has. It is worked out from your '
-            'last few months.',
+        Text('0 is the worst score and 100 the best. It comes from your last few months.',
             style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         if (nextMonth != null) ...[
           const SizedBox(height: 12),
@@ -269,6 +320,15 @@ class _ScoreCard extends StatelessWidget {
           style: FilledButton.styleFrom(backgroundColor: _onLime, foregroundColor: Colors.white),
           onPressed: () => showWhyScore(context),
           child: const Text('Why this score?'),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            style: TextButton.styleFrom(foregroundColor: const Color(0xFF2B3110)),
+            onPressed: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const QuestionsScreen(openAt: 'What does my score mean'))),
+            child: const Text('What does my score mean?'),
+          ),
         ),
       ]),
     );
@@ -375,7 +435,8 @@ class _InOut extends StatelessWidget {
         CircleAvatar(
           radius: 18,
           backgroundColor: Colors.white,
-          child: Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 18, color: _onLime),
+          // Into your wallet points in, out of it points away (10 Nov: testers read the up/down arrows the other way).
+          child: Icon(up ? Icons.south_west_rounded : Icons.north_east_rounded, size: 18, color: _onLime),
         ),
         const SizedBox(width: 10),
         Flexible(
@@ -822,9 +883,9 @@ class _SavingsCheckCardState extends State<_SavingsCheckCard> {
         Text('Is your savings still KES ${money(k['balance_KES'] as num)}?', style: theme.textTheme.titleMedium),
         const SizedBox(height: 6),
         Text(
-            '${when == null ? 'We are not sure when you entered it.' : 'You entered it on ${when.day} ${_monthNames[when.month - 1]}.'}'
-            '${saved > 0 ? ' Since then about KES ${money(saved)} went into savings in your records.' : ''}'
-            ' "Can I afford it?" uses it to see how long your savings could cover a gap.',
+            '${when == null ? 'We are not sure when you told us.' : 'You told us on ${when.day} ${_monthNames[when.month - 1]}.'}'
+            '${saved > 0 ? ' Since then about KES ${money(saved)} went into savings.' : ''}'
+            ' Tosha uses it to say how long your savings could cover a gap.',
             style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         const SizedBox(height: 12),
         Wrap(spacing: 10, runSpacing: 8, children: [

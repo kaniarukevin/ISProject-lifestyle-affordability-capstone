@@ -239,7 +239,12 @@ class AppTheme {
         side: BorderSide.none,
         backgroundColor: c.field,
         selectedColor: ink,
-        labelStyle: text.labelLarge?.copyWith(fontWeight: FontWeight.w600),
+        // 10 Nov (tester): a picked chip turned black with black text, so its words vanished. The label colour now
+        // follows the chip's state: light on the dark picked chip, ink otherwise.
+        labelStyle: text.labelLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: WidgetStateColor.resolveWith(
+                (states) => states.contains(WidgetState.selected) ? scheme.onPrimary : scheme.onSurface)),
         secondaryLabelStyle: text.labelLarge?.copyWith(fontWeight: FontWeight.w600, color: scheme.onPrimary),
         checkmarkColor: scheme.onPrimary,
       ),

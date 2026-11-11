@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../widgets/info_note.dart';
 import '../services/api.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -168,7 +169,7 @@ class _ConsentScreenState extends State<ConsentScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('Before you continue'), automaticallyImplyLeading: false),
+      appBar: AppBar(title: const Text('How your data is used'), automaticallyImplyLeading: false),
       body: FutureBuilder<Map<String, dynamic>>(
         future: _notice,
         builder: (context, snap) => _loading(
@@ -178,8 +179,18 @@ class _ConsentScreenState extends State<ConsentScreen> {
               child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 16), children: [
                 PageWidth(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                    Text('Please read how your data is used. You can delete your account and everything in it at '
-                        'any time.', style: theme.textTheme.bodyMedium),
+                    const InfoNote(
+                      title: 'The short version',
+                      icon: Icons.lock_outline_rounded,
+                      margin: EdgeInsets.only(bottom: 4),
+                      points: [
+                        'Tosha keeps the payments in your statement, and what you tell it about your household.',
+                        'It never keeps the statement file itself, or its password.',
+                        'You can delete your account and everything in it at any time, under You.',
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text('The full notice is below.', style: theme.textTheme.bodyMedium),
                     const SizedBox(height: 12),
                     PrivacyNotice(notice: notice),
                   ]),

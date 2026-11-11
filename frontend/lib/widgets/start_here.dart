@@ -52,7 +52,7 @@ class _StartHereState extends State<StartHere> {
     final steps = [
       ('Add your M-PESA statement', 'A year of records gives the most accurate answers.', widget.hasStatement,
           widget.onAddStatement),
-      ('Sort your payments', 'Say what the people and businesses you pay are, so your spending is split right.',
+      ('Sort your payments', 'Say what each name you pay is, so your spending is split the right way.',
           widget.sorted, widget.onSort),
       ('Look at your budget', 'A plan for this month, built from how you actually spend.', _seenBudget, () {
         _set(StartHere.seenBudgetKey);
@@ -82,8 +82,8 @@ class _StartHereState extends State<StartHere> {
               },
             ),
           ]),
-          Text('Tosha reads your M-PESA to show how your money is doing, plan your budget and check big decisions '
-              'before you make them.',
+          Text('Tosha reads your M-PESA. It shows how your money is doing, plans your budget, and checks a big '
+              'decision before you make it.',
               style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
           const SizedBox(height: 12),
           for (var i = 0; i < steps.length; i++)

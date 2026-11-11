@@ -323,7 +323,8 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('No records yet', style: theme.textTheme.titleLarge),
                 const SizedBox(height: 6),
-                Text('Upload an M-PESA statement to bring in months at once, or type in what you spend.',
+                Text('Tosha needs records before it can say anything about your money. Upload an M-PESA statement '
+                    'to bring in months at once, or type in what you spend.',
                     style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
                 const SizedBox(height: 16),
                 actions,
