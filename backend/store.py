@@ -704,9 +704,11 @@ def _google_email(id_token):
     Google signs the token; verifying the signature against Google's public keys is what proves the person really
     signed in, so a token is never trusted on its own. Returns (email, google_sub) and only when Google says it
     has verified the address itself, because the email is what links a Google sign-in to an existing account."""
-    from google.auth.transport import requests as ga_requests
-    from google.oauth2 import id_token as ga_id_token
     try:
+        # Imported here, and inside the try: if the library is missing the sign-in is simply refused, rather than
+        # the whole request failing (11 Nov: google-auth does not install its own HTTP transport).
+        from google.auth.transport import requests as ga_requests
+        from google.oauth2 import id_token as ga_id_token
         claims = ga_id_token.verify_oauth2_token(id_token, ga_requests.Request(), GOOGLE_CLIENT_ID)
     except Exception:
         return None, None

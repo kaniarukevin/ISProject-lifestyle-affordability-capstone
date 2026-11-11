@@ -354,12 +354,8 @@ class _PayeesScreenState extends State<PayeesScreen> {
                           style: theme.textTheme.bodyMedium?.copyWith(color: AppColors.of(context).muted)),
                       const InfoNote(
                         icon: Icons.insights_rounded,
-                        title: 'Why this matters, and when you can stop',
-                        points: [
-                          'Your totals are already right. This splits them into food, transport and the rest.',
-                          'Start at the top: the names you pay most are first, so a few of them fix most of it.',
-                          'You can stop any time. Anything left still counts in your totals.',
-                        ],
+                        text: 'Your totals are already right; this splits them into food, transport and the rest. '
+                            'Biggest names first, and you can stop any time.',
                       ),
                       const SizedBox(height: 14),
                       Align(

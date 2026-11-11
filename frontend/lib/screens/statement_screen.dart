@@ -202,8 +202,8 @@ class _StatementScreenState extends State<StatementScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('Bring in months of spending at once', style: theme.textTheme.titleLarge),
           const SizedBox(height: 6),
-          Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about. '
-              'You see everything before anything is saved.', style: TextStyle(color: c.muted)),
+          Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about.',
+              style: TextStyle(color: c.muted)),
           const SizedBox(height: 18),
           step('1', 'Dial *334#, then My Account, M-PESA Statement, Request Statement. Choose a full statement for 12 '
               'months: a full year gives the most accurate answers.'),
@@ -212,11 +212,8 @@ class _StatementScreenState extends State<StatementScreen> {
               'choose it here and type the password.'),
           const InfoNote(
             icon: Icons.lock_rounded,
-            title: 'Your statement is safe here',
-            points: [
-              'The file and its password are used to read it, then thrown away. Neither is ever stored.',
-              'Next you will see everything Tosha read. Nothing is saved until you press Import.',
-            ],
+            text: 'The file and its password are used to read it, then thrown away. You see everything before '
+                'anything is saved.',
             margin: EdgeInsets.only(top: 14),
           ),
         ]),

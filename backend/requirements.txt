@@ -11,3 +11,5 @@ flask-cors==6.0.5
 pypdf==6.21.4
 cryptography==50.0.1
 google-auth==2.43.0
+# google-auth's token verifier imports this; it is not pulled in on its own.
+requests>=2.32,<3
