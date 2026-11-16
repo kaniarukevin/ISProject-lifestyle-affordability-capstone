@@ -14,3 +14,10 @@ String kesAmount(num v) => v < 0 ? '−KES ${money(-v)}' : 'KES ${money(v)}';
 
 /// 65000 -> "65k" for chart labels.
 String compact(num v) => v.abs() >= 1000 ? '${(v / 1000).round()}k' : v.round().toString();
+
+/// "1 month" or "3 months"; anything that is not a number is returned followed by " months".
+String monthsWord(Object? n) {
+  final v = n is num ? n : num.tryParse('$n');
+  if (v == null) return '$n months';
+  return v == 1 ? '1 month' : '${v is int ? v : v.round()} months';
+}

@@ -66,20 +66,27 @@ class SuggestionBox extends StatelessWidget {
         color: c.lime.withValues(alpha: Theme.of(context).brightness == Brightness.dark ? 0.16 : 0.32),
         borderRadius: BorderRadius.circular(16),
       ),
-      child: Row(children: [
-        Icon(Icons.auto_awesome_rounded, size: 18, color: Theme.of(context).colorScheme.onSurface),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            for (final l in lines) Text(l),
-          ]),
-        ),
+      // The button sits under the text, not beside it: beside it, a long label squeezed the text into a
+      // one-word column at phone width (found 12 Nov).
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.auto_awesome_rounded, size: 18, color: Theme.of(context).colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              for (final l in lines) Text(l),
+            ]),
+          ),
+        ]),
         if (onUse != null && label != null)
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime,
-                minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
-            onPressed: onUse,
-            child: Text('Looks like: $label. Use this?'),
+          Padding(
+            padding: const EdgeInsets.only(top: 10, left: 28),
+            child: FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime,
+                  minimumSize: const Size(0, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+              onPressed: onUse,
+              child: Text('Looks like: $label. Use this?'),
+            ),
           ),
       ]),
     );
