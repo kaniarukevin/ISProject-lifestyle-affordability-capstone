@@ -1,4 +1,4 @@
-"""U-CS 37 budget-forecast service (stub: trailing-median baseline).
+"""Flask API: the Web Masters U-CS 37 forecast service (deployed ensemble, see backend/README.md) and the capstone app.
 
 POST /forecast  { userId, month, year } -> { estimatedTotal, breakdown, confidence, riskFlag, ... }
 GET  /health    -> 200
