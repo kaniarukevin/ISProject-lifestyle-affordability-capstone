@@ -78,18 +78,17 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
 
   @override
   Widget build(BuildContext context) => Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: SegmentedButton<int>(
-            showSelectedIcon: false,
-            segments: const [
-              // Budget first: it is what people open this tab for (wording audit, 10 Nov).
-              ButtonSegment(value: 1, label: Text("This month's budget"), icon: Icon(Icons.account_balance_wallet_rounded)),
-              ButtonSegment(value: 0, label: Text('The next 3 months'), icon: Icon(Icons.show_chart_rounded)),
-            ],
-            selected: {_view},
-            onSelectionChanged: (v) => _setView(v.first),
-          ),
+        // Full width, short labels, no icons: with icons the selected label wrapped onto two lines at phone
+        // width (found 12 Nov).
+        SegmentedButton<int>(
+          showSelectedIcon: false,
+          segments: const [
+            // Budget first: it is what people open this tab for (wording audit, 10 Nov).
+            ButtonSegment(value: 1, label: Text('This month', maxLines: 1, overflow: TextOverflow.ellipsis)),
+            ButtonSegment(value: 0, label: Text('Next 3 months', maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ],
+          selected: {_view},
+          onSelectionChanged: (v) => _setView(v.first),
         ),
         const SizedBox(height: 16),
         Expanded(child: _view == 1 ? const BudgetView() : _forecast(context)),
@@ -136,7 +135,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
         children: [
           Text(d['based_on'] == 'setup'
               ? 'Based on the rough figures you gave at setup'
-              : 'Based on ${d['months_used']} month(s) of your records',
+              : 'Based on ${monthsWord(d['months_used'])} of your records',
               style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
           const SizedBox(height: 16),
           Panel(

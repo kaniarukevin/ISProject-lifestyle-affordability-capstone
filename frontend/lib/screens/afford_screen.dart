@@ -480,7 +480,9 @@ class ResultView extends StatelessWidget {
               _Num(label: 'Score now', value: '$before', outOf: true),
               const Padding(padding: EdgeInsets.fromLTRB(14, 0, 14, 12), child: Icon(Icons.arrow_forward_rounded)),
               _Num(label: phases.length > 1 ? 'While paying' : 'After', value: '$after', outOf: true,
-                  color: after < before ? c.warn : null),
+                  // The number takes the verdict's colour, so an Affordable answer is never shown in the
+                  // Stretch amber just because the score fell (found 12 Nov).
+                  color: switch (verdict) { 'Stretch' => c.warn, 'Not affordable' => const Color(0xFF7A3E00), _ => null }),
             ]),
             const SizedBox(height: 14),
             ScoreScale(score: after, before: before),
@@ -620,7 +622,7 @@ class ResultView extends StatelessWidget {
             question: 'Does this answer match what you would expect?'),
       ],
       const SizedBox(height: 12),
-      Text('Based on ${result['months_used'] ?? 'your recent'} month(s) of your own records. '
+      Text('Based on ${result['months_used'] == null ? 'your recent months' : monthsWord(result['months_used'])} of your own records. '
           'This is guidance from a model, not financial advice.',
           style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
     ]);
