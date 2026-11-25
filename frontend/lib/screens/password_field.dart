@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 /// A password box with an eye button to show or hide what was typed (easy to mistype on a phone).
 class PasswordField extends StatefulWidget {
   const PasswordField({super.key, required this.controller, this.label = 'Password', this.helper, this.onSubmitted,
-      this.autofillHints});
+      this.autofillHints, this.prefixIcon});
   final TextEditingController controller;
   final String label;
   final String? helper;
   final ValueChanged<String>? onSubmitted;
   final Iterable<String>? autofillHints;
+  final Widget? prefixIcon;
 
   @override
   State<PasswordField> createState() => _PasswordFieldState();
@@ -28,6 +29,7 @@ class _PasswordFieldState extends State<PasswordField> {
         decoration: InputDecoration(
           labelText: widget.label,
           helperText: widget.helper,
+          prefixIcon: widget.prefixIcon,
           suffixIcon: IconButton(
             tooltip: _visible ? 'Hide password' : 'Show password',
             icon: Icon(_visible ? Icons.visibility_off_outlined : Icons.visibility_outlined),
