@@ -207,13 +207,16 @@ class _AuthScreenState extends State<AuthScreen> {
                 child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Padding(padding: EdgeInsets.fromLTRB(24, 16, 0, 0), child: _Brand()),
+                      Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 16, 0, 0),
+                          child: _Brand(onDark: Theme.of(context).brightness == Brightness.dark)),
                       Expanded(
                         child: Center(
                           child: SingleChildScrollView(
                             padding: const EdgeInsets.all(32),
                             child: ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 400), child: _form(context, dark: false)),
+                                constraints: const BoxConstraints(maxWidth: 400),
+                                child: _form(context, dark: Theme.of(context).brightness == Brightness.dark)),
                           ),
                         ),
                       ),
@@ -225,33 +228,31 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           );
         }
-        // Phone (reference 1): dark all over, a lime glow in the corner, the form low on the screen.
-        return Theme(
-          data: AppTheme.dark(),
-          child: Builder(
-            builder: (context) => Scaffold(
-              backgroundColor: const Color(0xFF0B0B0B),
-              body: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: RadialGradient(
-                    center: const Alignment(-1.1, -1.05),
-                    radius: 1.1,
-                    colors: [AppColors.of(context).lime.withValues(alpha: 0.28), const Color(0x000B0B0B)],
-                  ),
-                ),
-                child: SafeArea(
-                  child: Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 420),
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                          const _Brand(onDark: true),
-                          const SizedBox(height: 56),
-                          _form(context, dark: true),
-                        ]),
-                      ),
-                    ),
+        // Phone (reference 1): follows the app's light or dark mode. Dark = the reference: near-black with a lime glow;
+        // light = the same layout on the stone background with a softer glow.
+        final dark = Theme.of(context).brightness == Brightness.dark;
+        final bg = dark ? const Color(0xFF0B0B0B) : Theme.of(context).scaffoldBackgroundColor;
+        return Scaffold(
+          backgroundColor: bg,
+          body: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: RadialGradient(
+                center: const Alignment(-1.1, -1.05),
+                radius: 1.1,
+                colors: [AppColors.of(context).lime.withValues(alpha: dark ? 0.28 : 0.45), bg.withValues(alpha: 0)],
+              ),
+            ),
+            child: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      _Brand(onDark: dark),
+                      const SizedBox(height: 56),
+                      _form(context, dark: dark),
+                    ]),
                   ),
                 ),
               ),
