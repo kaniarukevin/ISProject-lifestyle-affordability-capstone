@@ -43,8 +43,10 @@ String categoryLabel(String key) => spendingCategories[key] ?? extraCategories[k
 
 /// What a payee can be tagged as, in plain words (the app's categories, or the user's own account).
 const Map<String, String> tagLabels = {
+  // 25 Nov: fuller names with examples, so in-between payments (a mechanic, a salon) have an obvious home.
+  // Picker only; the categories themselves are fixed because the models were trained on them.
   'housing': 'Rent',
-  'food_groceries': 'Food',
+  'food_groceries': 'Food and groceries',
   'transport': 'Transport, fuel and repairs',
   'utilities': 'Power, water and internet',
   'airtime_data': 'Airtime and data',
@@ -52,10 +54,10 @@ const Map<String, String> tagLabels = {
   'school_fees': 'School fees',
   'loan_repayment': 'Loan repayments',
   'entertainment': 'Eating out and fun',
-  'shopping': 'Shopping',
-  'health': 'Health',
-  'personal_care': 'Personal care',
-  'other': 'Other',
+  'shopping': 'Shopping and household',
+  'health': 'Health and medicine',
+  'personal_care': 'Salon, barber and personal care',
+  'other': 'Other (anything else)',
   'own_account': 'My own account',
   'unsorted': 'Not sorted yet',
 };
