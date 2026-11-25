@@ -13,7 +13,6 @@ import '../widgets/info_note.dart';
 import '../widgets/model_note.dart';
 import '../widgets/note_row.dart';
 import '../widgets/panel.dart';
-import '../widgets/state_words.dart';
 import 'budget_warnings.dart';
 
 const _fixedLabels = {
@@ -37,12 +36,6 @@ class BudgetScreen extends StatelessWidget {
 /// This month's budget: what is safe to spend today, how the money is split, each everyday line against the
 /// month's pace, and what changed this month. Any everyday line can be set by hand; the others rebalance, savings
 /// and bills stay, and the choice is remembered next month.
-/// What a month's state means for the budget, in plain words (wording audit, 10 Nov).
-const _monthLooks = {
-  'Stable': 'fine: there is room to save',
-  'Strained': 'stretched: there is little room for extras',
-  'Critical': 'hard: more is going out than comes in',
-};
 
 class BudgetView extends StatefulWidget {
   const BudgetView({super.key});
@@ -53,6 +46,7 @@ class BudgetView extends StatefulWidget {
 
 class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
   Map<String, dynamic>? r;
+  bool _howMade = false;             // the plan's reasoning, folded away at first
   bool _past = false;                 // this month, or past months against what was spent
   String? error;
 
@@ -276,56 +270,11 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                 Text(kesAmount(d['safe_per_day'] as num),
                     style: theme.textTheme.displaySmall?.copyWith(color: c.onLime, fontWeight: FontWeight.w700, letterSpacing: -1)),
                 const SizedBox(height: 4),
-                Text('a day until the end of the month and still keep to your plan. That is '
-                    '${kesAmount(d['everyday_left'] as num)} left for everyday spending over the next $daysLeft '
-                    'day${daysLeft == 1 ? '' : 's'}.', style: TextStyle(color: c.onLime)),
+                Text('a day for the rest of the month (${kesAmount(d['everyday_left'] as num)} left, $daysLeft '
+                    'day${daysLeft == 1 ? '' : 's'}).', style: TextStyle(color: c.onLime)),
               ]),
             ),
           if (warnings.isNotEmpty) BudgetWarnings(warnings: warnings),
-          const SizedBox(height: 20),
-          CardColumns(minWidth: 340, children: [
-            Panel(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                PanelTitle('Your plan for ${monthNames[(d['month'] as int) - 1]}',
-                    icon: Icons.pie_chart_outline_rounded),
-                const SizedBox(height: 10),
-                Text('Every shilling of your ${kesAmount(plan['income'] as num)} has a job. '
-                    'This month looks ${_monthLooks[plan['state']] ?? stateLabel(plan['state'] as String).toLowerCase()}.',
-                    style: TextStyle(color: c.muted)),
-                const InfoNote(
-                  icon: Icons.auto_awesome_rounded,
-                  title: 'Where this came from',
-                  text: 'Your own last few months, with bills and savings taken out first. Change any line and '
-                      'Tosha keeps your change next month.',
-                  margin: EdgeInsets.only(top: 12, bottom: 4),
-                ),
-                const SizedBox(height: 16),
-                DonutWithLegend(centerLabel: 'KES planned', slices: [
-                  if (bills > 0) Slice('Paid first: rent and bills', bills.toDouble(), ChartColors.slot(context, 0)),
-                  if (saving > 0) Slice('Savings', saving.toDouble(), ChartColors.slot(context, 2)),
-                  if (everydayTotal > 0) Slice('Everyday: what is left to live on', everydayTotal.toDouble(), ChartColors.slot(context, 1)),
-                ]),
-              ]),
-            ),
-            Panel(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const PanelTitle('What changed this month', icon: Icons.swap_vert_rounded),
-                const SizedBox(height: 16),
-                if (notes.isEmpty)
-                  Text('Nothing special: a usual month, so your plan follows your own normal pattern.',
-                      style: TextStyle(color: c.muted)),
-                for (final n in notes) NoteRow(n),
-                const SizedBox(height: 4),
-                const InfoNote(
-                  icon: Icons.edit_outlined,
-                  text: 'Change any limit below and Tosha keeps your change next month.',
-                  margin: EdgeInsets.zero,
-                ),
-              ]),
-            ),
-          ]),
-          const SizedBox(height: 20),
-          _VersusRule(income: (plan['income'] as num).toDouble(), lines: lines),
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -335,8 +284,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                       ? null
                       : TextButton(onPressed: _reset, child: const Text('Back to recommended'))),
               const SizedBox(height: 10),
-              Text('Tap a line to change its limit. The thin mark shows where you would be today if you spread it '
-                  'evenly over the month.',
+              Text('Tap a line to change its limit.',
                   style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
               const SizedBox(height: 8),
               for (final k in everyday) limitRow(k),
@@ -351,13 +299,59 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               _Plain('Savings', saving, spent['savings']),
             ]),
           ),
-          if (outside.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          // 25 Nov: the donut stays in view; how the plan was made is folded away (too many numbers at once).
+          Panel(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              PanelTitle('Your plan for ${monthNames[(d['month'] as int) - 1]}',
+                  icon: Icons.pie_chart_outline_rounded),
+              const SizedBox(height: 10),
+              Text('Where your ${kesAmount(plan['income'] as num)} goes.', style: TextStyle(color: c.muted)),
+              const SizedBox(height: 16),
+              DonutWithLegend(centerLabel: 'KES planned', slices: [
+                if (bills > 0) Slice('Paid first: rent and bills', bills.toDouble(), ChartColors.slot(context, 0)),
+                if (saving > 0) Slice('Savings', saving.toDouble(), ChartColors.slot(context, 2)),
+                if (everydayTotal > 0) Slice('Everyday: what is left to live on', everydayTotal.toDouble(), ChartColors.slot(context, 1)),
+              ]),
+            ]),
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _howMade = !_howMade),
+              icon: Icon(_howMade ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+              label: Text(_howMade ? 'Hide' : 'How this plan was made'),
+            ),
+          ),
+          if (_howMade) ...[
+            const SizedBox(height: 8),
+            Panel(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const PanelTitle('What changed this month', icon: Icons.swap_vert_rounded),
+                const SizedBox(height: 16),
+                if (notes.isEmpty)
+                  Text('A usual month: your plan follows your normal pattern.',
+                      style: TextStyle(color: c.muted)),
+                for (final n in notes) NoteRow(n),
+                const SizedBox(height: 4),
+                const InfoNote(
+                  icon: Icons.auto_awesome_rounded,
+                  text: 'Built from your own last few months, bills and savings first. Limits you change are kept.',
+                  margin: EdgeInsets.zero,
+                ),
+              ]),
+            ),
+            const SizedBox(height: 20),
+            _VersusRule(income: (plan['income'] as num).toDouble(), lines: lines),
+          ],
+          if (_howMade && outside.isNotEmpty) ...[
             const SizedBox(height: 20),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 const PanelTitle('Other spending this month', icon: Icons.more_horiz_rounded),
                 const SizedBox(height: 10),
-                Text('No line of its own: it comes out of your everyday money and the daily amount above.',
+                Text('No line of its own; it comes out of everyday money.',
                     style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                 const SizedBox(height: 8),
                 for (final k in outside) _Plain(categoryLabel(k), spent[k]!, null),
