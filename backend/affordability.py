@@ -299,8 +299,14 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
         verdict = "Not affordable"
         reasons.append(f"You would be short KES {shortfall:,} a month, more than the KES {b['savings_KES']:,} you save.")
         if balance > 0:
-            reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {_months_words(balance // gap)}.")
+            # 25 Nov sweep: "about 0 months" when savings cover less than one month.
+            reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {_months_words(balance // gap)}."
+                           if balance >= gap else
+                           f"Your savings of KES {balance:,} would not cover even one month of the gap.")
     elif shortfall > 0:
+        # 25 Nov sweep: "Affordable" while short each month. Covering it means saving less, so at best a stretch.
+        if verdict == "Affordable":
+            verdict = "Stretch"
         # 23 Nov: "only by pausing savings" read as stopping all saving, while the month-by-month list showed
         # savings still growing. Only part of the usual saving goes.
         reasons.append(f"You would be short KES {shortfall:,} a month. Saving KES {b['savings_KES'] - shortfall:,} a "
@@ -381,11 +387,11 @@ def _advice(before, per_month, months=None, balance=0):
                 "Bring your current spending within your income first."]
     how = "by pausing savings and using what you have saved" if months and balance > 0 else "and only by pausing savings"
     tips = [f"The most you could take on is about KES {max(0, room):,} a month, {how}."]
-    if months:
-        tips.append(f"Over {months} months that is a price of up to about KES {max(0, room) * months:,}.")
+    if months and int(months) > 1:
+        tips.append(f"Over {_months_words(months)} that is a price of up to about KES {max(0, room) * int(months):,}.")
         if room > 0:
             tips.append(f"To pay KES {round(per_month * months):,} this way, spread it over about "
-                        f"{math.ceil(per_month * months / room)} months instead.")
+                        f"{_months_words(math.ceil(per_month * months / room))} instead.")
     return tips
 
 
@@ -522,8 +528,9 @@ def plan(m, sc, savings_balance=0.0, state_exact=False):
     return result
 
 
-def savings_goal(m, extra_per_month):
-    """Saving more moves left-over money into savings; it is not a new cost, so it is not scored."""
+def savings_goal(m, extra_per_month, target=None, months=None):
+    """Saving more moves left-over money into savings; it is not a new cost, so it is not scored. When it does
+    not fit, say concretely what would (25 Nov: "try a smaller goal" did not say how much smaller or how long)."""
     extra = float(extra_per_month)
     if extra <= 0:
         raise AffordabilityInputError("extra_per_month must be positive")
@@ -535,13 +542,22 @@ def savings_goal(m, extra_per_month):
     short = extra - left
     typical = m.sort_values("month").tail(3)[FLEXIBLE].mean()
     out = {"verdict": "Not affordable yet", "left_over_KES": left,
-           "reasons": [f"You have KES {left:,} left each month, so you are KES {round(short):,} short."]}
+           "reasons": [f"This needs KES {round(extra):,} a month. You have about KES {max(0, left):,} left, so you "
+                       f"would be KES {round(short):,} short each month."]}
     if typical.sum() > 0 and short <= typical.sum() * 0.5:
         share = typical / typical.sum()
         out["what_to_cut"] = {"monthly_cuts_KES": {c: round(short * share[c]) for c in FLEXIBLE},
                               "total_cut_KES": round(short)}
-    else:
-        out["reasons"].append("That would need cutting more than half your flexible spending; try a smaller goal.")
+    options = []
+    if target and left > 0:
+        need = math.ceil(float(target) / left)
+        options.append(f"At the KES {left:,} you have left each month, KES {round(float(target)):,} takes about "
+                       f"{_months_words(need)}.")
+        if months:
+            options.append(f"In {_months_words(int(months))} you could save about KES {round(left * int(months)):,}.")
+    elif left <= 0:
+        options.append("Nothing is left at the end of a usual month yet, so spending has to come down first.")
+    out["advice"] = options
     return out
 
 
@@ -624,7 +640,7 @@ def evaluate(payload):
     if kind == "purchase":
         return purchase(m, sc.get("price", 0), sc.get("months", 6), sc.get("monthly_interest", 0), balance, exact)
     if kind == "savings_goal":
-        return savings_goal(m, _real(sc.get("extra_per_month", 0), "extra_per_month"))
+        return savings_goal(m, _real(sc.get("extra_per_month", 0), "extra_per_month"), sc.get("target"), sc.get("months"))
     if kind == "plan":
         return plan(m, sc, balance, exact)
     raise AffordabilityInputError("scenario.type must be none, monthly_change, purchase, savings_goal or plan")

@@ -2099,7 +2099,7 @@ def _add_extra_lines(plan, recent):
 # shopping untouched). Order: fun, shopping, personal care; then money sent to family and friends; then needs.
 SHRINK_TIERS = [
     (("entertainment", "shopping", "personal_care"), 0.25),
-    (("mobile_money_transfers",), 0.50),
+    (("mobile_money_transfers",), 0.75),      # often support for parents or siblings: at most a quarter less
     (("food_groceries", "transport", "utilities", "airtime_data", "health"), 0.85),
 ]
 
@@ -2119,18 +2119,15 @@ def _shrink(lines, cats, cut):
         for c, r in room.items():
             out[c] -= take * r / total
         left -= take
-    below = 0.0
-    if left > 0:
-        total = sum(out.values())
-        for c in out:
-            out[c] -= min(out[c], left * out[c] / total) if total > 0 else 0
-        below = left
+    # Never below the floors (25 Nov sweep: lines were cut to 0 when a plan could not fit). What is still missing
+    # is reported, and the caller shows options instead of an impossible budget.
+    below = max(0.0, left)
     # Whole shillings that still add up exactly: the rounding remainder goes to the line that was cut the most
     # (never to a protected one), so a budget is never a shilling more or less than the income (found by test,
     # 9 Nov: 30,001 of 30,000).
     rounded = {c: round(v) for c, v in out.items()}
     start = sum(float(lines.get(c, 0)) for c in cats)
-    target = round(start - min(float(cut), start))
+    target = round(start - min(float(cut) - below, start))
     if rounded and sum(rounded.values()) != target:
         most_cut = max(rounded, key=lambda c: float(lines.get(c, 0)) - out[c])
         rounded[most_cut] += target - sum(rounded.values())
@@ -2691,7 +2688,7 @@ def _scenario_from_preset(p, months):
         target = _num(p.get("target"), "target", 1)
         months_n = int(_num(p.get("months", 6), "months", 1))
         label = str(p.get("label") or "A savings goal")[:60]
-        return ({"type": "savings_goal", "extra_per_month": target / months_n},
+        return ({"type": "savings_goal", "extra_per_month": target / months_n, "target": target, "months": months_n},
                 f"{label}: KES {round(target):,} in {_months_words(months_n)}")
     try:
         delta = float(p.get("amount"))
@@ -2838,15 +2835,57 @@ def _budget_side_by_side(s, pic, scenario, result):
             note = ("Fun, shopping and personal care go down first, then money sent to others; food, transport "
                     "and bills stay close to what you spend now.")
             if below > 0:
-                note = (f"To fit, essentials like food and transport would have to drop below what you usually "
-                        f"spend, by about KES {below:,} a month. That is hard to keep up.")
-        for cat, add in everyday_added.items():         # show the new cost on its own line, not as "other"
+                # No budget that cuts food or transport to fit: say what is missing instead (25 Nov sweep).
+                after = None
+                note = (f"This does not fit without cutting food, transport or bills below what you need: about "
+                        f"KES {below:,} a month is missing.")
+        for cat, add in (everyday_added.items() if after is not None else []):   # the new cost on its own line
             after[cat] = after.get(cat, 0) + round(add)
             after["other_commitments"] = after.get("other_commitments", 0) - round(add)
     order = [c for c in BUDGET_LINES if before.get(c) or (after or {}).get(c)]
     return {"lines": [{"category": c, "now": round(before.get(c, 0)),
                        "after": None if after is None else round(after.get(c, 0))} for c in order],
-            "note": note if after is not None else "With this change there is no income left to share out."}
+            "note": note or ("With this change there is no income left to share out." if after is None else None)}
+
+
+SAVINGS_CUSHION_MONTHS = 3     # months of usual spending and bills kept untouched when savings pay for something
+
+
+def _savings_room(s, user_id, pic):
+    """How much of the savings balance is free to use for a decision, and what is kept aside first (25 Nov): a
+    3-month cushion of usual spending and bills, bills due in the next 3 months, and money already saved for goals.
+    Savings are only ever used when the user chooses to (the app asks)."""
+    balance = float(pic.get("savings_balance") or 0)
+    if balance <= 0:
+        return None
+    recent = (pic.get("scored") or [])[-6:]
+    usual = statistics.median([sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in recent]) \
+        if recent else 0.0
+    cushion = SAVINGS_CUSHION_MONTHS * usual
+    fees = 0.0
+    for o in ((pic.get("commitments") or {}).get("obligations") or []):
+        if o.get("due_in_days") is not None and 0 <= o["due_in_days"] <= 90 and o.get("frequency") != "monthly":
+            fees += float(o.get("amount_KES") or 0)
+    row = _commitments_row(s, user_id)
+    goals = sum(float(gl.get("saved") or 0) for gl in ((row.data or {}).get("goals") or []) if not gl.get("done")) \
+        if row else 0.0
+    kept = {"cushion_KES": round(cushion), "bills_due_KES": round(fees), "goals_KES": round(goals)}
+    free = max(0.0, balance - sum(kept.values()))
+    monthly_saving = statistics.median([mo["savings"] for mo in recent]) if recent else 0.0
+    return {"balance_KES": round(balance), "kept": kept, "free_KES": round(free),
+            "monthly_saving_KES": round(monthly_saving), "cushion_months": SAVINGS_CUSHION_MONTHS}
+
+
+def _savings_offer(room, cost):
+    """The question shown under a result: could savings pay for it, keeping what is set aside?"""
+    if not room or cost <= 0:
+        return None
+    use = min(cost, room["free_KES"])
+    if use <= 0:
+        return None
+    rebuild = (math.ceil(use / room["monthly_saving_KES"]) if room["monthly_saving_KES"] > 0 else None)
+    return {**room, "cost_KES": round(cost), "use_KES": round(use), "covers_all": use >= cost,
+            "keep_after_KES": room["balance_KES"] - round(use), "months_to_rebuild": rebuild}
 
 
 @bp.post("/me/afford")
@@ -2863,13 +2902,56 @@ def afford():
             return jsonify(error="record your spending for a few weeks first, or add your usual month under "
                                  "Your household, so the answer is about your real money"), 400
         scenario, title = _scenario_from_preset(b, months)
+        room = _savings_room(s, g.user_id, pic)
+        use_savings = b.get("use_savings") is True
+        used = 0.0
+        if use_savings and scenario.get("type") == "savings_goal" and room:
+            used = min(float(scenario["target"]), float(room["free_KES"]))
+            remaining = float(scenario["target"]) - used
+            if remaining <= 0:
+                scenario = None           # all of it from savings: nothing to find each month
+            else:
+                scenario = {**scenario, "target": remaining, "extra_per_month": remaining / scenario["months"]}
         try:
-            result = aff.evaluate({"household": {"household_size": profile.household_size,
+            if scenario is None:
+                result = {"verdict": "Affordable", "reasons": []}
+            else:
+                result = aff.evaluate({"household": {"household_size": profile.household_size,
                                                  "num_dependants": profile.dependants},
                                    "months": months, "scenario": scenario,
                                    "savings_balance": pic["savings_balance"], "statement_safe": pic["statement_safe"]})
         except aff.AffordabilityInputError as exc:
             raise InputError(str(exc))
+        cash_buy = scenario is not None and scenario.get("type") == "purchase" and scenario.get("months") == 1
+        if use_savings and cash_buy and room and room["free_KES"] >= float(scenario["price"]):
+            used = float(scenario["price"])
+            short_now = -min(0, (result.get("before") or {}).get("left_over_KES") or 0)
+            result.update({"verdict": "Affordable" if short_now == 0 else "Stretch",
+                           "score_after": result.get("score_before"), "phases": [],
+                           "after": result.get("before"),          # paid from savings: the months stay as they are
+                           "what_to_cut": None, "advice": [], "cash_flow": [], "budgets": None,
+                           "reasons": []})
+        if used > 0:
+            keep = round(room["balance_KES"] - used)
+            result["using_savings"] = {"used_KES": round(used), "keep_KES": keep,
+                                       "months_to_rebuild": (math.ceil(used / room["monthly_saving_KES"])
+                                                             if room["monthly_saving_KES"] > 0 else None)}
+            rest = ("" if scenario is None or scenario.get("type") != "savings_goal" else
+                    f" The other KES {round(scenario['target']):,} comes from your monthly money.")
+            result["reasons"].insert(0, f"Using KES {round(used):,} of your savings, you keep KES {keep:,}, "
+                                        f"including your {room['cushion_months']}-month cushion.{rest}")
+            if cash_buy and result["verdict"] == "Stretch":
+                result["reasons"].append(f"You are already short about KES {short_now:,} a month, and that also comes "
+                                         "out of your savings.")
+            title += " (using savings)"
+        elif not use_savings:
+            cost = (float(scenario["target"]) if scenario and scenario.get("type") == "savings_goal" else
+                    float(scenario["price"]) if cash_buy else 0.0)
+            if result.get("verdict") != "Affordable":
+                offer = _savings_offer(room, cost)
+                # A purchase is either paid from savings or not: offer it only when the free savings cover it all.
+                if offer and (not cash_buy or offer["covers_all"]):
+                    result["savings_offer"] = offer
         result["title"] = title
         result["months_used"] = len(months)
         borrowing = _borrowing(s, g.user_id, pic)
@@ -2880,16 +2962,17 @@ def afford():
                                                        "Keep a buffer before adding this."))
         low = _low_month(pic)
         result["income_pattern"] = low["status"]
-        if low["status"] == "varies":
+        if low["status"] == "varies" and scenario is not None:
             result["low_month"] = _low_month_check(pic, profile, scenario, low)
             lm = result["low_month"]
             if lm["verdict"] != result["verdict"]:
                 result.setdefault("reasons", []).append(
                     f"On {lm['when']} (KES {lm['income_KES']:,} came in) this would be {lm['verdict'].lower()}"
                     + (f": KES {-lm['left_over_KES']:,} short that month." if (lm["left_over_KES"] or 0) < 0 else "."))
-        result["budgets"] = (None if result.get("upfront_short_KES") else
+        result["budgets"] = (None if result.get("upfront_short_KES") or scenario is None or
+                             (used > 0 and scenario.get("type") == "purchase") else
                              _budget_side_by_side(s, pic, _as_monthly(scenario, result), result))
-        effect = _goals_effect(pic, result, scenario)
+        effect = _goals_effect(pic, result, scenario) if scenario else None
         if effect:
             result["goals_effect"] = effect
         if b.get("preset") == "plan":

@@ -1,5 +1,6 @@
 """Tests for the data layer, on an in-memory SQLite database. Run: python -m pytest tests/test_store.py -q"""
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -1272,10 +1273,13 @@ def test_budget_forecast_works_on_day_one_and_says_so(client, monkeypatch):
 
 def test_a_check_shows_the_budget_now_and_after_side_by_side(client, monkeypatch):
     h = _fees_household(client, monkeypatch)
-    r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 18000}).get_json()
+    r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 13000}).get_json()
     lines = {x["category"]: x for x in r["budgets"]["lines"]}
-    assert lines["housing"]["now"] == 12000 and lines["housing"]["after"] == 18000
+    assert lines["housing"]["now"] == 12000 and lines["housing"]["after"] == 13000
     assert sum(x["now"] for x in lines.values()) == sum(x["after"] for x in lines.values()) == 30000
+    # 25 Nov: a move that only fits by cutting food or transport below need shows no budget, and says why.
+    r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 18000}).get_json()
+    assert all(x["after"] is None for x in r["budgets"]["lines"]) and "missing" in r["budgets"]["note"]
     r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "transport", "amount": 2000})
     lines = {x["category"]: x for x in r.get_json()["budgets"]["lines"]}
     assert lines["transport"]["after"] > lines["transport"]["now"] + 1000          # the new cost has its own line
@@ -1585,11 +1589,13 @@ def test_finding_money_cuts_wants_before_needs():
     now = {"food_groceries": 6277, "transport": 3301, "airtime_data": 861, "mobile_money_transfers": 7907,
            "entertainment": 3736, "shopping": 1635}
     after, below = store._shrink(now, list(now), 7000)
-    assert after["food_groceries"] == 6277 and after["transport"] == 3301 and below == 0
-    assert after["entertainment"] == round(3736 * 0.25) and after["shopping"] == round(1635 * 0.25)
+    assert below == 0 and after["entertainment"] == round(3736 * 0.25) and after["shopping"] == round(1635 * 0.25)
+    # 25 Nov: support for family keeps at least 75%, and food and transport at least 85%.
+    assert after["mobile_money_transfers"] >= 0.75 * 7907 - 1
+    assert after["food_groceries"] >= 0.85 * 6277 - 1 and after["transport"] >= 0.85 * 3301 - 1
     assert abs(sum(after.values()) - (sum(now.values()) - 7000)) <= 2
-    _, below = store._shrink(now, list(now), 20000)               # more than wants can give: needs are hit
-    assert below > 0
+    after, below = store._shrink(now, list(now), 20000)           # more than the floors allow: never below them
+    assert below > 0 and after["food_groceries"] >= 0.85 * 6277 - 1 and min(after.values()) > 0
 
 
 def test_home_asks_who_pays_you_until_a_pay_sender_is_tagged(client, monkeypatch):
@@ -1638,3 +1644,26 @@ def test_timeline_shows_statement_money_in_and_carry_over(client, monkeypatch):
     assert by[10]["own_in"] == 5000                                           # but it is shown apart
     assert by[10]["carry_in"] > 0 and by[10]["overspent"] is False and by[10]["covered"] is True
     assert o["current_in"] == {"year": 2026, "month": 11, "statement_in": 12000}
+
+
+def test_afford_never_cuts_essentials_and_asks_before_using_savings(client, monkeypatch):
+    # 25 Nov sweep: impossible plans cut food to 0; savings were ignored, or would have been used without asking.
+    h = _earner(client, monkeypatch, savings=400000)
+    trip = {"preset": "savings_goal", "target": 90000, "months": 3, "label": "Trip"}
+    r = client.post("/me/afford", headers=h, json=trip).get_json()
+    assert r["verdict"] == "Not affordable yet" and "using_savings" not in r
+    assert any("takes about" in a for a in r["advice"])                          # concrete options, not "try smaller"
+    lines = (r.get("budgets") or {}).get("lines") or []
+    assert all(x["after"] is None or x["after"] > 0 for x in lines if x["now"] > 0)
+    offer = r["savings_offer"]
+    assert offer["free_KES"] == offer["balance_KES"] - sum(offer["kept"].values()) and offer["covers_all"]
+    r = client.post("/me/afford", headers=h, json={**trip, "use_savings": True}).get_json()
+    assert r["verdict"] == "Affordable" and r["using_savings"]["used_KES"] == 90000
+    assert r["using_savings"]["keep_KES"] == 310000 and "(using savings)" in r["title"]
+    buy = {"preset": "purchase", "price": 150000, "months": 1, "label": "Laptop"}
+    r = client.post("/me/afford", headers=h, json=buy).get_json()
+    assert "using_savings" not in r and r["verdict"] != "Affordable" and r.get("savings_offer")
+    r = client.post("/me/afford", headers=h, json={**buy, "use_savings": True}).get_json()
+    assert r["verdict"] == "Affordable" and r["using_savings"]["keep_KES"] == 250000
+    texts = json.dumps(r) + json.dumps(client.post("/me/afford", headers=h, json=buy).get_json())
+    assert "1 months" not in texts and "about 0 months" not in texts
