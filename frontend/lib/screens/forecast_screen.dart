@@ -121,6 +121,8 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
       );
     }
     final months = (d['months'] as List).cast<Map<String, dynamic>>();
+    final history = ((d['history'] as List?) ?? []).cast<Map<String, dynamic>>();
+    final past = history.length > 3 ? history.sublist(history.length - 3) : history;   // 25 Nov: 3 past months
     final sel = months[_month.clamp(0, months.length - 1)];
     final lines = (sel['lines'] as List).cast<Map<String, dynamic>>()
       ..sort((a, b) => (b['budget'] as num).compareTo(a['budget'] as num));
@@ -143,37 +145,27 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const PanelTitle('What you spent, and what the next 3 months will probably cost',
                   icon: Icons.show_chart_rounded),
-              const SizedBox(height: 10),
-              Text('Left of the dotted line is what you really spent. Right of it is what the app expects.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: c.muted, height: 1.35)),
               const SizedBox(height: 14),
+              // 25 Nov: next month in words, 3 past months, hover or tap a month; tapping a forecast month picks its
+              // card below.
               ForecastChart(
-                height: 260,
+                height: 240,
                 income: ((months.first['income'] ?? 0) as num).toDouble(),
-                selected: ((d['history'] as List?)?.length ?? 0) + _month,
+                selected: past.length + _month,
+                onSelect: (i) => setState(() => _month = i),
                 months: [
-                  for (final h in ((d['history'] as List?) ?? []).cast<Map<String, dynamic>>())
-                    ChartMonth(monthShort[(h['month'] as int) - 1], (h['spent'] as num).toDouble()),
+                  for (final h in past)
+                    ChartMonth(monthShort[(h['month'] as int) - 1], (h['spent'] as num).toDouble(),
+                        long: monthLong[(h['month'] as int) - 1]),
                   for (final m in months)
                     ChartMonth(monthShort[(m['month'] as int) - 1], (m['spending'] as num).toDouble(),
                         low: ((m['range'] as Map?)?['low'] as num?)?.toDouble(),
                         high: ((m['range'] as Map?)?['high'] as num?)?.toDouble(),
-                        fees: ((m['school_fees'] ?? 0) as num).toDouble(), forecast: true),
+                        fees: ((m['school_fees'] ?? 0) as num).toDouble(), forecast: true,
+                        long: monthLong[(m['month'] as int) - 1]),
                 ],
               ),
               const SizedBox(height: 10),
-              Wrap(spacing: 16, runSpacing: 8, children: [
-                _Key(mark: Container(width: 18, height: 3, color: theme.colorScheme.onSurface), text: 'What you spent'),
-                _Key(mark: _Dotted(color: c.muted), text: 'What the app expects'),
-                _Key(
-                    mark: Container(
-                        width: 16,
-                        height: 11,
-                        decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
-                    text: 'Could land anywhere in here'),
-                _Key(mark: _Dotted(color: c.warn), text: 'Your income'),
-              ]),
-              const SizedBox(height: 12),
               Text('From your own months, including school fees and December. Most real months land in the range.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ]),
           ),
@@ -239,7 +231,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                   child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                     const PanelTitle('Your savings', icon: Icons.savings_outlined),
                     const SizedBox(height: 14),
-                    _SavingsChart(now: d['savings_now'] as num, path: path),
+                    SavingsChart(now: d['savings_now'] as num, path: path, cushion: (d['cushion_KES'] ?? 0) as num),
                     const SizedBox(height: 12),
                     _SavingsLine(label: 'Now', value: d['savings_now'] as num),
                     const Divider(height: 24),
@@ -432,92 +424,4 @@ class _BudgetBar extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Savings from now to the end of the forecast: at your usual pace (dashed) and on budget (solid).
-class _SavingsChart extends StatelessWidget {
-  const _SavingsChart({required this.now, required this.path});
-  final num now;
-  final List<Map<String, dynamic>> path;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-        label: 'Savings now ${money(now)}; at your usual pace ${path.map((p) => money(p['usual_pace'] as num)).join(', ')}; '
-            'on budget ${path.map((p) => money(p['on_budget'] as num)).join(', ')}.',
-        child: ExcludeSemantics(
-          child: SizedBox(
-            height: 130,
-            child: CustomPaint(size: Size.infinite, painter: _SavingsPainter(now, path, Theme.of(context), AppColors.of(context))),
-          ),
-        ),
-      );
-}
-
-class _SavingsPainter extends CustomPainter {
-  _SavingsPainter(this.now, this.path, this.theme, this.c);
-  final num now;
-  final List<Map<String, dynamic>> path;
-  final ThemeData theme;
-  final AppColors c;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const top = 14.0, bottom = 22.0, side = 24.0;
-    final usual = [now, for (final p in path) p['usual_pace'] as num];
-    final plan = [now, for (final p in path) p['on_budget'] as num];
-    final all = [...usual, ...plan, 0];
-    final lo = all.reduce((a, b) => a < b ? a : b).toDouble(), hi = all.reduce((a, b) => a > b ? a : b).toDouble();
-    final span = (hi - lo) == 0 ? 1.0 : hi - lo;
-    double x(int i) => side + (size.width - 2 * side) * i / (usual.length - 1);
-    double y(num v) => top + (size.height - top - bottom) * (1 - (v - lo) / span);
-    final ink = theme.colorScheme.onSurface;
-    if (lo < 0) {                                    // the zero line, when savings would go below it
-      canvas.drawLine(Offset(side, y(0)), Offset(size.width - side, y(0)), Paint()..color = c.warn..strokeWidth = 1);
-    }
-    void line(List<num> vs, Color color, {bool dashed = false}) {
-      final paint = Paint()..color = color..strokeWidth = 2.5..strokeCap = StrokeCap.round;
-      for (var i = 1; i < vs.length; i++) {
-        final a = Offset(x(i - 1), y(vs[i - 1])), b = Offset(x(i), y(vs[i]));
-        if (!dashed) {
-          canvas.drawLine(a, b, paint);
-          continue;
-        }
-        final d = (b - a).distance, dir = (b - a) / (d == 0 ? 1 : d);
-        for (var t = 0.0; t < d; t += 12) {
-          canvas.drawLine(a + dir * t, a + dir * (t + 6 > d ? d : t + 6), paint);
-        }
-      }
-      for (var i = 0; i < vs.length; i++) {
-        canvas.drawCircle(Offset(x(i), y(vs[i])), 4, Paint()..color = vs[i] < 0 ? c.warn : color);
-      }
-    }
-    line(plan, ink);
-    line(usual, usual.last < now ? c.warn : c.muted, dashed: true);
-    final labels = ['Now', for (final p in path) monthShort[(p['month'] as int) - 1]];
-    for (var i = 0; i < labels.length; i++) {
-      final tp = TextPainter(
-          text: TextSpan(text: labels[i], style: TextStyle(fontFamily: 'PlusJakartaSans', fontSize: 12, color: c.muted)),
-          textDirection: TextDirection.ltr)
-        ..layout();
-      tp.paint(canvas, Offset(x(i) - tp.width / 2, size.height - 16));
-    }
-  }
-
-  @override
-  bool shouldRepaint(_SavingsPainter old) => old.now != now || old.path != path || old.theme != theme;
-}
-
-
-/// A short dotted dash for the chart key, so the key looks like the dotted line on the chart.
-class _Dotted extends StatelessWidget {
-  const _Dotted({required this.color});
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
-        for (var i = 0; i < 3; i++) ...[
-          if (i > 0) const SizedBox(width: 3),
-          Container(width: 4, height: 3, color: color),
-        ],
-      ]);
 }

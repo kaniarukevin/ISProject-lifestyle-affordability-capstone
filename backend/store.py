@@ -2599,10 +2599,11 @@ def budget_forecast():
     first = (rows[0]["year"], rows[0]["month"]) if rows else (9999, 1)
     history = [{"year": m["year"], "month": m["month"],
                 "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings"))}
-               for m in pic["months"] if (m["year"], m["month"]) < first][-5:]
+               for m in pic["months"] if (m["year"], m["month"]) < first][-3:]   # 25 Nov: 3 past months
     return jsonify(has_data=True, based_on=based_on, months_used=outlook[0]["months_used"], history=history,
                    budget_source="saved" if chosen else "recommended", status=status, months=rows,
                    savings_path=path, savings_now=round(pic["savings_balance"]), put_aside=put_aside,
+                   cushion_KES=round(_cushion(pic)), cushion_months=SAVINGS_CUSHION_MONTHS,
                    income_pattern=low["status"], low_month=(dict(low, path=low_path) if low_path else None),
                    watch=[{"category": c, "over_per_month": round(v / len(rows))} for c, v in top],
                    goals_at_risk=[{"name": r["name"], "monthly_needed_KES": r["monthly_needed_KES"],
@@ -2851,6 +2852,14 @@ def _budget_side_by_side(s, pic, scenario, result):
 SAVINGS_CUSHION_MONTHS = 3     # months of usual spending and bills kept untouched when savings pay for something
 
 
+def _cushion(pic):
+    """The savings cushion: 3 months of the household's usual spending and bills (recent months, median)."""
+    recent = (pic.get("scored") or [])[-6:]
+    usual = statistics.median([sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in recent]) \
+        if recent else 0.0
+    return SAVINGS_CUSHION_MONTHS * usual
+
+
 def _savings_room(s, user_id, pic):
     """How much of the savings balance is free to use for a decision, and what is kept aside first (25 Nov): a
     3-month cushion of usual spending and bills, bills due in the next 3 months, and money already saved for goals.
@@ -2859,9 +2868,7 @@ def _savings_room(s, user_id, pic):
     if balance <= 0:
         return None
     recent = (pic.get("scored") or [])[-6:]
-    usual = statistics.median([sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in recent]) \
-        if recent else 0.0
-    cushion = SAVINGS_CUSHION_MONTHS * usual
+    cushion = _cushion(pic)
     fees = 0.0
     for o in ((pic.get("commitments") or {}).get("obligations") or []):
         if o.get("due_in_days") is not None and 0 <= o["due_in_days"] <= 90 and o.get("frequency") != "monthly":

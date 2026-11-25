@@ -550,7 +550,7 @@ class _InOut extends StatelessWidget {
       ]);
 }
 
-/// The chart months: up to five recorded months, then the forecast's three.
+/// The chart months: the last three recorded months (25 Nov), then the forecast's three.
 List<ChartMonth> chartMonths(Map<String, dynamic> overview, Map<String, dynamic>? forecast) {
   final next = ((forecast?['months'] as List?) ?? []).cast<Map<String, dynamic>>();
   final firstNext = next.isEmpty ? 1 << 30 : (next.first['year'] as int) * 12 + (next.first['month'] as int);
@@ -558,9 +558,11 @@ List<ChartMonth> chartMonths(Map<String, dynamic> overview, Map<String, dynamic>
       .cast<Map<String, dynamic>>()
       .where((h) => (h['year'] as int) * 12 + (h['month'] as int) < firstNext)
       .toList();
-  final shown = past.length > 5 ? past.sublist(past.length - 5) : past;
+  final shown = past.length > 3 ? past.sublist(past.length - 3) : past;
   return [
-    for (final h in shown) ChartMonth(monthShort[(h['month'] as int) - 1], (h['spent'] as num).toDouble()),
+    for (final h in shown)
+      ChartMonth(monthShort[(h['month'] as int) - 1], (h['spent'] as num).toDouble(),
+          long: monthLong[(h['month'] as int) - 1]),
     for (final m in next)
       ChartMonth(
         monthShort[(m['month'] as int) - 1],
@@ -569,6 +571,7 @@ List<ChartMonth> chartMonths(Map<String, dynamic> overview, Map<String, dynamic>
         high: ((m['range'] as Map?)?['high'] as num?)?.toDouble(),
         fees: ((m['school_fees'] ?? 0) as num).toDouble(),
         forecast: true,
+        long: monthLong[(m['month'] as int) - 1],
       ),
   ];
 }
@@ -585,11 +588,6 @@ class _ForecastCard extends StatelessWidget {
     final c = AppColors.of(context);
     final f = forecast;
     final notes = ((f?['notes'] as List?) ?? []).cast<String>();
-    Widget key(Widget mark, String text) => Row(mainAxisSize: MainAxisSize.min, children: [
-          mark,
-          const SizedBox(width: 7),
-          Text(text, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
-        ]);
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const PanelTitle('The next 3 months', icon: Icons.show_chart_rounded),
@@ -598,24 +596,8 @@ class _ForecastCard extends StatelessWidget {
           Text('Add your income in Household and income to see the next three months.',
               style: theme.textTheme.bodyMedium?.copyWith(color: c.muted))
         else ...[
-          // One line of plain English before the chart: testers could not work out which line was which, or
-          // which months had already happened (11 Nov).
-          Text('Left of the dotted line is what you really spent. Right of it is what the app expects.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: c.muted, height: 1.35)),
-          const SizedBox(height: 14),
+          // 25 Nov: next month in words first, then a chart to hover or tap; the key is gone (the label says it).
           ForecastChart(months: chartMonths(overview, f), income: ((overview['income_monthly'] ?? 0) as num).toDouble()),
-          const SizedBox(height: 10),
-          Wrap(spacing: 16, runSpacing: 8, children: [
-            key(Container(width: 18, height: 3, color: theme.colorScheme.onSurface), 'What you spent'),
-            key(_DottedKey(color: c.muted), 'What the app expects'),
-            key(
-                Container(
-                    width: 16,
-                    height: 11,
-                    decoration: BoxDecoration(color: c.range, borderRadius: BorderRadius.circular(3))),
-                'Could land anywhere in here'),
-            key(_DottedKey(color: c.warn), 'Your income'),
-          ]),
           const SizedBox(height: 16),
           // Each note on its own line: run together in one paragraph they read as a broken sentence (11 Nov).
           for (final n in notes.take(2))
@@ -642,19 +624,6 @@ class _ForecastCard extends StatelessWidget {
 }
 
 /// A short dotted dash for the chart key, so a dotted line in the key looks like the dotted line on the chart.
-class _DottedKey extends StatelessWidget {
-  const _DottedKey({required this.color});
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
-        for (var i = 0; i < 3; i++) ...[
-          if (i > 0) const SizedBox(width: 3),
-          Container(width: 4, height: 3, color: color),
-        ],
-      ]);
-}
-
 class _ComingUpCard extends StatelessWidget {
   const _ComingUpCard({required this.bills, required this.goals, required this.onPaid, required this.onAll});
   final List<Map<String, dynamic>> bills;
