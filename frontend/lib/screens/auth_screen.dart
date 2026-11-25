@@ -282,7 +282,16 @@ class _Brand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Row(children: [
-        const ToshaLogo(size: 34),
+        // 25 Nov: on a light screen the lime ring vanished into the lime glow, so it sits on a black badge there
+        // (as the app's own sidebar shows it).
+        if (onDark)
+          const ToshaLogo(size: 34)
+        else
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(12)),
+            child: const ToshaLogo(size: 30),
+          ),
         const SizedBox(width: 10),
         Text('Tosha',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
