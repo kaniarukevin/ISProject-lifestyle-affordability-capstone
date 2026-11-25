@@ -518,8 +518,8 @@ class _MonthSummary extends StatelessWidget {
               Wrap(spacing: 8, children: [
                 TextButton(
                   onPressed: () => editMonthIncome(context, summary['year'] as int, summary['month'] as int,
-                      seenTotal!, setByYou: false),
-                  child: Text('Use ${kesAmount(seenTotal!)}'),
+                      seenTotal, setByYou: false),
+                  child: Text('Use ${kesAmount(seenTotal)}'),
                 ),
                 TextButton(
                   onPressed: () =>
