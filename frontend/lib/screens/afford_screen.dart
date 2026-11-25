@@ -458,6 +458,8 @@ class ResultView extends StatelessWidget {
     final cutText = _cutText(result['what_to_cut']);
     final advice = ((result['advice'] as List?) ?? []).cast<String>();
     final goals = (result['goals_effect'] as Map?)?.cast<String, dynamic>();
+    // 25 Nov: a one-off cash buy shows the verdict and the month's shortfall, not a score dropping to 2.
+    final oneOff = result['lasts_months'] == 1 && result['instalment_months'] == null;
     const gap = SizedBox(height: 20);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -484,7 +486,11 @@ class ResultView extends StatelessWidget {
           if (reasons.isNotEmpty) Text(reasons.first, style: theme.textTheme.bodyLarge),
           const SizedBox(height: 6),
           Text('Worked out on your own recent months.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
-          if (before != null && after != null) ...[
+          if (oneOff && result['score_note'] != null) ...[
+            const SizedBox(height: 6),
+            Text(result['score_note'] as String, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          ],
+          if (before != null && after != null && !oneOff) ...[
             const SizedBox(height: 18),
             Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
               _Num(label: 'Score now', value: '$before', outOf: true),
@@ -587,10 +593,10 @@ class ResultView extends StatelessWidget {
             else
               for (final r in cash.take(6))
                 _Phase(
-                  color: (r['savings_balance_KES'] as num) < 0 ? c.critical : c.range,
+                  color: ((r['short_KES'] ?? 0) as num) > 0 ? c.warn : c.range,
                   title: 'Month ${r['month']}',
                   text: 'KES ${money(r['left_after_KES'] as num)} left'
-                      '${(r['from_savings_KES'] as num) > 0 ? ', KES ${money(r['from_savings_KES'] as num)} from savings' : ''}'
+                      '${((r['short_KES'] ?? 0) as num) > 0 ? ', KES ${money(r['short_KES'] as num)} short' : ''}'
                       ' · savings ${money(r['savings_balance_KES'] as num)}',
                 ),
             if (phases.length <= 1 && cash.length > 6)
@@ -609,7 +615,7 @@ class ResultView extends StatelessWidget {
         Panel(child: _MoneyTable(before: (result['before'] as Map).cast<String, dynamic>(),
             after: (result['after'] as Map).cast<String, dynamic>())),
       ],
-      if (result['instalment_per_month_KES'] != null) ...[
+      if (result['instalment_per_month_KES'] != null && !oneOff) ...[
         gap,
         Panel(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -619,9 +625,6 @@ class ResultView extends StatelessWidget {
                 '${_forMonths(result['instalment_months'] ?? result['lasts_months'])}'
                 '${result['total_paid_KES'] != null ? ', ${kesAmount(result['total_paid_KES'] as num)} in total' : ''}.',
                 style: theme.textTheme.bodyLarge),
-            if (result['pay_from_savings'] is Map && (result['pay_from_savings'] as Map)['possible'] == true)
-              Text('Or all now from savings, keeping ${kesAmount((result['pay_from_savings'] as Map)['savings_left_KES'] as num)}.',
-                  style: theme.textTheme.bodyLarge),
             if (result['months_to_save_up_first'] is num && (result['months_to_save_up_first'] as num) > 0)
               Text('Or save up first: about ${_forMonths(result['months_to_save_up_first']).replaceFirst(' for ', '')}.',
                   style: theme.textTheme.bodyLarge),

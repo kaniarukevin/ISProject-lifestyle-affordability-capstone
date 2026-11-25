@@ -88,7 +88,9 @@ def test_savings_can_carry_a_short_gap_but_not_a_long_one():
                                  "savings_balance": 30000})
     assert no_savings["verdict"] == "Not affordable"
     assert with_savings["verdict"] == "Stretch"
-    assert with_savings["cash_flow"][0]["from_savings_KES"] > 0
+    assert with_savings["cash_flow"][0]["short_KES"] > 0          # numbers stay on monthly money
+    assert with_savings["savings_can_cover"]["total_KES"] <= 30000
+    assert any("if you choose" in r for r in with_savings["reasons"])
     assert with_savings["pay_from_savings"]["possible"] is True
     lasting = aff.evaluate({**body(EARNER, {"type": "monthly_change", "changes": {"housing": 9000}}),
                             "savings_balance": 30000})
@@ -101,7 +103,7 @@ def test_cash_flow_tracks_the_savings_balance():
     flow = r["cash_flow"]
     assert [row["month"] for row in flow] == [1, 2, 3]
     assert all(row["pay_KES"] == 10000 for row in flow)
-    assert flow[-1]["savings_balance_KES"] == 5000 + sum(1800 - row["saving_paused_KES"] - row["from_savings_KES"]
+    assert flow[-1]["savings_balance_KES"] == 5000 + sum(1800 - row["saving_paused_KES"]
                                                          for row in flow)
 
 
@@ -113,7 +115,7 @@ def test_savings_balance_must_be_a_sensible_number():
 def test_a_single_payment_is_not_called_a_loan_and_the_score_is_explained():
     r = aff.evaluate({**body(EARNER, {"type": "purchase", "price": 20000, "months": 1}), "savings_balance": 30000})
     assert not any("instalments" in x.lower() or "loan" in x.lower() for x in r["reasons"])
-    assert "for the 1 month you pay" in r["score_note"]
+    assert "one-off" in r["score_note"]
     lasting = aff.evaluate(body(EARNER, {"type": "monthly_change", "changes": {"housing": 2000}}))
     assert lasting["score_note"] is None
 

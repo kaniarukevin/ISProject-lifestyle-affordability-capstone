@@ -2945,6 +2945,18 @@ def afford():
                                          "out of your savings.")
             title += " (using savings)"
         elif not use_savings:
+            cover = result.get("savings_can_cover")
+            if cover and (not room or room["free_KES"] < cover["total_KES"]):
+                # Savings safety rule with the cushion (25 Nov): savings only make it a Stretch when they cover the
+                # gap and still leave the 3-month cushion, bills due and goal money untouched.
+                result["verdict"] = "Not affordable"
+                result["reasons"] = [r.split(" Your savings could cover")[0] + (
+                    f" Savings would cover it, but leave you under {SAVINGS_CUSHION_MONTHS} months' cushion."
+                    if " Your savings could cover" in r else "") for r in result["reasons"]]
+                if not result.get("advice") and result.get("before"):
+                    result["advice"] = aff._advice(result["before"], float(result.get("instalment_per_month_KES")
+                                                                           or cover["gap_KES"]),
+                                                   result.get("lasts_months"))
             cost = (float(scenario["target"]) if scenario and scenario.get("type") == "savings_goal" else
                     float(scenario["price"]) if cash_buy else 0.0)
             if result.get("verdict") != "Affordable":
@@ -2969,7 +2981,9 @@ def afford():
                 result.setdefault("reasons", []).append(
                     f"On {lm['when']} (KES {lm['income_KES']:,} came in) this would be {lm['verdict'].lower()}"
                     + (f": KES {-lm['left_over_KES']:,} short that month." if (lm["left_over_KES"] or 0) < 0 else "."))
-        result["budgets"] = (None if result.get("upfront_short_KES") or scenario is None or
+        # A one-off cash buy does not change the monthly budget, so no budget table (25 Nov: it showed a second,
+        # different "missing" figure next to the shortfall).
+        result["budgets"] = (None if result.get("upfront_short_KES") or scenario is None or cash_buy or
                              (used > 0 and scenario.get("type") == "purchase") else
                              _budget_side_by_side(s, pic, _as_monthly(scenario, result), result))
         effect = _goals_effect(pic, result, scenario) if scenario else None
