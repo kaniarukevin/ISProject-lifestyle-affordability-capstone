@@ -1635,5 +1635,6 @@ def test_timeline_shows_statement_money_in_and_carry_over(client, monkeypatch):
     o = client.get("/me/overview", headers=h).get_json()
     by = {m["month"]: m for m in o["timeline"]}
     assert by[8]["statement_in"] == 70000 and by[10]["statement_in"] == 0     # own-account money is not income
+    assert by[10]["own_in"] == 5000                                           # but it is shown apart
     assert by[10]["carry_in"] > 0 and by[10]["overspent"] is False and by[10]["covered"] is True
     assert o["current_in"] == {"year": 2026, "month": 11, "statement_in": 12000}

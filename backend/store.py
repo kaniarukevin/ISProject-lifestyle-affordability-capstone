@@ -1183,7 +1183,7 @@ def _user_months(s, user_id):
     # the months a statement covers, that replaces the profile figure (a late or short allowance then shows);
     # other months keep the profile income.
     ins = s.scalars(select(MoneyIn).where(MoneyIn.user_id == user_id)).all()
-    actual, mixed, other, covered, seen_in = {}, {}, {}, set(), {}
+    actual, mixed, other, covered, seen_in, own_in, own_out = {}, {}, {}, set(), {}, {}, {}
     for x in ins:
         key = (x.day.year, x.day.month)
         covered.add(key)
@@ -1191,6 +1191,8 @@ def _user_months(s, user_id):
         # mixed bank money; the user's own accounts moving money and one-offs are left out.
         if x.kind in ("income", "mixed", "received"):
             seen_in[key] = seen_in.get(key, 0.0) + x.amount
+        elif x.kind == "own_account":                # from the user's own bank or savings, shown apart
+            own_in[key] = own_in.get(key, 0.0) + x.amount
         if x.kind == "income":
             actual[key] = actual.get(key, 0.0) + x.amount
         elif x.kind == "mixed":                      # pay and the user's own money together
@@ -1223,6 +1225,7 @@ def _user_months(s, user_id):
     for t in txs:
         key = (t.day.year, t.day.month)
         if t.category == OWN_ACCOUNT:
+            own_out[key] = own_out.get(key, 0.0) + t.amount
             continue                                 # the user's own money moving: not spending
         if t.one_off:
             one_offs[key] = one_offs.get(key, 0.0) + t.amount
@@ -1264,6 +1267,7 @@ def _user_months(s, user_id):
                        "income_primary": round(money_in, 2),
                        "income_from": source, "outside_estimate": round(extra, 2),
                        "statement_in": round(seen_in.get((y, mo), 0.0)) if (y, mo) in covered else None,
+                       "own_in": round(own_in.get((y, mo), 0.0)), "own_out": round(own_out.get((y, mo), 0.0)),
                        "unsorted": round(un, 2), "outside": {k: round(v, 2) for k, v in out.items()},
                        "known": {c: round(v, 2) for c, v in cats.items()}})
     return months, income, one_offs
@@ -1904,7 +1908,8 @@ def overview():
                          "recorded": round(sum(orig[c] for c in SPENDING_CATEGORIES if c != "savings")),
                          "saved": round(mo["savings"]), "income": round(mo["income_primary"]),
                          "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"],
-                         "statement_in": mo.get("statement_in"), "carry_in": round(f["carry_in"]),
+                         "statement_in": mo.get("statement_in"), "own_in": mo.get("own_in", 0),
+                         "own_out": mo.get("own_out", 0), "carry_in": round(f["carry_in"]),
                          "overspent": bool(f["over"]), "covered": bool(f["covered"])})
     counts = Counter(x["state"] for x in timeline)
     summary = None

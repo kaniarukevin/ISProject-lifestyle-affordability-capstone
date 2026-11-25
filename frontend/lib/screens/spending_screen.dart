@@ -461,6 +461,13 @@ class _MonthSummary extends StatelessWidget {
     final state = scored?['state'] as String?;
     final used = (scored?['income'] as num?)?.toDouble();
     final statementIn = (scored?['statement_in'] as num?)?.toDouble();
+    final ownIn = ((scored?['own_in'] as num?) ?? 0).toDouble();       // from the user's own bank or savings
+    final ownOut = ((scored?['own_out'] as num?) ?? 0).toDouble();     // to the user's own bank or savings
+    final seenTotal = statementIn == null ? null : statementIn + ownIn;
+    // Only while the month still runs on the income typed at setup: never for a month the user set, nor once a
+    // pay sender is tagged (25 Nov: it showed KES 2,720 against a figure the user had set, leaving out own-bank pay).
+    final suggest = scored?['income_from'] == 'profile' && seenTotal != null && seenTotal > 0 && used != null &&
+        (seenTotal - used).abs() > 0.1 * used;
     final isCurrent = currentIn != null && currentIn!['year'] == summary['year'] && currentIn!['month'] == summary['month'];
     final thisMonthIn = isCurrent ? (currentIn!['statement_in'] as num?) : null;
     Widget figure(String value, String label) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -480,8 +487,10 @@ class _MonthSummary extends StatelessWidget {
                   scored['income_from'] == 'you' ? 'Money in (set by you) · tap to edit' : 'Money in · tap to edit'),
             ),
           if (scored != null) figure(kesAmount(scored['saved'] as num), 'Saved'),
-          if (scored != null && ((scored['carry_in'] as num?) ?? 0) >= 100)
-            figure(kesAmount(scored['carry_in'] as num), 'Left from earlier months'),
+          // Not when money went to the user's own accounts this month: it is already in their bank, so it would
+          // be counted twice.
+          if (scored != null && ((scored['carry_in'] as num?) ?? 0) >= 100 && ownOut == 0)
+            figure(kesAmount(scored['carry_in'] as num), 'Not spent in earlier months'),
           if (oneOff > 0) figure(kesAmount(oneOff), 'One-off, kept apart'),
           if (state != null) StateChip(state: state, score: scored!['score'] as int),
           if (state == null && thisMonthIn != null) figure(kesAmount(thisMonthIn), 'Came in so far'),
@@ -489,7 +498,7 @@ class _MonthSummary extends StatelessWidget {
             Text('Still going: scored when it ends.', style: TextStyle(color: c.muted)),
         ]),
         // 25 Nov: what the statement shows coming in, when it is not what Tosha is using, with the fix one tap away.
-        if (statementIn != null && used != null && (statementIn - used).abs() > 0.1 * used && statementIn > 0) ...[
+        if (suggest) ...[
           const SizedBox(height: 14),
           Container(
             padding: const EdgeInsets.all(12),
@@ -498,14 +507,19 @@ class _MonthSummary extends StatelessWidget {
               Row(children: [
                 Icon(Icons.receipt_long_rounded, size: 18, color: c.muted),
                 const SizedBox(width: 8),
-                Expanded(child: Text('Your statement shows ${kesAmount(statementIn)} came in.')),
+                Expanded(
+                  child: Text(ownIn > 0
+                      ? 'Your statement shows ${kesAmount(statementIn!)} from pay and people, plus '
+                          '${kesAmount(ownIn)} from your own accounts.'
+                      : 'Your statement shows ${kesAmount(statementIn!)} came in.'),
+                ),
               ]),
               const SizedBox(height: 6),
               Wrap(spacing: 8, children: [
                 TextButton(
                   onPressed: () => editMonthIncome(context, summary['year'] as int, summary['month'] as int,
-                      statementIn, setByYou: false),
-                  child: Text('Use ${kesAmount(statementIn)}'),
+                      seenTotal!, setByYou: false),
+                  child: Text('Use ${kesAmount(seenTotal!)}'),
                 ),
                 TextButton(
                   onPressed: () =>
