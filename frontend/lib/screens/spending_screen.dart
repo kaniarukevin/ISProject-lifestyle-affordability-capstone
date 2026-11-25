@@ -52,6 +52,7 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
   String? month;                         // the month on screen
   final Map<String, List<Txn>> _txs = {};  // months already fetched (shown at once when you come back)
   List<Map<String, dynamic>> _timeline = const [];   // state and score per month, from the last overview
+  Map<String, dynamic>? _currentIn;                   // the month in progress: money in so far, from the statement
   String _filter = 'all';
   bool _sortLater = false;   // "Later" on the not-sorted banner: hidden until the page is opened again
   String? error;
@@ -90,6 +91,7 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
     if (!mounted) return;
     setState(() {
       _timeline = ((o?['timeline'] as List?) ?? const []).cast<Map<String, dynamic>>();
+      _currentIn = (o?['current_in'] as Map?)?.cast<String, dynamic>();
       if (last != null && months == null && (widget.month == null || widget.month == last['month'])) _take(last);
     });
   }
@@ -355,7 +357,7 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
             ]),
             SizedBox(height: 3, child: _loading ? const LinearProgressIndicator() : null),
             const SizedBox(height: 12),
-            if (summary != null) _MonthSummary(summary: summary, timeline: _timeline),
+            if (summary != null) _MonthSummary(summary: summary, timeline: _timeline, currentIn: _currentIn),
             const SizedBox(height: 20),
             // 25 Nov: a short banner with the fast way to sort, and a way to put it off, so it doesn't nag.
             if (unsorted > 0 && !_sortLater)
@@ -443,9 +445,10 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
 /// The month in numbers: spent, and (for months the overview scored) money in, saved, the state and score,
 /// then where the money went.
 class _MonthSummary extends StatelessWidget {
-  const _MonthSummary({required this.summary, required this.timeline});
+  const _MonthSummary({required this.summary, required this.timeline, this.currentIn});
   final Map<String, dynamic> summary;
   final List<Map<String, dynamic>> timeline;
+  final Map<String, dynamic>? currentIn;
 
   @override
   Widget build(BuildContext context) {
@@ -456,6 +459,10 @@ class _MonthSummary extends StatelessWidget {
     final spent = (summary['total'] as num).toDouble();
     final oneOff = (summary['one_off'] as num?)?.toDouble() ?? 0;
     final state = scored?['state'] as String?;
+    final used = (scored?['income'] as num?)?.toDouble();
+    final statementIn = (scored?['statement_in'] as num?)?.toDouble();
+    final isCurrent = currentIn != null && currentIn!['year'] == summary['year'] && currentIn!['month'] == summary['month'];
+    final thisMonthIn = isCurrent ? (currentIn!['statement_in'] as num?) : null;
     Widget figure(String value, String label) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(value, style: theme.textTheme.titleLarge),
           Text(label, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
@@ -473,12 +480,42 @@ class _MonthSummary extends StatelessWidget {
                   scored['income_from'] == 'you' ? 'Money in (set by you) · tap to edit' : 'Money in · tap to edit'),
             ),
           if (scored != null) figure(kesAmount(scored['saved'] as num), 'Saved'),
+          if (scored != null && ((scored['carry_in'] as num?) ?? 0) >= 100)
+            figure(kesAmount(scored['carry_in'] as num), 'Left from earlier months'),
           if (oneOff > 0) figure(kesAmount(oneOff), 'One-off, kept apart'),
           if (state != null) StateChip(state: state, score: scored!['score'] as int),
+          if (state == null && thisMonthIn != null) figure(kesAmount(thisMonthIn), 'Came in so far'),
           if (state == null)
-            Text('This month is still going, so it has no score yet. You will see one when it ends.',
-                style: TextStyle(color: c.muted)),
+            Text('Still going: scored when it ends.', style: TextStyle(color: c.muted)),
         ]),
+        // 25 Nov: what the statement shows coming in, when it is not what Tosha is using, with the fix one tap away.
+        if (statementIn != null && used != null && (statementIn - used).abs() > 0.1 * used && statementIn > 0) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: c.field, borderRadius: BorderRadius.circular(14)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.receipt_long_rounded, size: 18, color: c.muted),
+                const SizedBox(width: 8),
+                Expanded(child: Text('Your statement shows ${kesAmount(statementIn)} came in.')),
+              ]),
+              const SizedBox(height: 6),
+              Wrap(spacing: 8, children: [
+                TextButton(
+                  onPressed: () => editMonthIncome(context, summary['year'] as int, summary['month'] as int,
+                      statementIn, setByYou: false),
+                  child: Text('Use ${kesAmount(statementIn)}'),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PayeesScreen())),
+                  child: const Text('Tag who pays me'),
+                ),
+              ]),
+            ]),
+          ),
+        ],
         if (by.isNotEmpty) ...[
           const SizedBox(height: 24),
           Text('Where the money went', style: theme.textTheme.titleMedium),

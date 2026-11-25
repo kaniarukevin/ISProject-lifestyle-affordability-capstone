@@ -151,7 +151,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               score: (d['score'] as num).round(),
               state: d['state'] as String,
               nextMonth: d['next_month'] as String?,
-              facts: _scoreFacts(d),
+              facts: _scoreFacts(context, d),
               estimated: d['estimated'] == true,
             ),
             _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
@@ -218,28 +218,62 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
 
 /// The figures behind the word, so anyone can check it against their own M-PESA (11 Nov: testers who never think
 /// of their money as a "state" had no way to tell whether the word was right).
-String? _scoreFacts(Map<String, dynamic> d) {
-  // The LAST COMPLETE month, never the one in progress (11 Nov: a half-finished November read as "KES 1,363 went
-  // out", which made the card look broken).
+/// The figures behind the score, as three short lines with icons (25 Nov: one long sentence was hard to read).
+/// The LAST COMPLETE month, never the one in progress (11 Nov: a half-finished month made the card look broken).
+/// "Overspent" counts only months that spent more than came in PLUS what was left from earlier months; the ones
+/// that leftovers covered are explained behind the info button, not counted against the household.
+Widget? _scoreFacts(BuildContext context, Map<String, dynamic> d) {
   final months = ((d['timeline'] as List?) ?? []).cast<Map<String, dynamic>>();
   if (months.isEmpty) return null;
   final m = months.last;
   final spent = (m['spent'] as num?)?.round() ?? 0;
   final income = (m['income'] as num?)?.round() ?? 0;
   if (income <= 0) return null;
-  // 23 Nov: bills from Commitments that are not in the records are counted here, so say so, or the figure
-  // disagrees with Records with no reason given.
   final recorded = (m['recorded'] as num?)?.round() ?? spent;
   final extra = spent - recorded >= 500 ? spent - recorded : 0;
-  final line = 'In ${_monthShort[(m['month'] as int) - 1]} about KES ${money(spent)} went out'
-      '${extra > 0 ? ' (KES ${money(recorded)} in your records plus KES ${money(extra)} of bills from Commitments)' : ''}'
-      ' and about KES ${money(income)} came in.';
+  final mon = _monthShort[(m['month'] as int) - 1];
   final rec = (d['track_record'] as Map?)?.cast<String, dynamic>();
   final over = (rec?['overspent_months'] as num?)?.toInt() ?? 0;
+  final covered = (rec?['covered_months'] as num?)?.toInt() ?? 0;
   final of = (rec?['months'] as num?)?.toInt() ?? 0;
-  if (of >= 3 && over > 0) return '$line In $over of your last $of months you spent more than came in.';
-  if (of >= 3) return '$line In none of your last $of months did you spend more than came in.';
-  return line;
+  const ink = Color(0xFF2B3110);
+  final style = Theme.of(context).textTheme.bodyMedium?.copyWith(color: ink);
+  Widget row(IconData icon, String text, {Widget? trailing}) => Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Row(children: [
+          Icon(icon, size: 18, color: ink),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: style)),
+          ?trailing,
+        ]),
+      );
+  void explain() => showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('What counts as overspending'),
+          content: Text('A month counts only if you spent more than came in plus what was left from earlier '
+              'months.${covered > 0 ? ' In $covered other month${covered == 1 ? '' : 's'} you spent more than came '
+                  'in, but money left from before covered it, so ${covered == 1 ? 'it doesn\'t' : 'they don\'t'} '
+                  'count.' : ''}'
+              '${extra > 0 ? '\n\n$mon\'s spending includes KES ${money(extra)} of bills from Bills and goals that '
+                  'are not in your records.' : ''}'),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+  final info = IconButton(
+    tooltip: 'What counts',
+    visualDensity: VisualDensity.compact,
+    onPressed: explain,
+    icon: const Icon(Icons.info_outline_rounded, size: 18, color: ink),
+  );
+  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    row(Icons.south_west_rounded, '$mon: KES ${money(income)} came in'),
+    row(Icons.north_east_rounded, '$mon: KES ${money(spent)} went out'),
+    if (of >= 3)
+      row(over > 0 ? Icons.warning_amber_rounded : Icons.check_circle_outline_rounded,
+          over > 0 ? 'Overspent in $over of the last $of months' : 'No overspending in the last $of months',
+          trailing: info),
+  ]);
 }
 
 const _monthShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -251,7 +285,7 @@ class _ScoreCard extends StatelessWidget {
   final int score;
   final String state;
   final String? nextMonth;   // what next month looks like: the score is a fair one-month warning (10 Nov)
-  final String? facts;       // the figures behind the word, so anyone can check it
+  final Widget? facts;       // the figures behind the word, so anyone can check it
   final bool estimated;      // still the setup figures, not a real statement
 
   @override
@@ -299,10 +333,7 @@ class _ScoreCard extends StatelessWidget {
             style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
-        if (facts != null) ...[
-          const SizedBox(height: 6),
-          Text(facts!, style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
-        ],
+        ?facts,
         if (estimated) ...[
           const SizedBox(height: 6),
           Text('Add your M-PESA statement and this becomes your real score.',
