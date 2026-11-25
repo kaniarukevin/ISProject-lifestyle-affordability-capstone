@@ -203,7 +203,7 @@ cd frontend
 flutter build web --release --pwa-strategy=none
 ```
 
-Then upload `frontend/build/web` to Netlify. `--pwa-strategy=none` stops browsers from serving testers an old cached version.
+Then upload `frontend/build/web` to Netlify. `--pwa-strategy=none` stops browsers from serving testers an old cached version. The Google client id is built in as the default; the same id must be set as `GOOGLE_CLIENT_ID` on the server, and `https://tosha-ke.netlify.app` must be an authorised JavaScript origin for it in Google Cloud.
 
 ---
 

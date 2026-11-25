@@ -1,0 +1,31 @@
+# Builds the Flutter web app and publishes it to Netlify (tosha-ke) on every push to main, after the Flutter
+# checks pass. Needs two repository secrets: NETLIFY_AUTH_TOKEN and NETLIFY_SITE_ID.
+name: deploy-web
+
+on:
+  push:
+    branches: [main]
+    paths: ["frontend/**", ".github/workflows/deploy-web.yml"]
+  workflow_dispatch:          # "Run workflow" button in the Actions tab, for a deploy without a new commit
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build web --release --pwa-strategy=none
+      - name: Publish to Netlify
+        run: npx --yes netlify-cli@17 deploy --prod --dir=build/web --site="$NETLIFY_SITE_ID" --auth="$NETLIFY_AUTH_TOKEN"
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
