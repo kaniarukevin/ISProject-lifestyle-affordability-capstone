@@ -366,10 +366,20 @@ def test_a_one_month_purchase_can_be_carried_by_savings(client, monkeypatch):
     h = _student(client)                                         # about 3,000 left a month
     phone = {"preset": "purchase", "price": 15000, "months": 1, "label": "Phone"}
     assert client.post("/me/afford", headers=h, json=phone).get_json()["verdict"] == "Not affordable"
+    # Savings that would dip into the 3-month cushion do not count (25 Nov).
     client.put("/me/profile", headers=h, json={"householdSize": 1, "savingsBalance": 20000,
                                                "incomes": [{"name": "Allowance", "amount": 12000}]})
     r = client.post("/me/afford", headers=h, json=phone).get_json()
-    assert r["verdict"] == "Stretch" and len(r["cash_flow"]) == 1
+    assert r["verdict"] == "Not affordable" and any("cushion" in x for x in r["reasons"]) and r["advice"]
+    # Enough savings beyond the cushion: a Stretch, but the numbers stay on monthly money until the user chooses.
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "savingsBalance": 200000,
+                                               "incomes": [{"name": "Allowance", "amount": 12000}]})
+    r = client.post("/me/afford", headers=h, json=phone).get_json()
+    assert r["verdict"] == "Stretch" and len(r["cash_flow"]) == 1 and r["cash_flow"][0]["short_KES"] > 0
+    assert "using_savings" not in r and r["savings_offer"]["covers_all"] and r["budgets"] is None
+    assert sum("your savings" in x.lower() for x in r["reasons"]) == 1         # said once, not three times
+    chosen = client.post("/me/afford", headers=h, json={**phone, "use_savings": True}).get_json()
+    assert chosen["using_savings"]["used_KES"] == 15000
 
 
 def test_a_temporary_new_cost_is_labelled(client, monkeypatch):
