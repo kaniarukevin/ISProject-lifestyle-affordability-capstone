@@ -9,6 +9,6 @@ Widget googleSignInButton({bool dark = false}) => web.renderButton(
         type: web.GSIButtonType.icon,
         theme: dark ? web.GSIButtonTheme.filledBlack : web.GSIButtonTheme.outline,
         size: web.GSIButtonSize.large,
-        shape: web.GSIButtonShape.circle,
+        shape: web.GSIButtonShape.pill,      // the plugin has no circle; an icon button in pill shape is round
       ),
     );

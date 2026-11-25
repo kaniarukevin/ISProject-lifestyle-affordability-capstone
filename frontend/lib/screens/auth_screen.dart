@@ -80,7 +80,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   /// Pill fields like the reference designs (25 Nov): rounded, filled, an icon in front.
-  InputDecorationTheme _pillFields(BuildContext context, {required bool dark}) {
+  InputDecorationThemeData _pillFields(BuildContext context, {required bool dark}) {
     final c = AppColors.of(context);
     OutlineInputBorder line(Color color, [double w = 1]) =>
         OutlineInputBorder(borderRadius: BorderRadius.circular(28), borderSide: BorderSide(color: color, width: w));
