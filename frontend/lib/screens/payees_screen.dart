@@ -407,6 +407,13 @@ class _PayeesScreenState extends State<PayeesScreen> {
                         text: 'Your totals are already right. This only splits them into food, transport and the '
                             'rest, so your budget knows where the money goes.',
                       ),
+                      // 25 Nov tester: a year of statements made sorting slow and tiring. Biggest first, and say when
+                      // it is enough.
+                      const InfoNote(
+                        icon: Icons.flag_rounded,
+                        text: 'The biggest are at the top. You do not have to sort everyone: once "Sorted so far" '
+                            'passes 90%, the rest hardly changes your answers, so you can stop there.',
+                      ),
                       const SizedBox(height: 16),
                       Align(
                         alignment: Alignment.centerLeft,
