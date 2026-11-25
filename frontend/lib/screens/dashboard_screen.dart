@@ -293,9 +293,9 @@ class _ScoreCard extends StatelessWidget {
           StateChip(state: state, background: Colors.white, ink: _onLime),
         ]),
         // 23 Nov: "66 / 100" said nothing about whether 66 is good. Same cut-offs as the Questions page
-        // (Affordable 56, Stretch 33 in the engine).
+        // (Affordable 60, Stretch 34 in the engine).
         const SizedBox(height: 6),
-        Text('Above 56: room left over. 33 to 56: tight. Below 33: more going out than coming in.',
+        Text('60 and above: room left over. 34 to 59: tight. Below 34: more going out than coming in.',
             style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),

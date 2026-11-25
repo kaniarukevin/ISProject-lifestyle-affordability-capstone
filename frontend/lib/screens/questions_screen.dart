@@ -36,8 +36,8 @@ const _groups = <String, List<_Q>>{
             'It never changes anything without you pressing a button. A check is just a check until you say you are '
             'doing it.'),
     _Q(Icons.speed_rounded, 'What does my score mean?',
-        'It runs from 0 to 100. The higher it is, the more room your money has. Above 56 your money usually covers '
-            'your life with something left. Between 33 and 56 it is tight. Below 33 more is going out than coming '
+        'It runs from 0 to 100. The higher it is, the more room your money has. At 60 and above your money usually covers '
+            'your life with something left. Between 34 and 59 it is tight. Below 34 more is going out than coming '
             'in.\n\n'
             'It is not a credit score. Nobody else sees it. It changes as your months change.'),
     _Q(Icons.mood_rounded, 'What do Doing fine, Stretched and Struggling mean?',

@@ -30,7 +30,7 @@ class VerdictChip extends StatelessWidget {
   }
 }
 
-/// The 0-100 score on the verdict bands (Not affordable below 33, Stretch 33-55, Affordable 56+), with a marker.
+/// The 0-100 score on the verdict bands (Not affordable below 34, Stretch 34-59, Affordable 60+), with a marker.
 class ScoreScale extends StatelessWidget {
   const ScoreScale({super.key, required this.score, this.before});
   final num score;
@@ -41,7 +41,7 @@ class ScoreScale extends StatelessWidget {
     final c = AppColors.of(context);
     final muted = Theme.of(context).textTheme.bodySmall?.copyWith(color: c.muted);
     return Semantics(
-      label: 'Score $score on a scale where below 33 is not affordable, 33 to 55 is a stretch and 56 or more is affordable.',
+      label: 'Score $score on a scale where below 34 is not affordable, 34 to 59 is a stretch and 60 or more is affordable.',
       child: ExcludeSemantics(
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           LayoutBuilder(builder: (context, box) {
@@ -61,12 +61,12 @@ class ScoreScale extends StatelessWidget {
                   top: 5,
                   bottom: 5,
                   child: Row(children: [
-                    Expanded(flex: 33, child: Container(decoration: BoxDecoration(color: c.critical,
+                    Expanded(flex: 34, child: Container(decoration: BoxDecoration(color: c.critical,
                         borderRadius: const BorderRadius.horizontal(left: Radius.circular(6))))),
                     const SizedBox(width: 3),
-                    Expanded(flex: 23, child: Container(color: c.strained)),
+                    Expanded(flex: 26, child: Container(color: c.strained)),
                     const SizedBox(width: 3),
-                    Expanded(flex: 44, child: Container(decoration: BoxDecoration(color: c.stable,
+                    Expanded(flex: 40, child: Container(decoration: BoxDecoration(color: c.stable,
                         borderRadius: const BorderRadius.horizontal(right: Radius.circular(6))))),
                   ]),
                 ),
@@ -77,9 +77,9 @@ class ScoreScale extends StatelessWidget {
           }),
           const SizedBox(height: 6),
           Row(children: [
-            Expanded(flex: 33, child: Text('0 · Not affordable', style: muted)),
-            Expanded(flex: 23, child: Text('Stretch', style: muted)),
-            Expanded(flex: 44, child: Text('Affordable · 100', style: muted, textAlign: TextAlign.right)),
+            Expanded(flex: 34, child: Text('0 · Not affordable', style: muted)),
+            Expanded(flex: 26, child: Text('Stretch', style: muted)),
+            Expanded(flex: 40, child: Text('Affordable · 100', style: muted, textAlign: TextAlign.right)),
           ]),
         ]),
       ),

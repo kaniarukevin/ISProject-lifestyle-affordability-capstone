@@ -30,10 +30,18 @@ class AffordabilityInputError(ValueError):
     """Raised for requests the engine cannot score; the API turns it into a 400."""
 
 
+# Verdict cut-offs, halfway between the average scores of neighbouring states on the TRAINING households
+# (5-fold out-of-fold: Critical 24.3, Strained 44.6, Stable 75.3). The engine file still carries 56/33, which were
+# worked out on the 60 test households (supervisor's comment, 25 Nov); scripts/check_thresholds.py re-derives these.
+CUTOFFS = {"affordable": 60, "stretch": 34}
+
+
 def engine():
     """Load the trained models once per process, on first use."""
     if "e" not in _ENGINE:
-        _ENGINE["e"] = joblib.load(ENGINE_PATH)
+        e = joblib.load(ENGINE_PATH)
+        e["cutoffs"] = dict(CUTOFFS)
+        _ENGINE["e"] = e
     return _ENGINE["e"]
 
 

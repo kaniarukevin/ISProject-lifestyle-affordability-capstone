@@ -96,7 +96,7 @@ MODEL_REGISTER = [
              "series": ["Random Forest", "Monotonic"],
              "groups": [{"label": "Critical", "values": [15, 20]}, {"label": "Strained", "values": [55, 46]},
                         {"label": "Stable", "values": [74, 66]}]}],
-        "facts": ["Verdict cut-offs from the data: Affordable 56+, Stretch 33-55, Not affordable below 33.",
+        "facts": ["Verdict cut-offs from the training households: Affordable 60+, Stretch 34-59, Not affordable below 34.",
                   "Safety rule: a monthly shortfall larger than savings is Not affordable, whatever the score.",
                   "Consistency chosen over accuracy (0.654 vs 0.799), as credit scoring does."],
         "limit": "The score only remembers 3 to 6 months; the app shows the year's track record beside it.",

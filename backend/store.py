@@ -1826,7 +1826,7 @@ def _betting(s, user_id, scored):
 
 
 SCORE_EXPLAINED = ("Your score (0-100) is how closely your recent months match households that stay on top of "
-                   "their money: 56 or more is comfortable, below 33 is at risk. Your state (Stable, Strained or "
+                   "their money: 60 or more is comfortable, below 34 is at risk. Your state (Stable, Strained or "
                    "Critical) describes your latest month on its own, so the two can differ for a while.")
 
 
