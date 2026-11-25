@@ -58,8 +58,24 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _requests = context.read<AppState>().tabRequest..addListener(_onTabRequest);
     // First time Home opens on this device: a short walk through the five places.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) AppTour.showIfNew(context);
+      if (mounted) AppTour.showIfNew(context, onStep: _tourStep);
     });
+    AppTour.replay.addListener(_replayTour);
+  }
+
+  /// The tour moves the app to the place each step talks about, so its button lights up behind the card.
+  void _tourStep(int target) {
+    if (!mounted) return;
+    if (target == AppTour.records) {
+      _go(0);
+      _openRecords();
+    } else {
+      _go(target);
+    }
+  }
+
+  void _replayTour() {
+    if (mounted) AppTour.show(context, onStep: _tourStep);
   }
 
   ValueNotifier<int?>? _requests;
@@ -91,6 +107,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _requests?.removeListener(_onTabRequest);
+    AppTour.replay.removeListener(_replayTour);
     super.dispose();
   }
 

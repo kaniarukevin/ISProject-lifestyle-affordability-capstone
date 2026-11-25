@@ -140,7 +140,11 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                     const SizedBox(height: 12),
                     FilledButton.icon(
                       style: FilledButton.styleFrom(backgroundColor: c.onLime, foregroundColor: c.lime),
-                      onPressed: () => AppTour.show(context),
+                      onPressed: () {
+                        // Back to Home, which runs the tour so each step can open its place.
+                        Navigator.of(context).popUntil((r) => r.isFirst);
+                        AppTour.replay.value++;
+                      },
                       icon: const Icon(Icons.explore_rounded),
                       label: const Text('Take the quick tour'),
                     ),
