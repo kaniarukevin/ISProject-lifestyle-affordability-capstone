@@ -293,7 +293,10 @@ def assess(m, changes=None, income_change=0.0, duration=None, savings_balance=0.
         if balance > 0:
             reasons.append(f"Your savings of KES {balance:,} would cover the gap for about {_months_words(balance // gap)}.")
     elif shortfall > 0:
-        reasons.append(f"You would be short KES {shortfall:,} a month; you could cover it only by pausing savings.")
+        # 23 Nov: "only by pausing savings" read as stopping all saving, while the month-by-month list showed
+        # savings still growing. Only part of the usual saving goes.
+        reasons.append(f"You would be short KES {shortfall:,} a month. Saving KES {b['savings_KES'] - shortfall:,} a "
+                       f"month instead of your usual KES {b['savings_KES']:,} would cover it.")
     else:
         reasons.append(f"You would still have KES {a['left_over_KES']:,} left each month.")
     if debt_label and a["debt_share_of_income"] >= 0.3:

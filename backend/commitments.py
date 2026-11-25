@@ -214,6 +214,7 @@ def evaluate(payload, today=None):
     fixed = {c: 0 for c in OBLIGATION_CATEGORIES}
     for o in obligations:
         fixed[o["category"]] += o["monthly_equivalent_KES"]
-    fixed["loan_repayment"] = round(sum(d["monthly_payment"] for d in debts) + extra)
+    # Extra paid on debts only counts while there are debts to pay it on.
+    fixed["loan_repayment"] = round(sum(d["monthly_payment"] for d in debts) + (extra if debts else 0))
     result["for_budget"] = {"fixed": fixed, "goal_per_month": sum(g["monthly_needed_KES"] for g in goals)}
     return result

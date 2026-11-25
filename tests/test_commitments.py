@@ -107,3 +107,10 @@ def test_a_goal_deadline_counts_down_but_months_left_alone_does_not():
     assert cm.evaluate({"goals": [goal]}, date(2027, 5, 1))["goals"][0]["months_left"] == 1      # past: this month
     old = {"name": "Trip", "target": 6000, "months_left": 3}
     assert cm.evaluate({"goals": [old]}, date(2027, 5, 1))["goals"][0]["months_left"] == 3
+
+
+def test_extra_on_debts_not_counted_without_debts():
+    r = cm.evaluate({"obligations": [{"name": "Rent", "category": "housing", "amount": 18000}],
+                     "extra_per_month": 2000})
+    assert r["for_budget"]["fixed"]["loan_repayment"] == 0
+    assert sum(r["for_budget"]["fixed"].values()) == 18000

@@ -1590,3 +1590,20 @@ def test_finding_money_cuts_wants_before_needs():
     assert abs(sum(after.values()) - (sum(now.values()) - 7000)) <= 2
     _, below = store._shrink(now, list(now), 20000)               # more than wants can give: needs are hit
     assert below > 0
+
+
+def test_home_asks_who_pays_you_until_a_pay_sender_is_tagged(client, monkeypatch):
+    # 25 Nov tester: a statement was in, but the score still used the typed income because no sender was tagged.
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 80000}]})
+    for m in (8, 9, 10):
+        client.post("/me/transactions", headers=h, json=[{"date": f"2026-{m:02d}-05", "amount": 60000,
+                                                           "category": "food_groceries"}])
+    with store.session() as s:
+        s.add_all([store.MoneyIn(user_id=1, day=store.date(2026, m, 1), amount=95000, kind="received",
+                                 payee_key="in:jane") for m in (8, 9, 10)])
+        s.commit()
+    assert client.get("/me/overview", headers=h).get_json()["income_untagged"] == {"profile_KES": 80000}
+    client.put("/me/payees", headers=h, json={"key": "in:jane", "tag": "income"})
+    assert client.get("/me/overview", headers=h).get_json()["income_untagged"] is None

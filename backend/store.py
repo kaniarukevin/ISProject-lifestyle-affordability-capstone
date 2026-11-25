@@ -1859,9 +1859,14 @@ def overview():
     # Month by month: each completed month scored with only the data up to then (how things were at the time).
     timeline = []
     by_month = aff.timeline(pic["scored"], profile.household_size, profile.dependants, pic["statement_safe"])
+    # What the records alone say, before bills from Commitments are counted (23 Nov: Home said KES 64,110 went
+    # out while Records said 60,110 spent, with nothing to say why).
+    originals = {(o["year"], o["month"]): o for o in (pic["complete"] or pic["months"])}
     for mo, r in zip(pic["scored"], by_month):
+        orig = originals.get((mo["year"], mo["month"]), mo)
         timeline.append({"year": mo["year"], "month": mo["month"], "state": r["state"], "score": r["score"],
                          "spent": round(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings")),
+                         "recorded": round(sum(orig[c] for c in SPENDING_CATEGORIES if c != "savings")),
                          "saved": round(mo["savings"]), "income": round(mo["income_primary"]),
                          "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"]})
     counts = Counter(x["state"] for x in timeline)
@@ -1962,7 +1967,7 @@ def overview():
                    notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk, budget_warnings=warnings,
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record,
                    borrowing=borrowing, goal_progress=pic["goal_progress"], records_until=records_until,
-                   forecast_checks=forecast_checks, income_gap=_income_gap(pic), savings_check=_savings_check(g.user_id, pic),
+                   forecast_checks=forecast_checks, income_gap=_income_gap(pic), income_untagged=_income_untagged(s, g.user_id, pic), savings_check=_savings_check(g.user_id, pic),
                    next_month=_next_month_sentence(pic, outlook, income),
                    # "Since November KES 8,500 went into savings. Count it towards Laptop?" (asked once per goal)
                    goal_suggestions=[x for x in pic["goal_progress"] if x["track"] is None and x["found_KES"] > 0])
@@ -2119,6 +2124,20 @@ def _apply_edits(plan, edits):
     plan["notes"].append("You set " + ", ".join(f"{NOTE_LABELS.get(c, c)} to KES {round(v):,}" for c, v in mine.items())
                          + "; the other everyday lines were adjusted so the total still fits your income.")
     return plan
+
+
+def _income_untagged(s, user_id, pic):
+    """25 Nov (tester): a statement is in, but no sender is tagged as pay or allowance, so every month still uses the
+    income typed at setup while spending comes from the statement. Say so, instead of a score built on a guess."""
+    if pic["estimated"] or pic["profile"] is None:
+        return None
+    if not s.scalar(select(MoneyIn.id).where(MoneyIn.user_id == user_id).limit(1)):
+        return None                                   # no statement money-in to tag
+    tags = set(s.scalars(select(StatementRule.choice).where(StatementRule.user_id == user_id,
+                                                            StatementRule.key.like("in:%"))))
+    if tags & {"income", "mixed"}:
+        return None
+    return {"profile_KES": round(pic["income"])}
 
 
 INCOME_GAP_SHARE = 0.7     # statement income under 70% of the profile income, in most statement months
