@@ -1703,3 +1703,16 @@ def test_no_partial_picture_warning_when_spending_matches_income(client, monkeyp
     r = client.post("/me/afford", headers=h, json={"preset": "loan", "amount": 50000, "months": 12,
                                                    "annual_rate": 14}).get_json()
     assert "partial_picture" not in r
+
+
+def test_afford_terms_are_whole_months_up_to_25_years(client, monkeypatch):
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _student(client)
+    for months in (0, 301, 600, 1.5, "abc"):
+        r = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 60000, "months": months})
+        assert r.status_code == 400 and "months" in r.get_json()["error"], months
+    assert "25 years" in client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 60000,
+                                                                     "months": 600}).get_json()["error"]
+    for months in (1, 12, 300, "12"):
+        r = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 60000, "months": months})
+        assert r.status_code == 200, months

@@ -571,6 +571,16 @@ def _num(v, name, minimum=0.0):
     return x
 
 
+def _months(v, name="months"):
+    """A term in whole months, 1 to limits.MAX_MONTHS (25 years). 600 months was accepted and 1.5 became 1."""
+    x = _num(v, name, 1)
+    if x != int(x):
+        raise InputError(f"{name} must be a whole number of months")
+    if x > limits.MAX_MONTHS:
+        raise InputError(f"{name} can be at most {limits.MAX_MONTHS} (25 years)")
+    return int(x)
+
+
 def _spend_day(v):
     """A spending date: a real date, not in the future and not older than limits.MAX_YEARS_BACK years (audit A-07:
     1901 and 2099 were accepted and skewed every average)."""
@@ -2693,7 +2703,7 @@ def _scenario_from_preset(p, months):
         label = str(p.get("label") or "A new monthly cost")[:60]
         sc, title = {"type": "monthly_change", "changes": {cat: amount}}, f"{label}: KES {round(amount):,} a month"
         if p.get("months"):                       # a temporary cost, e.g. a 3-month course
-            sc["months"] = int(_num(p["months"], "months", 1))
+            sc["months"] = _months(p["months"], "months")
             title += f" for {_months_words(sc['months'])}"
         return sc, title
     if kind == "new_baby":
@@ -2705,7 +2715,7 @@ def _scenario_from_preset(p, months):
         return {"type": "monthly_change", "changes": changes}, "A new baby"
     if kind in ("purchase", "loan"):
         price = _num(p.get("price" if kind == "purchase" else "amount"), "amount", 1)
-        months_n = int(_num(p.get("months", 6), "months", 1))
+        months_n = _months(p.get("months", 6))
         rate = _num(p.get("annual_rate", 0), "annual_rate")
         label = str(p.get("label") or ("A purchase" if kind == "purchase" else "A loan"))[:60]
         # One month is paying for it all at once, which is how the engine reads months=1.
@@ -2714,7 +2724,7 @@ def _scenario_from_preset(p, months):
                 f"{label}: KES {round(price):,} {how}")
     if kind == "savings_goal":
         target = _num(p.get("target"), "target", 1)
-        months_n = int(_num(p.get("months", 6), "months", 1))
+        months_n = _months(p.get("months", 6))
         label = str(p.get("label") or "A savings goal")[:60]
         return ({"type": "savings_goal", "extra_per_month": target / months_n, "target": target, "months": months_n},
                 f"{label}: KES {round(target):,} in {_months_words(months_n)}")
@@ -2727,7 +2737,7 @@ def _scenario_from_preset(p, months):
     word = "rises" if delta >= 0 else "drops"
     sc, title = {"type": "monthly_change", "changes": {}, "income_change": delta}, f"Income {word} by KES {abs(round(delta)):,} a month"
     if p.get("months"):                           # e.g. HELB delayed for 2 months
-        sc["months"] = int(_num(p["months"], "months", 1))
+        sc["months"] = _months(p["months"], "months")
         title += f" for {_months_words(sc['months'])}"
     return sc, title
 
@@ -2778,7 +2788,7 @@ def _plan_scenario(p, usual):
         raise InputError(f"income must be a normal amount (at most {limits.MAX_AMOUNT:,})")
     sc = {"type": "plan", "changes": changes, "income_change": income}
     if p.get("months"):
-        sc["months"] = int(_num(p["months"], "months", 1))
+        sc["months"] = _months(p["months"], "months")
     up = p.get("upfront")
     if up:
         if not isinstance(up, dict):
@@ -2789,7 +2799,7 @@ def _plan_scenario(p, usual):
             raise InputError("pay must be savings or instalments")
         sc["upfront"] = {"price": price, "pay": pay}
         if pay == "instalments":
-            sc["upfront"]["months"] = int(_num(up.get("months", 6), "upfront months", 1))
+            sc["upfront"]["months"] = _months(up.get("months", 6), "upfront months")
             sc["upfront"]["monthly_interest"] = _num(up.get("annual_rate", 0), "annual_rate") / 1200
             parts.insert(0, f"KES {round(price):,} upfront over {sc['upfront']['months']} months")
         else:

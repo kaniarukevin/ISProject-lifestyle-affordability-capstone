@@ -8,6 +8,7 @@ import math
 
 MAX_AMOUNT = 100_000_000
 MAX_ROWS = 2_000            # records in one request (a year of busy M-PESA use is well under this per import)
+MAX_MONTHS = 300           # longest term for a purchase, loan, goal or temporary cost: 25 years
 MAX_YEARS_BACK = 5          # oldest spending date accepted
 
 
