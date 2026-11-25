@@ -407,12 +407,13 @@ class _PayeesScreenState extends State<PayeesScreen> {
                         text: 'Your totals are already right. This only splits them into food, transport and the '
                             'rest, so your budget knows where the money goes.',
                       ),
-                      // 25 Nov tester: a year of statements made sorting slow and tiring. Biggest first, and say when
-                      // it is enough.
+                      // 25 Nov testers: a year of statements made sorting slow and tiring, and 90% can take many taps. The score uses
+                      // the statement-safe model when much is unsorted, so say plainly that sorting is optional.
                       const InfoNote(
                         icon: Icons.flag_rounded,
-                        text: 'The biggest are at the top. You do not have to sort everyone: once "Sorted so far" '
-                            'passes 90%, the rest hardly changes your answers, so you can stop there.',
+                        text: 'You do not have to finish this. Your score and "Can I afford it?" already use your '
+                            'exact totals, sorted or not. Sorting only makes the budget split sharper, and the biggest '
+                            'are at the top, so a few taps here do the most. Stop whenever you like.',
                       ),
                       const SizedBox(height: 16),
                       Align(

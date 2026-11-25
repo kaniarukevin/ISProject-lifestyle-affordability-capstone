@@ -410,7 +410,8 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
                       'Or tap a payment below.',
                       'Pick what it was for. Keep "Always for this payee" on and every past and future payment '
                           'to them is sorted too, so most lists shrink after a few taps.',
-                      'Not sure? Leave it. It stays outside your budget lines until you sort it.',
+                      'You do not have to sort everything. Your score already uses your exact totals; sorting only '
+                          'sharpens the budget split. Stop whenever you like.',
                     ],
                     margin: EdgeInsets.only(top: 4, bottom: 8),
                   ),
