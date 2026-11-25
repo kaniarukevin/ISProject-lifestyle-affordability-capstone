@@ -7,6 +7,7 @@ import '../state/app_state.dart';
 import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
 import '../widgets/busy_words.dart';
+import '../widgets/card_layout.dart';
 import '../widgets/charts.dart';
 import '../widgets/format.dart';
 import '../widgets/info_note.dart';
@@ -47,6 +48,12 @@ class BudgetView extends StatefulWidget {
 class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
   Map<String, dynamic>? r;
   bool _howMade = false;             // the plan's reasoning, folded away at first
+  final _layout = CardLayout('budget', const ['daily', 'everyday', 'set_aside', 'plan'], const {
+    'daily': 'What you can spend a day',
+    'everyday': 'Everyday spending',
+    'set_aside': 'Set aside first',
+    'plan': 'Your plan (donut)',
+  });
   bool _past = false;                 // this month, or past months against what was spent
   String? error;
 
@@ -58,6 +65,9 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
   @override
   void initState() {
     super.initState();
+    _layout.load().then((_) {
+      if (mounted) setState(() {});
+    });
     _load();
   }
 
@@ -233,15 +243,12 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
       );
     }
 
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: ListView(
-        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
-        children: [
-          switcher,
-          const SizedBox(height: 16),
-          if (d['safe_per_day'] != null && daysLeft > 0 && (d['everyday_left'] as num) <= 0)
-            // Everyday money is used up: say so plainly instead of "KES 0 a day" and a negative amount left.
+    final cards = <String, Widget?>{
+      'daily': !(d['safe_per_day'] != null && daysLeft > 0)
+          ? null
+          // Everyday money is used up: say so plainly instead of "KES 0 a day" and a negative amount left.
+          : (d['everyday_left'] as num) <= 0
+              ? // Everyday money is used up: say so plainly instead of "KES 0 a day" and a negative amount left.
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(children: [
@@ -260,9 +267,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                         : 'More now comes from savings, so stick to essentials.',
                     style: TextStyle(color: c.muted)),
               ]),
-            ),
-          if (d['safe_per_day'] != null && daysLeft > 0 && (d['everyday_left'] as num) > 0)
-            Panel(
+            )
+              : Panel(
               color: c.lime,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('You can spend about', style: theme.textTheme.bodyLarge?.copyWith(color: c.onLime)),
@@ -274,9 +280,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                     'day${daysLeft == 1 ? '' : 's'}).', style: TextStyle(color: c.onLime)),
               ]),
             ),
-          if (warnings.isNotEmpty) BudgetWarnings(warnings: warnings),
-          const SizedBox(height: 20),
-          Panel(
+      'everyday': Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               PanelTitle('Everyday spending',
                   icon: Icons.shopping_basket_outlined,
@@ -290,8 +294,7 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               for (final k in everyday) limitRow(k),
             ]),
           ),
-          const SizedBox(height: 20),
-          Panel(
+      'set_aside': Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const PanelTitle('Set aside first', icon: Icons.lock_outline_rounded),
               const SizedBox(height: 14),
@@ -299,9 +302,8 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               _Plain('Savings', saving, spent['savings']),
             ]),
           ),
-          const SizedBox(height: 20),
-          // 25 Nov: the donut stays in view; how the plan was made is folded away (too many numbers at once).
-          Panel(
+      // 25 Nov: the donut stays in view; how the plan was made is folded away (too many numbers at once).
+      'plan': Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               PanelTitle('Your plan for ${monthNames[(d['month'] as int) - 1]}',
                   icon: Icons.pie_chart_outline_rounded),
@@ -315,6 +317,23 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               ]),
             ]),
           ),
+    };
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: EdgeInsets.only(bottom: 24 + MediaQuery.paddingOf(context).bottom),
+        children: [
+          switcher,
+          const SizedBox(height: 16),
+          // 25 Nov: cards in the user's order ("Edit layout"); warnings stay after the first card.
+          for (final (n, id) in _layout.visible.where((id) => cards[id] != null).indexed) ...[
+            if (n > 0) const SizedBox(height: 20),
+            cards[id]!,
+            if (n == 0 && warnings.isNotEmpty) ...[const SizedBox(height: 12), BudgetWarnings(warnings: warnings)],
+          ],
+          if (_layout.visible.where((id) => cards[id] != null).isEmpty && warnings.isNotEmpty)
+            BudgetWarnings(warnings: warnings),
           const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerLeft,
@@ -358,6 +377,10 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
               ]),
             ),
           ],
+          const SizedBox(height: 12),
+          EditLayoutButton(onPressed: () async {
+            if (await _layout.edit(context) && mounted) setState(() {});
+          }),
           const ModelNote(),
         ],
       ),

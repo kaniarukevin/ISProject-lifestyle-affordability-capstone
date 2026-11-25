@@ -5,6 +5,7 @@ import '../services/api.dart';
 import '../state/app_state.dart';
 import '../state/reload_on_change.dart';
 import '../theme/app_theme.dart';
+import '../widgets/card_layout.dart';
 import '../widgets/forecast_chart.dart';
 import '../widgets/format.dart';
 import '../widgets/model_note.dart';
@@ -44,10 +45,20 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
   String? error;
   bool _stale = false;              // showing the last figures while fresh ones load
   bool _more = false;               // the year view and notes, folded away at first (25 Nov: information overload)
+  final _layout = CardLayout('home', const ['score', 'afford', 'left', 'forecast', 'coming_up'], const {
+    'score': 'Your money score',
+    'afford': 'Can I afford it?',
+    'left': 'Left this month',
+    'forecast': 'The next 3 months',
+    'coming_up': 'Coming up',
+  });
 
   @override
   void initState() {
     super.initState();
+    _layout.load().then((_) {
+      if (mounted) setState(() {});
+    });
     _showLast();
     _load();
   }
@@ -146,39 +157,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             onBudget: () => widget.onOpenTab?.call(2),
             onCheck: () => widget.onOpenTab?.call(1),
           ),
-          CardRow(children: [
-            _ScoreCard(
-              score: (d['score'] as num).round(),
-              state: d['state'] as String,
-              nextMonth: d['next_month'] as String?,
-              facts: _scoreFacts(context, d),
-              estimated: d['estimated'] == true,
-            ),
-            _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
-            _LeftCard(overview: d, forecast: bf),
-          ]),
-          const SizedBox(height: 20),
-          // 25 Nov (testers: information overload): at most ONE question card at a time, the most important first,
-          // and after the score rather than before it.
-          if (d['income_untagged'] != null) ...[
-            _IncomeUntaggedCard(profileKes: (d['income_untagged'] as Map)['profile_KES'] as num),
-            const SizedBox(height: 20),
-          ] else if (d['income_gap'] != null) ...[
-            _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
-            const SizedBox(height: 20),
-          ] else if (d['savings_check'] != null) ...[
-            _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>()),
-            const SizedBox(height: 20),
-          ],
-          CardRow(minWidth: 340, flex: const [2, 1], children: [
-            _ForecastCard(overview: d, forecast: bf, onMore: () => widget.onOpenTab?.call(2)),
-            _ComingUpCard(
-              bills: ((d['bills_due'] as List?) ?? []).cast<Map<String, dynamic>>(),
-              goals: ((d['goals_at_risk'] as List?) ?? []).cast<Map<String, dynamic>>(),
-              onPaid: _paid,
-              onAll: () => widget.onOpenTab?.call(3),
-            ),
-          ]),
+          ..._cards(d),
           if (((d['timeline'] as List?) ?? []).isNotEmpty || notes.isNotEmpty) ...[
             const SizedBox(height: 12),
             Align(
@@ -207,12 +186,75 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               ]),
             ),
           ],
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
+          EditLayoutButton(onPressed: () async {
+            if (await _layout.edit(context) && mounted) setState(() {});
+          }),
+          const SizedBox(height: 8),
           const RatingCard(where: 'overview', question: 'Does this overview match your real finances?'),
           const ModelNote(),
         ],
       ),
     );
+  }
+}
+
+/// Home's cards in the user's order (25 Nov: "Edit layout"). Cards next to each other share a row when there is
+/// room: up to three small ones, or the forecast with the card after it. The one question card stays after the
+/// first row, wherever the user moved things.
+extension on _DashboardScreenState {
+  List<Widget> _cards(Map<String, dynamic> d) {
+    final cards = <String, Widget>{
+      'score': _ScoreCard(
+        score: (d['score'] as num).round(),
+        state: d['state'] as String,
+        nextMonth: d['next_month'] as String?,
+        facts: _scoreFacts(context, d),
+        estimated: d['estimated'] == true,
+      ),
+      'afford': _AffordCard(lastCheck: lastCheck, onCheck: () => widget.onOpenTab?.call(1)),
+      'left': _LeftCard(overview: d, forecast: bf),
+      'forecast': _ForecastCard(overview: d, forecast: bf, onMore: () => widget.onOpenTab?.call(2)),
+      'coming_up': _ComingUpCard(
+        bills: ((d['bills_due'] as List?) ?? []).cast<Map<String, dynamic>>(),
+        goals: ((d['goals_at_risk'] as List?) ?? []).cast<Map<String, dynamic>>(),
+        onPaid: _paid,
+        onAll: () => widget.onOpenTab?.call(3),
+      ),
+    };
+    // At most ONE question card at a time, the most important first (25 Nov, testers: information overload).
+    final Widget? question = d['income_untagged'] != null
+        ? _IncomeUntaggedCard(profileKes: (d['income_untagged'] as Map)['profile_KES'] as num)
+        : d['income_gap'] != null
+            ? _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>())
+            : d['savings_check'] != null
+                ? _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>())
+                : null;
+    final ids = _layout.order.isEmpty ? _layout.defaults : _layout.visible;
+    final out = <Widget>[];
+    void add(Widget w) {
+      if (out.isNotEmpty) out.add(const SizedBox(height: 20));
+      out.add(w);
+    }
+
+    if (ids.isEmpty && question != null) add(question);
+    var i = 0;
+    while (i < ids.length) {
+      final row = <String>[];
+      if (ids[i] == 'forecast') {
+        row.addAll([ids[i], if (i + 1 < ids.length) ids[i + 1]]);
+      } else {
+        while (i + row.length < ids.length && row.length < 3 && ids[i + row.length] != 'forecast') {
+          row.add(ids[i + row.length]);
+        }
+      }
+      add(row.first == 'forecast'
+          ? CardRow(minWidth: 340, flex: row.length == 2 ? const [2, 1] : null, children: [for (final id in row) cards[id]!])
+          : CardRow(children: [for (final id in row) cards[id]!]));
+      if (i == 0 && question != null) add(question);
+      i += row.length;
+    }
+    return out;
   }
 }
 
