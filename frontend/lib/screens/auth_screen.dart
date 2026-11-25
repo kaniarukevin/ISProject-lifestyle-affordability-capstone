@@ -79,13 +79,42 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  /// "Log in | Create account" at the top, so switching is one obvious tap instead of a link under the button.
+  Widget _modeSwitch(AppColors c) => Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(color: c.field, borderRadius: BorderRadius.circular(16)),
+        child: Row(children: [
+          for (final (isNew, label) in const [(false, 'Log in'), (true, 'Create account')])
+            Expanded(
+              child: GestureDetector(
+                onTap: _busy || _newAccount == isNew ? null : _switch,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  decoration: BoxDecoration(
+                    color: _newAccount == isNew ? Theme.of(context).colorScheme.surface : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: _newAccount == isNew
+                        ? const [BoxShadow(color: Color(0x14000000), blurRadius: 6, offset: Offset(0, 2))]
+                        : null,
+                  ),
+                  child: Text(label,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600, color: _newAccount == isNew ? null : c.muted)),
+                ),
+              ),
+            ),
+        ]),
+      );
+
   Widget _form(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
     return AutofillGroup(
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        Text(_newAccount ? 'Create your account' : 'Welcome back', style: theme.textTheme.headlineSmall),
-        const SizedBox(height: 20),
+        _modeSwitch(c),
+        const SizedBox(height: 24),
         TextField(
           controller: _email,
           keyboardType: TextInputType.emailAddress,
@@ -93,7 +122,7 @@ class _AuthScreenState extends State<AuthScreen> {
           textInputAction: TextInputAction.next,
           decoration: const InputDecoration(labelText: 'Email'),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
         PasswordField(
           controller: _password,
           helper: _newAccount ? '8+ characters, not a common one' : null,
@@ -110,7 +139,7 @@ class _AuthScreenState extends State<AuthScreen> {
             ),
           ),
         if (_newAccount) ...[
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           InkWell(
             borderRadius: BorderRadius.circular(12),
             onTap: () => setState(() => _agreed = !_agreed),
@@ -119,14 +148,9 @@ class _AuthScreenState extends State<AuthScreen> {
               const Expanded(child: Text('I agree to how my data is used')),
               TextButton(
                 onPressed: () => showPrivacy(context, context.read<AppState>().api),
-                child: const Text('Read it'),
+                child: const Text('Read'),
               ),
             ]),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12),
-            child: Text('Guidance, not financial advice.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: c.muted)),
           ),
         ],
         if (_error != null)
@@ -136,30 +160,35 @@ class _AuthScreenState extends State<AuthScreen> {
             decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(14)),
             child: Text(_error!, style: TextStyle(color: c.warn)),
           ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         FilledButton(
           style: FilledButton.styleFrom(
               backgroundColor: c.lime, foregroundColor: c.onLime, minimumSize: const Size.fromHeight(54)),
           onPressed: _busy ? null : _submit,
           child: _busy
               ? BusyWords(lines: _newAccount ? signUpWords : logInWords)
-              : Text(_newAccount ? 'Create account' : 'Log in'),
+              : Text(_newAccount ? 'Create account' : 'Log in',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
         ),
-        const SizedBox(height: 16),
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Text(_newAccount ? 'Already have an account?' : 'New to Tosha?', style: TextStyle(color: c.muted)),
-          TextButton(
-            onPressed: _busy ? null : _switch,
-            child: Text(_newAccount ? 'Log in' : 'Create an account'),
-          ),
-        ]),
-        // Google goes last, under the email form, which is where people look for it.
-        GoogleButton(onError: (m) => setState(() => _error = m)),
-        const SizedBox(height: 16),
+        if (GoogleButton.available) ...[
+          const SizedBox(height: 18),
+          Row(children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('or', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+            ),
+            const Expanded(child: Divider()),
+          ]),
+          const SizedBox(height: 14),
+          GoogleButton(onError: (m) => setState(() => _error = m)),
+        ],
+        const SizedBox(height: 20),
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(Icons.lock_outline_rounded, size: 14, color: c.muted),
           const SizedBox(width: 6),
-          Text('Only you see your data', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+          Text(_newAccount ? 'Only you see your data · Guidance, not financial advice' : 'Only you see your data',
+              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ]),
       ]),
     );
@@ -169,117 +198,108 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) => Scaffold(
         body: SafeArea(
           child: LayoutBuilder(builder: (context, box) {
-            final form = Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(28),
-                child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: _form(context)),
-              ),
-            );
+            final form = ConstrainedBox(constraints: const BoxConstraints(maxWidth: 400), child: _form(context));
             if (box.maxWidth >= 900) {
+              // Desktop: the black panel on the left says what Tosha is; the form sits alone on the right.
               return Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                   const Expanded(child: _Banner()),
-                  Expanded(child: form),
+                  Expanded(
+                    child: Center(
+                      child: SingleChildScrollView(padding: const EdgeInsets.all(32), child: form),
+                    ),
+                  ),
                 ]),
               );
             }
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              child: Column(children: [
-                const _Banner(compact: true),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 24, 8, 0),
-                  child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: _form(context)),
+            // Phone: the name, one promise, and the form. Nothing else competes with it.
+            return Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const _Brand(),
+                    const SizedBox(height: 28),
+                    Text("Know if it's enough.",
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w700, letterSpacing: -0.8)),
+                    const SizedBox(height: 6),
+                    Text('Check big decisions against your M-PESA first.',
+                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: AppColors.of(context).muted)),
+                    const SizedBox(height: 28),
+                    form,
+                  ]),
                 ),
-              ]),
+              ),
             );
           }),
         ),
       );
 }
 
-/// The black side of the landing page: the name, the promise and what Tosha does.
+/// Logo and name, the same on every screen size.
+class _Brand extends StatelessWidget {
+  const _Brand({this.onDark = false});
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        const ToshaLogo(size: 36),
+        const SizedBox(width: 10),
+        Text('Tosha',
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700, color: onDark ? Colors.white : null)),
+      ]);
+}
+
+/// Desktop only: the black panel with the promise and three one-line points.
 class _Banner extends StatelessWidget {
-  const _Banner({this.compact = false});
-  final bool compact;
+  const _Banner();
 
   static const _points = [
-    (Icons.verified_user_rounded, 'Ask "Can I afford it?" before you take a loan, move house or buy something big.'),
-    (Icons.insights_rounded, 'See how your money is really doing, read from your own M-PESA statement.'),
-    (Icons.account_balance_wallet_rounded, 'A budget built from the way you actually spend, not a fixed rule.'),
+    (Icons.verified_user_rounded, 'Test a loan, a move or a big buy before you commit'),
+    (Icons.insights_rounded, 'See how your money is really doing'),
+    (Icons.account_balance_wallet_rounded, 'A budget built from how you actually spend'),
   ];
 
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    const white = Colors.white;
     final muted = Colors.white.withValues(alpha: 0.7);
-    final head = Row(children: [
-      const ToshaLogo(size: 40),
-      const SizedBox(width: 12),
-      Text('Tosha', style: Theme.of(context).textTheme.titleLarge?.copyWith(color: white)),
-    ]);
     return Container(
-      padding: EdgeInsets.all(compact ? 20 : 48),
+      padding: const EdgeInsets.all(48),
       decoration: BoxDecoration(color: const Color(0xFF111111), borderRadius: BorderRadius.circular(32)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
-        children: [
-          head,
-          SizedBox(height: compact ? 14 : 0),
-          if (!compact) const Spacer(),
-          Text("Know if it's enough.",
-              style: (compact ? Theme.of(context).textTheme.headlineMedium : Theme.of(context).textTheme.displaySmall)
-                  ?.copyWith(color: white, fontWeight: FontWeight.w700, letterSpacing: -1, height: 1.1)),
-          const SizedBox(height: 12),
-          Text('Check big decisions against your M-PESA before you make them.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: muted)),
-          // 11 Nov: these three points were drawn only on a wide screen, so phone users, which is everyone,
-          // reached the password box without ever being told what the app does.
-          // 25 Nov: on a phone the banner is just the name and the promise, so the form is not crowded out.
-          if (!compact) const SizedBox(height: 32),
-          if (!compact)
-          for (final (icon, text) in _points)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle),
-                    child: Icon(icon, size: 18, color: c.onLime),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(text, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: white)),
-                    ),
-                  ),
-                ]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const _Brand(onDark: true),
+        const Spacer(),
+        Text("Know if it's enough.",
+            style: Theme.of(context).textTheme.displaySmall
+                ?.copyWith(color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: -1, height: 1.1)),
+        const SizedBox(height: 12),
+        Text('Check big decisions against your M-PESA first.',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(color: muted)),
+        const SizedBox(height: 36),
+        for (final (icon, text) in _points)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Row(children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(color: c.lime, shape: BoxShape.circle),
+                child: Icon(icon, size: 16, color: c.onLime),
               ),
-          if (!compact)
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(16)),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Icon(Icons.schedule_rounded, size: 18, color: c.lime),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
-                child: Text('You\'ll need your M-PESA statement (free from Safaricom).',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: white)),
+                child: Text(text, style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: Colors.white)),
               ),
             ]),
           ),
-          if (!compact) const Spacer(),
-          if (!compact) ...[
-            const SizedBox(height: 24),
-            Text('Only you see your data. Tosha never moves money or shares it. Delete everything anytime.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
-          ],
-        ],
-      ),
+        const Spacer(),
+        Text('You\'ll need your M-PESA statement (free from Safaricom).',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
+      ]),
     );
   }
 }
