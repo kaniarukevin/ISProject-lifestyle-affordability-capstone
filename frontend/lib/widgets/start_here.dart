@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_theme.dart';
-import 'panel.dart';
 
 /// "Start here" for new users (10 Nov: testers did not know what to do after signing up). Four steps in the order
 /// that makes the answers trustworthy; each ticks itself off. It hides when all are done or the user closes it.
@@ -66,56 +65,110 @@ class _StartHereState extends State<StartHere> {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
     final next = steps.indexWhere((s) => !s.$3);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20),
-      child: Panel(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Row(children: [
-            Expanded(child: Text('Start here', style: theme.textTheme.titleLarge)),
-            Text('$done of ${steps.length} done', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
-            IconButton(
-              tooltip: 'Hide this',
-              icon: const Icon(Icons.close_rounded, size: 20),
-              onPressed: () {
-                _set(StartHere.hiddenKey);
-                setState(() => _hidden = true);
-              },
-            ),
-          ]),
-          Text('Tosha reads your M-PESA. It shows how your money is doing, plans your budget, and checks a big '
-              'decision before you make it.',
-              style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
-          const SizedBox(height: 12),
-          for (var i = 0; i < steps.length; i++)
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: steps[i].$3 ? null : steps[i].$4,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Icon(steps[i].$3 ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
-                      color: steps[i].$3 ? theme.colorScheme.onSurface : c.muted),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(steps[i].$1,
-                          style: theme.textTheme.bodyLarge?.copyWith(
-                              fontWeight: i == next ? FontWeight.w700 : FontWeight.w500,
-                              decoration: steps[i].$3 ? TextDecoration.lineThrough : null,
-                              color: steps[i].$3 ? c.muted : null)),
-                      if (!steps[i].$3) Text(steps[i].$2, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
-                    ]),
-                  ),
-                  if (i == next)
-                    FilledButton(
-                      style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
-                      onPressed: steps[i].$4,
-                      child: const Text('Go'),
+
+    // 25 Nov: the full checklist took half the screen. Home now shows one slim bar with the next step; the
+    // checklist opens in a pop-up.
+    Widget checklist(BuildContext ctx, {required bool inSheet}) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < steps.length; i++)
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: steps[i].$3
+                    ? null
+                    : () {
+                        if (inSheet) Navigator.pop(ctx);
+                        steps[i].$4();
+                      },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Icon(steps[i].$3 ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                        color: steps[i].$3 ? theme.colorScheme.onSurface : c.muted),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(steps[i].$1,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                                fontWeight: i == next ? FontWeight.w700 : FontWeight.w500,
+                                decoration: steps[i].$3 ? TextDecoration.lineThrough : null,
+                                color: steps[i].$3 ? c.muted : null)),
+                        if (!steps[i].$3)
+                          Text(steps[i].$2, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+                      ]),
                     ),
+                    if (!steps[i].$3) Icon(Icons.chevron_right_rounded, color: c.muted),
+                  ]),
+                ),
+              ),
+          ],
+        );
+
+    void openList() => showModalBottomSheet<void>(
+          context: context,
+          showDragHandle: true,
+          builder: (sheet) => SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  Expanded(child: Text('Start here', style: theme.textTheme.titleLarge)),
+                  Text('$done of ${steps.length} done', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+                ]),
+                const SizedBox(height: 4),
+                Text('Four steps to answers you can trust.', style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+                const SizedBox(height: 8),
+                checklist(sheet, inSheet: true),
+              ]),
+            ),
+          ),
+        );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Material(
+        color: c.field,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: openList,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 4, 8),
+            child: Row(children: [
+              SizedBox(
+                width: 30,
+                height: 30,
+                child: CircularProgressIndicator(
+                    value: done / steps.length, strokeWidth: 3, color: theme.colorScheme.onSurface,
+                    backgroundColor: c.muted.withValues(alpha: 0.25)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Start here · $done of ${steps.length} done',
+                      style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+                  Text('Next: ${steps[next].$1}',
+                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
                 ]),
               ),
-            ),
-        ]),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
+                onPressed: steps[next].$4,
+                child: const Text('Go'),
+              ),
+              IconButton(
+                tooltip: 'Hide this',
+                icon: const Icon(Icons.close_rounded, size: 20),
+                onPressed: () {
+                  _set(StartHere.hiddenKey);
+                  setState(() => _hidden = true);
+                },
+              ),
+            ]),
+          ),
+        ),
       ),
     );
   }

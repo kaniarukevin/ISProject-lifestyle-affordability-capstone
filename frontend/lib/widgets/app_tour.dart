@@ -54,23 +54,48 @@ class AppTour {
 }
 
 /// Wraps a button the tour can point at: while the tour's current step targets [target], a lime ring pulses
-/// around it with a small "Tap here" label.
+/// around it with a small "Tap here" label. Both are drawn in the overlay, above every card and icon (25 Nov: drawn
+/// in place, they were clipped by the bar and hidden behind the cards around them).
 class TourGlow extends StatefulWidget {
-  const TourGlow({super.key, required this.target, required this.child, this.labelAbove = false});
+  const TourGlow({super.key, required this.target, required this.child, this.labelAbove = false,
+      this.labelRight = false});
   final int target;
   final Widget child;
   final bool labelAbove;   // nav bar at the bottom: label above; buttons at the top: label below
+  final bool labelRight;   // the rail on the left of a wide screen: label to the right
 
   @override
   State<TourGlow> createState() => _TourGlowState();
 }
 
 class _TourGlowState extends State<TourGlow> with SingleTickerProviderStateMixin {
-  late final _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
-    ..repeat(reverse: true);
+  final _link = LayerLink();
+  final _portal = OverlayPortalController();
+  final _key = GlobalKey();
+  late final _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+
+  @override
+  void initState() {
+    super.initState();
+    AppTour.highlight.addListener(_sync);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
+  }
+
+  void _sync() {
+    if (!mounted) return;
+    final on = AppTour.highlight.value == widget.target;
+    if (on && !_portal.isShowing) {
+      _pulse.repeat(reverse: true);
+      _portal.show();
+    } else if (!on && _portal.isShowing) {
+      _pulse.stop();
+      _portal.hide();
+    }
+  }
 
   @override
   void dispose() {
+    AppTour.highlight.removeListener(_sync);
     _pulse.dispose();
     super.dispose();
   }
@@ -78,37 +103,56 @@ class _TourGlowState extends State<TourGlow> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     final c = AppColors.of(context);
-    return ValueListenableBuilder<int?>(
-      valueListenable: AppTour.highlight,
-      child: widget.child,
-      builder: (context, on, child) {
-        if (on != widget.target) return child!;
-        final label = Positioned(
-          top: widget.labelAbove ? -30 : null,
-          bottom: widget.labelAbove ? null : -30,
-          child: IgnorePointer(
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(color: c.lime, borderRadius: BorderRadius.circular(10)),
-              child: Text('Tap here', style: TextStyle(color: c.onLime, fontSize: 12, fontWeight: FontWeight.w700)),
-            ),
-          ),
-        );
-        return Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
-          AnimatedBuilder(
-            animation: _pulse,
-            builder: (_, inner) => DecoratedBox(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: c.lime, blurRadius: 6 + 10 * _pulse.value, spreadRadius: 2 + 4 * _pulse.value)],
+    return OverlayPortal(
+      controller: _portal,
+      overlayChildBuilder: (_) {
+        final size = (_key.currentContext?.findRenderObject() as RenderBox?)?.size ?? const Size(48, 48);
+        return Stack(children: [
+          // The pulsing ring, centred on the button.
+          CompositedTransformFollower(
+            link: _link,
+            targetAnchor: Alignment.center,
+            followerAnchor: Alignment.center,
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                animation: _pulse,
+                builder: (_, _) => Container(
+                  width: size.width + 14 + 8 * _pulse.value,
+                  height: size.height + 14 + 8 * _pulse.value,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size.height),
+                    border: Border.all(color: c.lime, width: 3),
+                    boxShadow: [BoxShadow(color: c.lime.withValues(alpha: 0.6), blurRadius: 12 + 8 * _pulse.value)],
+                  ),
+                ),
               ),
-              child: inner,
             ),
-            child: child,
           ),
-          label,
+          // "Tap here", just above or below the button.
+          CompositedTransformFollower(
+            link: _link,
+            targetAnchor: widget.labelRight
+                ? Alignment.centerRight
+                : widget.labelAbove ? Alignment.topCenter : Alignment.bottomCenter,
+            followerAnchor: widget.labelRight
+                ? Alignment.centerLeft
+                : widget.labelAbove ? Alignment.bottomCenter : Alignment.topCenter,
+            offset: widget.labelRight ? const Offset(16, 0) : Offset(0, widget.labelAbove ? -14 : 14),
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: c.lime,
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
+                ),
+                child: Text('Tap here', style: TextStyle(color: c.onLime, fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+            ),
+          ),
         ]);
       },
+      child: CompositedTransformTarget(link: _link, child: KeyedSubtree(key: _key, child: widget.child)),
     );
   }
 }

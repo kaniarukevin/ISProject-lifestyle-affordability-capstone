@@ -322,7 +322,7 @@ class NavRail extends StatelessWidget {
     final c = AppColors.of(context);
     Widget item(int i) => Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: TourGlow(target: i,
+          child: TourGlow(target: i, labelRight: true,
               child: _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 48, idle: c.navIcon)),
         );
     return Container(
