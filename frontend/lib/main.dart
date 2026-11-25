@@ -35,7 +35,9 @@ class App extends StatelessWidget {
         // A whole-app wait (logging out) is said in words over whatever screen is showing.
         // SelectionArea: text anywhere in the app can be selected and copied (it could not be before).
         builder: (context, child) => Stack(children: [
-          if (child != null) SelectionArea(child: child),
+          // SelectionArea needs an Overlay above it for its handles and Copy menu; the app's own Overlay sits
+          // inside the Navigator (child), so give it one here (25 Nov: selecting still did not work without it).
+          if (child != null) _Selectable(child: child),
           if (context.watch<AppState>().busy case final lines?)
             Positioned.fill(
               child: ColoredBox(
@@ -72,4 +74,33 @@ class _Start extends StatelessWidget {
     if (state.consented == false) return const ConsentScreen();
     return state.profile == null ? const OnboardingScreen() : const HomeScreen();
   }
+}
+
+
+/// Text anywhere in the app can be selected and copied. SelectionArea needs an Overlay above it for its handles
+/// and Copy menu, and the app's own Overlay sits inside the Navigator below, so this gives it one. The entry is
+/// made once and rebuilt with the new child, so the app below keeps its state.
+class _Selectable extends StatefulWidget {
+  const _Selectable({required this.child});
+  final Widget child;
+
+  @override
+  State<_Selectable> createState() => _SelectableState();
+}
+
+class _SelectableState extends State<_Selectable> {
+  late final OverlayEntry _entry = OverlayEntry(builder: (_) => SelectionArea(child: widget.child));
+
+  @override
+  void didUpdateWidget(_Selectable old) {
+    super.didUpdateWidget(old);
+    if (old.child != widget.child) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _entry.markNeedsBuild();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Overlay(initialEntries: [_entry]);
 }
