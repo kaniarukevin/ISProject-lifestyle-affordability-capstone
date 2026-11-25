@@ -254,18 +254,16 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
                   Icon(Icons.warning_amber_rounded, color: c.warn),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Your everyday money for this month is used up',
+                    child: Text('Everyday money used up',
                         style: theme.textTheme.titleMedium?.copyWith(color: c.warn, fontWeight: FontWeight.w700)),
                   ),
                 ]),
                 const SizedBox(height: 8),
                 Text(
                     (d['everyday_left'] as num) < 0
-                        ? 'You have spent ${kesAmount(-(d['everyday_left'] as num))} more than your plan allows for '
-                            'everyday spending. Anything more in the next $daysLeft day${daysLeft == 1 ? '' : 's'} '
-                            'comes out of your savings, so keep to essentials until the month ends.'
-                        : 'Anything more in the next $daysLeft day${daysLeft == 1 ? '' : 's'} comes out of your '
-                            'savings, so keep to essentials until the month ends.',
+                        ? '${kesAmount(-(d['everyday_left'] as num))} over plan. More now comes from savings, so stick '
+                            'to essentials.'
+                        : 'More now comes from savings, so stick to essentials.',
                     style: TextStyle(color: c.muted)),
               ]),
             ),

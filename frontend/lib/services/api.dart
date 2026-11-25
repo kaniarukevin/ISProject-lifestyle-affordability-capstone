@@ -69,8 +69,7 @@ class Api {
       if (body != null) req.body = jsonEncode(body);
       r = await http.Response.fromStream(await _client.send(req).timeout(_timeout));
     } catch (_) {
-      throw ApiException('Could not reach the server. It may be waking up, which can take up to a minute. '
-          'Check your internet connection and try again.');
+      throw ApiException('Can\'t reach the server. It may be waking up (up to a minute). Try again.');
     }
     final data = _decode(r);
     if (method != 'GET' && !_changesNothing(path)) onWrite?.call(path);
@@ -301,8 +300,7 @@ class Api {
     try {
       r = await http.Response.fromStream(await _client.send(req).timeout(_timeout));
     } catch (_) {
-      throw ApiException('Could not reach the server. It may be waking up, which can take up to a minute. '
-          'Check your internet connection and try again.');
+      throw ApiException('Can\'t reach the server. It may be waking up (up to a minute). Try again.');
     }
     return _decode(r) as Map<String, dynamic>;
   }

@@ -278,8 +278,7 @@ class _Banner extends StatelessWidget {
           ),
           if (!compact) const Spacer(),
           SizedBox(height: compact ? 16 : 24),
-          Text('Only you see your data. Tosha never moves your money, never messages anyone, and never shares what '
-              'it reads. Statement files are not kept, and you can delete everything at any time.',
+          Text('Only you see your data. Tosha never moves money or shares it. Delete everything anytime.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: muted)),
         ],
       ),

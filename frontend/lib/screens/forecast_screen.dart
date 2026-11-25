@@ -174,8 +174,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                 _Key(mark: _Dotted(color: c.warn), text: 'Your income'),
               ]),
               const SizedBox(height: 12),
-              Text('Worked out from your own months, including school-fee months and December. Real months land '
-                  'inside the shaded band about 8 times in 10. Tap a month below to see its budget.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+              Text('From your own months, including school fees and December. Most real months land in the range.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
             ]),
           ),
           const SizedBox(height: 20),

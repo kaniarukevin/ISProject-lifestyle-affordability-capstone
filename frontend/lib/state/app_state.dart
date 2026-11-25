@@ -90,8 +90,7 @@ class AppState extends ChangeNotifier {
         try {
           await api.login(email, password);
         } on ApiException {
-          throw ApiException('An account with this email already exists. Sign in instead, or use '
-              '"Forgot password" if you do not remember it.', 409);
+          throw ApiException('This email already has an account. Sign in, or use "Forgot password".', 409);
         }
       }
     }

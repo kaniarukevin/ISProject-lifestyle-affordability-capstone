@@ -295,7 +295,7 @@ class _ScoreCard extends StatelessWidget {
         // 23 Nov: "66 / 100" said nothing about whether 66 is good. Same cut-offs as the Questions page
         // (Affordable 60, Stretch 34 in the engine).
         const SizedBox(height: 6),
-        Text('60 and above: room left over. 34 to 59: tight. Below 34: more going out than coming in.',
+        Text('60+: room left · 34–59: tight · below 34: overspending',
             style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
@@ -966,9 +966,7 @@ class _IncomeUntaggedCard extends StatelessWidget {
           Expanded(child: Text('Who pays you?', style: theme.textTheme.titleLarge)),
         ]),
         const SizedBox(height: 8),
-        Text('Your spending comes from your statement, but for money in Tosha is still using the '
-            'KES ${money(profileKes)} you typed at the start. Tell it which senders are your pay or allowance and '
-            'it uses what really came in each month instead.',
+        Text('Tosha is using the KES ${money(profileKes)} you typed. Tag who pays you to use your real income.',
             style: TextStyle(color: c.muted)),
         const SizedBox(height: 14),
         Align(
@@ -1003,9 +1001,8 @@ class _IncomeGapCard extends StatelessWidget {
           Expanded(child: Text('Does some of your money come outside M-PESA?', style: theme.textTheme.titleLarge)),
         ]),
         const SizedBox(height: 8),
-        Text('Your statement shows about ${_kes(gap['statement_KES'] as num)} coming in each month, but you told us '
-            'you have about ${_kes(gap['profile_KES'] as num)}. Tosha only sees M-PESA, so money paid to a bank or '
-            'in cash is missing, and your months look tighter than they were.',
+        Text('Your statement shows about ${_kes(gap['statement_KES'] as num)} a month, but you said '
+            '${_kes(gap['profile_KES'] as num)}. Does some come by bank or cash?',
             style: TextStyle(color: c.muted)),
         const SizedBox(height: 14),
         Wrap(spacing: 10, runSpacing: 8, children: [

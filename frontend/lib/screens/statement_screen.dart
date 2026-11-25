@@ -69,8 +69,7 @@ class _StatementScreenState extends State<StatementScreen> {
       });
     } catch (_) {
       if (mounted) {
-        setState(() => error = 'Could not open that file on this device. Save the statement PDF to your phone first '
-            '(on an iPhone: open it in Mail, tap Share, then Save to Files), then choose it again.');
+        setState(() => error = 'Couldn\'t open that file. Save the statement PDF to your phone first, then pick it here.');
       }
     }
   }
@@ -145,8 +144,7 @@ class _StatementScreenState extends State<StatementScreen> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const PanelTitle('Paste your M-PESA messages', icon: Icons.sms_outlined),
           const SizedBox(height: 10),
-          Text('Keeps your figures current between statements. In your messages app, press and hold an M-PESA '
-              'confirmation, copy it, and paste it here. Paste as many as you like, one after another.',
+          Text('Keeps you up to date between statements. Long-press an M-PESA SMS, copy, and paste here.',
               style: TextStyle(color: c.muted)),
         ]),
       ),
@@ -334,9 +332,7 @@ class _StatementScreenState extends State<StatementScreen> {
         ),
       ]),
       const SizedBox(height: 10),
-      Text('Shops, bills and M-PESA types Tosha knows are sorted for you. Anything it is not sure about stays '
-          '"Not sorted yet": it still counts in your totals, and nothing is guessed. Money moving between your own '
-          'accounts is left out; what you put away counts as savings.',
+      Text('Known shops and bills are sorted for you. Anything unclear waits in "Not sorted yet".',
           style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
       if ((overlap?['count'] ?? 0) > 0)
         Padding(
@@ -365,8 +361,7 @@ class _StatementScreenState extends State<StatementScreen> {
           ),
       ],
       if (paidBy.isNotEmpty) ...[
-        section('Who pays you', 'Optional, but it makes your score real. Money from a bank could be your pay or '
-            'allowance, or your own money moving. You can change single payments later in Who you pay.'),
+        section('Who pays you', 'Optional, but it makes your score real: tag where your bank money comes from.'),
         ...paidBy.map(_payee),
       ],
       if (big.isNotEmpty) ...[

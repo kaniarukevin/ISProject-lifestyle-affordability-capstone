@@ -163,9 +163,7 @@ class _AffordScreenState extends State<AffordScreen> with ReloadOnChange {
           if (box.maxWidth >= 600)
             Row(children: [
               Expanded(
-                child: Text('Pick something you are thinking about. Tosha runs it against your own last months and '
-                    'tells you whether it fits, what each month would look like, and what would make it work. '
-                    'Nothing changes unless you say you are doing it.',
+                child: Text('Pick a decision. Tosha tests it on your last months and says if it fits.',
                     style: theme.textTheme.bodyLarge?.copyWith(color: c.muted)),
               ),
               ?pastLink,

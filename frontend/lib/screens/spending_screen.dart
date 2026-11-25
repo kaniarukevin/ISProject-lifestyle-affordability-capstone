@@ -405,13 +405,10 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
                     icon: Icons.checklist_rounded,
                     title: 'How to sort these',
                     points: [
-                      'Fastest: the "Who you pay" button on this page. One tap sorts every payment to a '
-                          'person or shop, biggest first.',
+                      'Fastest: "Who you pay" on this page. One tap sorts a whole person or shop.',
                       'Or tap a payment below.',
-                      'Pick what it was for. Keep "Always for this payee" on and every past and future payment '
-                          'to them is sorted too, so most lists shrink after a few taps.',
-                      'You do not have to sort everything. Your score already uses your exact totals; sorting only '
-                          'sharpens the budget split. Stop whenever you like.',
+                      'Or tap a payment and pick what it was.',
+                      'Optional. Your score already uses exact totals.',
                     ],
                     margin: EdgeInsets.only(top: 4, bottom: 8),
                   ),

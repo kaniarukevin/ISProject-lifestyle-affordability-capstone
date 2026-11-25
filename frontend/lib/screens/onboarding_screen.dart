@@ -390,9 +390,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ]),
           ),
           const InfoNote.why(
-              text: 'A family of five needs more than one person living alone on the same money. This is how Tosha '
-                  'judges your spending fairly, and how it sizes your budget. School fees land in some months and '
-                  'not others, so it puts them in the right months.'),
+              text: 'Bigger households need more on the same money. This helps Tosha judge fairly.'),
           if (children > 0) ...[
             const SizedBox(height: 20),
             _yesNo('Do you pay their school fees?', paysChildFees, (v) => setState(() => paysChildFees = v)),
@@ -437,8 +435,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           _money(income, 'Money in, a usual month',
               big: true, helper: 'Needed. Type 0 if nothing comes in right now.'),
           const InfoNote.why(
-              text: 'Everything Tosha tells you is measured against what comes in. A rough figure is fine. Once '
-                  'you add a statement and tell Tosha who pays you, it uses what really came in instead.'),
+              text: 'A rough figure is fine. Your statement corrects it once you tag who pays you.'),
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -473,9 +470,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               optional: true, hint: 'M-Shwari, KCB M-PESA, SACCO, bank, cash'),
           const SizedBox(height: 10),
           const InfoNote.why(
-              text: 'Rent is set aside before everyday money. Savings are how Tosha works out how long you could '
-                  'cover a gap if a month went wrong. Put all your savings together, as they are today. You can '
-                  'change both any time under You.'),
+              text: 'Rent comes out first. Savings show how long you could cope with a bad month.'),
         ]);
       default:
         return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

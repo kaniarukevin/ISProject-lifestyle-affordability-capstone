@@ -144,8 +144,7 @@ Future<bool> showCorrectSheet(BuildContext context, Txn t) async {
           // were trained on them), so say where common in-between payments go.
           Padding(
             padding: const EdgeInsets.only(top: 8),
-            child: Text('Not sure? Pick the closest. A mechanic, fuel or parking is Transport. Clothes or things for '
-                'the house are Shopping. A clinic or medicine is Health.',
+            child: Text('Not sure? Pick the closest: mechanic or fuel = Transport, clothes = Shopping, clinic = Health.',
                 style: Theme.of(ctx).textTheme.bodySmall),
           ),
           SwitchListTile(
@@ -399,21 +398,18 @@ class _PayeesScreenState extends State<PayeesScreen> {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                       const PanelTitle('How this works', icon: Icons.lightbulb_outline_rounded, small: true),
                       const SizedBox(height: 12),
-                      Text('Tell Tosha what each person or business is, once: food, rent, family, transport. It then '
-                          'sorts every past and future payment to them.',
+                      Text('Tag each person or shop once. Tosha sorts all their payments.',
                           style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
                       const InfoNote(
                         icon: Icons.insights_rounded,
-                        text: 'Your totals are already right. This only splits them into food, transport and the '
-                            'rest, so your budget knows where the money goes.',
+                        text: 'Your totals are already right. This just splits them by category.',
                       ),
                       // 25 Nov testers: a year of statements made sorting slow and tiring, and 90% can take many taps. The score uses
                       // the statement-safe model when much is unsorted, so say plainly that sorting is optional.
                       const InfoNote(
                         icon: Icons.flag_rounded,
-                        text: 'You do not have to finish this. Your score and "Can I afford it?" already use your '
-                            'exact totals, sorted or not. Sorting only makes the budget split sharper, and the biggest '
-                            'are at the top, so a few taps here do the most. Stop whenever you like.',
+                        text: 'Optional. Your score already uses exact totals. Sorting just sharpens the budget. Biggest first; '
+                                  'stop anytime.',
                       ),
                       const SizedBox(height: 16),
                       Align(

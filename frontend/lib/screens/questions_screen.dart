@@ -26,9 +26,8 @@ class _Q {
 const _groups = <String, List<_Q>>{
   'The basics': [
     _Q(Icons.waving_hand_rounded, 'What is Tosha for?',
-        'Tosha reads your M-PESA records and tells you three things. How your money is doing right now. What your '
-            'month ahead looks like. And whether you can afford a big change, like a loan, a move or school fees, '
-            'before you commit to it.'),
+        'Tosha reads your M-PESA and tells you how your money is doing, what\'s coming, and whether a big '
+            'decision fits.'),
     _Q(Icons.block_rounded, 'What will Tosha never do?',
         'Tosha never moves your money. It cannot send, withdraw or pay anything.\n\n'
             'It never messages anyone on your behalf, and it never shares what it reads. The only emails it sends '
@@ -36,10 +35,8 @@ const _groups = <String, List<_Q>>{
             'It never changes anything without you pressing a button. A check is just a check until you say you are '
             'doing it.'),
     _Q(Icons.speed_rounded, 'What does my score mean?',
-        'It runs from 0 to 100. The higher it is, the more room your money has. At 60 and above your money usually covers '
-            'your life with something left. Between 34 and 59 it is tight. Below 34 more is going out than coming '
-            'in.\n\n'
-            'It is not a credit score. Nobody else sees it. It changes as your months change.'),
+        '0 to 100. 60+: room left over. 34 to 59: tight. Below 34: more going out than coming in. Tap "Why '
+            'this score?" to see what moves it.'),
     _Q(Icons.mood_rounded, 'What do Doing fine, Stretched and Struggling mean?',
         'Doing fine: what comes in covers your life, and there is room to save.\n\n'
             'Stretched: money is tight. Most of what comes in goes straight out again.\n\n'
@@ -47,18 +44,11 @@ const _groups = <String, List<_Q>>{
             'Under the word you will see the figures it came from. If those look wrong to you, something is '
             'missing: check your records, and your money outside M-PESA.'),
     _Q(Icons.fact_check_rounded, 'How do I know Tosha is right about me?',
-        'Check the figures, not the words. Every answer shows what it was worked out from: what came in, what went '
-            'out, and how many months it used.\n\n'
-            'If a figure looks wrong, it is usually one of three things. Money that came in another way, which you '
-            'can add under You, then Money outside M-PESA. Payments that are not sorted yet, under Who you pay. Or '
-            'cash you spent that M-PESA never saw, which you can type in yourself.'),
+        'Check the figures under each answer. If one looks wrong, it\'s usually money outside M-PESA (add it '
+            'under You), unsorted payments, or cash spending you can type in.'),
     _Q(Icons.rule_rounded, 'What if the income I give is wrong?',
-        'Tosha checks it against your statement once you tell it who pays you: under Your records, Who you pay, '
-            'tag your pay or allowance. From then on your score and budget use the money that actually came in, not '
-            'the figure you typed. Until then, Home reminds you.\n\n'
-            'If your statement shows much less coming in than you said, for two months or more, Home asks you which '
-            'is right. Often both are: part of the money comes another way, like pay into a bank or cash. Add that '
-            'under You, then Money outside M-PESA, and Tosha counts it.'),
+        'Tag who pays you (Your records, then Who you pay) and Tosha uses what really came in. Until then, '
+            'Home reminds you. If some money comes by bank or cash, add it under You, then Money outside M-PESA.'),
   ],
   'Your records': [
     _Q(Icons.calendar_today_rounded, 'Why does Tosha want a whole year?',

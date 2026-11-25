@@ -59,8 +59,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final pick = await showChoiceSheet<String>(
         context,
         title: 'Your income is different',
-        message: 'Did your income change, or are you correcting a mistake? If it changed, your past months keep '
-            '${kes(before.monthlyIncome)} and ${kes(draft.monthlyIncome)} applies from this month.',
+        message: 'Did your income change, or are you fixing a mistake? A change keeps past months as they were.',
         choices: const [
           SheetChoice('It changed from this month', 'from_now', primary: true),
           SheetChoice("I'm correcting a mistake", 'correction'),
