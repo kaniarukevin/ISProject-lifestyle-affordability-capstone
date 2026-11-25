@@ -43,6 +43,7 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
   Map<String, dynamic>? lastCheck;  // the latest "Can I afford it?" result
   String? error;
   bool _stale = false;              // showing the last figures while fresh ones load
+  bool _more = false;               // the year view and notes, folded away at first (25 Nov: information overload)
 
   @override
   void initState() {
@@ -145,18 +146,6 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             onBudget: () => widget.onOpenTab?.call(2),
             onCheck: () => widget.onOpenTab?.call(1),
           ),
-          if (d['savings_check'] != null) ...[
-            _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>()),
-            const SizedBox(height: 20),
-          ],
-          if (d['income_untagged'] != null) ...[
-            _IncomeUntaggedCard(profileKes: (d['income_untagged'] as Map)['profile_KES'] as num),
-            const SizedBox(height: 20),
-          ],
-          if (d['income_gap'] != null) ...[
-            _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
-            const SizedBox(height: 20),
-          ],
           CardRow(children: [
             _ScoreCard(
               score: (d['score'] as num).round(),
@@ -169,6 +158,18 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             _LeftCard(overview: d, forecast: bf),
           ]),
           const SizedBox(height: 20),
+          // 25 Nov (testers: information overload): at most ONE question card at a time, the most important first,
+          // and after the score rather than before it.
+          if (d['income_untagged'] != null) ...[
+            _IncomeUntaggedCard(profileKes: (d['income_untagged'] as Map)['profile_KES'] as num),
+            const SizedBox(height: 20),
+          ] else if (d['income_gap'] != null) ...[
+            _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
+            const SizedBox(height: 20),
+          ] else if (d['savings_check'] != null) ...[
+            _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>()),
+            const SizedBox(height: 20),
+          ],
           CardRow(minWidth: 340, flex: const [2, 1], children: [
             _ForecastCard(overview: d, forecast: bf, onMore: () => widget.onOpenTab?.call(2)),
             _ComingUpCard(
@@ -178,14 +179,25 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
               onAll: () => widget.onOpenTab?.call(3),
             ),
           ]),
-          if (((d['timeline'] as List?) ?? []).isNotEmpty) ...[
-            const SizedBox(height: 20),
+          if (((d['timeline'] as List?) ?? []).isNotEmpty || notes.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _more = !_more),
+                icon: Icon(_more ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+                label: Text(_more ? 'Show less' : 'More: your year month by month, and tips'),
+              ),
+            ),
+          ],
+          if (_more && ((d['timeline'] as List?) ?? []).isNotEmpty) ...[
+            const SizedBox(height: 8),
             _YearCard(
               months: (d['timeline'] as List).cast<Map<String, dynamic>>(),
               onOpen: (key) => widget.onOpenRecords?.call(key),
             ),
           ],
-          if (notes.isNotEmpty) ...[
+          if (_more && notes.isNotEmpty) ...[
             const SizedBox(height: 20),
             Panel(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
