@@ -47,7 +47,7 @@ Future<void> showAddSheet(BuildContext context) => showModalBottomSheet<void>(
                   icon: Icons.edit_rounded,
                   title: 'Type it in',
                   subtitle: 'For cash and anything not on M-PESA',
-                  onTap: () => open(const SpendingScreen()),
+                  onTap: () => open(const SpendingScreen(openAdd: true)),
                 ),
                 const SizedBox(height: 6),
                 Align(

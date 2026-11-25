@@ -24,21 +24,23 @@ String _key(int y, int m) => '$y-${m.toString().padLeft(2, '0')}';
 
 /// Records opened on top of another screen (from You or the Add sheet).
 class SpendingScreen extends StatelessWidget {
-  const SpendingScreen({super.key, this.month});
+  const SpendingScreen({super.key, this.month, this.openAdd = false});
   final String? month;
+  final bool openAdd;   // "Type it in": open the add form straight away
 
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Your records')),
-        body: SafeArea(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: RecordsView(month: month))),
+        body: SafeArea(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: RecordsView(month: month, openAdd: openAdd))),
       );
 }
 
 /// What the household actually spends, one month at a time: the month in numbers, where the money went, and
 /// every record. The rest of the app builds on these. Opens inside the tab you are on.
 class RecordsView extends StatefulWidget {
-  const RecordsView({super.key, this.month});
+  const RecordsView({super.key, this.month, this.openAdd = false});
   final String? month;            // 'YYYY-MM' to open on; default the newest month with records
+  final bool openAdd;             // open the "add a record" form on arrival (from "Type it in")
 
   @override
   State<RecordsView> createState() => _RecordsViewState();
@@ -70,6 +72,8 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
     month = widget.month;
     _showLast();
     _load(month);
+    // 25 Nov: "Type it in" used to land on Records with no form; open the form straight away.
+    if (widget.openAdd) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _add() : null);
   }
 
   @override
