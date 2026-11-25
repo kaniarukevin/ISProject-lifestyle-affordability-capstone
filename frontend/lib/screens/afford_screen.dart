@@ -463,7 +463,19 @@ class ResultView extends StatelessWidget {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Panel(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          VerdictChip(verdict, large: true),
+          Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            VerdictChip(verdict, large: true),
+            if (result['using_savings'] != null)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: c.field, borderRadius: BorderRadius.circular(12)),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.savings_rounded, size: 16),
+                  SizedBox(width: 6),
+                  Text('Using your savings', style: TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+              ),
+          ]),
           if (_verdictMeans[verdict] != null) ...[
             const SizedBox(height: 6),
             Text(_verdictMeans[verdict]!, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
@@ -508,6 +520,11 @@ class ResultView extends StatelessWidget {
           ],
         ]),
       ),
+      // 25 Nov: savings are offered, never assumed. The person decides; the answer says what stays protected.
+      if (result['savings_offer'] is Map && choice != null) ...[
+        gap,
+        _SavingsOffer(offer: (result['savings_offer'] as Map).cast<String, dynamic>(), choice: choice!),
+      ],
       // The explanation sits right under the verdict (9 Nov: it was below the tables, and people missed it).
       if (reasons.length > 1 || goals != null) ...[
         gap,
@@ -581,7 +598,10 @@ class ResultView extends StatelessWidget {
           ]),
         ),
       ],
-      if (lines.isNotEmpty) ...[
+      if (lines.isNotEmpty && lines.every((l) => l['after'] == null)) ...[
+        gap,
+        Panel(child: _Because(icon: Icons.block_rounded, text: (budgets?['note'] ?? '') as String, color: c.warn)),
+      ] else if (lines.isNotEmpty) ...[
         gap,
         Panel(child: _BudgetTable(lines: lines, note: budgets?['note'] as String?)),
       ] else if (result['before'] is Map && result['after'] is Map) ...[
@@ -596,14 +616,15 @@ class ResultView extends StatelessWidget {
             const PanelTitle('Ways to pay', icon: Icons.payments_outlined),
             const SizedBox(height: 14),
             Text('In instalments: ${kesAmount(result['instalment_per_month_KES'] as num)} a month'
-                '${result['instalment_months'] != null ? ' for ${result['instalment_months']} months' : result['lasts_months'] != null ? ' for ${result['lasts_months']} months' : ''}'
+                '${_forMonths(result['instalment_months'] ?? result['lasts_months'])}'
                 '${result['total_paid_KES'] != null ? ', ${kesAmount(result['total_paid_KES'] as num)} in total' : ''}.',
                 style: theme.textTheme.bodyLarge),
             if (result['pay_from_savings'] is Map && (result['pay_from_savings'] as Map)['possible'] == true)
               Text('Or all now from savings, keeping ${kesAmount((result['pay_from_savings'] as Map)['savings_left_KES'] as num)}.',
                   style: theme.textTheme.bodyLarge),
-            if (result['months_to_save_up_first'] is num)
-              Text('Or save up first: about ${result['months_to_save_up_first']} months.', style: theme.textTheme.bodyLarge),
+            if (result['months_to_save_up_first'] is num && (result['months_to_save_up_first'] as num) > 0)
+              Text('Or save up first: about ${_forMonths(result['months_to_save_up_first']).replaceFirst(' for ', '')}.',
+                  style: theme.textTheme.bodyLarge),
           ]),
         ),
       ],
@@ -661,6 +682,82 @@ const _verdictMeans = {
 };
 
 /// One reason in the Why block: an icon, then the sentence.
+/// " for 1 month" / " for 6 months" / "" (25 Nov sweep: "for 1 months").
+String _forMonths(Object? n) => n is num ? ' for ${n.round()} month${n.round() == 1 ? '' : 's'}' : '';
+
+/// "Use your savings?": what is free after the cushion, bills due soon and goal money, and what you would keep.
+/// Runs the same check again with use_savings only when the person taps it.
+class _SavingsOffer extends StatefulWidget {
+  const _SavingsOffer({required this.offer, required this.choice});
+  final Map<String, dynamic> offer;
+  final Map<String, dynamic> choice;
+
+  @override
+  State<_SavingsOffer> createState() => _SavingsOfferState();
+}
+
+class _SavingsOfferState extends State<_SavingsOffer> {
+  bool _busy = false;
+
+  Future<void> _use() async {
+    setState(() => _busy = true);
+    try {
+      final choice = {...widget.choice, 'use_savings': true};
+      final r = await context.read<AppState>().api.afford(choice);
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ResultScreen(result: r, choice: choice)));
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final o = widget.offer;
+    final kept = (o['kept'] as Map).cast<String, dynamic>();
+    final keptParts = [
+      if ((kept['cushion_KES'] as num) > 0) '${kesAmount(kept['cushion_KES'] as num)} cushion (${o['cushion_months']} months)',
+      if ((kept['bills_due_KES'] as num) > 0) '${kesAmount(kept['bills_due_KES'] as num)} bills due soon',
+      if ((kept['goals_KES'] as num) > 0) '${kesAmount(kept['goals_KES'] as num)} for your goals',
+    ];
+    final rebuild = o['months_to_rebuild'] as num?;
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.savings_rounded),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Use your savings?', style: theme.textTheme.titleMedium)),
+        ]),
+        const SizedBox(height: 8),
+        Text(o['covers_all'] == true
+            ? 'Your savings could cover ${kesAmount(o['use_KES'] as num)}. You would keep ${kesAmount(o['keep_after_KES'] as num)}.'
+            : 'Your savings could cover ${kesAmount(o['use_KES'] as num)} of it. The rest would come from your monthly money.'),
+        if (keptParts.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text('Kept aside first: ${keptParts.join(', ')}.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ],
+        if (rebuild != null) ...[
+          const SizedBox(height: 2),
+          Text(rebuild > 36
+              ? 'At your usual saving, it would take over 3 years to save it back.'
+              : 'At your usual saving, about $rebuild month${rebuild == 1 ? '' : 's'} to save it back.',
+              style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ],
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          onPressed: _busy ? null : _use,
+          icon: const Icon(Icons.savings_outlined),
+          label: Text(_busy ? 'Checking…' : 'Check it using savings'),
+        ),
+      ]),
+    );
+  }
+}
+
 class _Because extends StatelessWidget {
   const _Because({required this.icon, required this.text, this.color});
   final IconData icon;
