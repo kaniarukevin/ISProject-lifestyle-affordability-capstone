@@ -45,7 +45,7 @@ String categoryLabel(String key) => spendingCategories[key] ?? extraCategories[k
 const Map<String, String> tagLabels = {
   'housing': 'Rent',
   'food_groceries': 'Food',
-  'transport': 'Transport',
+  'transport': 'Transport, fuel and repairs',
   'utilities': 'Power, water and internet',
   'airtime_data': 'Airtime and data',
   'mobile_money_transfers': 'Family, friends and giving',

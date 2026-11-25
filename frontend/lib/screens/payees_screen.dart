@@ -140,6 +140,14 @@ Future<bool> showCorrectSheet(BuildContext context, Txn t) async {
             allowOwnAccount: t.payeeKey != null,
             onPick: (tag) => Navigator.pop(ctx, tag),
           ),
+          // 25 Nov tester: "a mechanic repair, didn't know where to put it". The categories are fixed (the models
+          // were trained on them), so say where common in-between payments go.
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text('Not sure? Pick the closest. A mechanic, fuel or parking is Transport. Clothes or things for '
+                'the house are Shopping. A clinic or medicine is Health.',
+                style: Theme.of(ctx).textTheme.bodySmall),
+          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             value: t.oneOff,

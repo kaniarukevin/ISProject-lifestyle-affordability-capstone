@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../widgets/google_button.dart';
@@ -27,6 +28,12 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _agreed = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    context.read<AppState>().api.wake();   // start waking the server while they type
+  }
 
   @override
   void dispose() {
@@ -60,7 +67,11 @@ class _AuthScreenState extends State<AuthScreen> {
       _error = null;
     });
     try {
-      await context.read<AppState>().signIn(email, password, newAccount: _newAccount, consent: _agreed);
+      final app = context.read<AppState>();
+      await app.signIn(email, password, newAccount: _newAccount, consent: _agreed);
+      // Tell the browser the sign-in form is done, so Google Password Manager saves the password at once
+      // instead of waiting on a form that has already left the screen (it used to hang).
+      TextInput.finishAutofillContext();
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../widgets/app_tour.dart';
 import '../widgets/panel.dart';
 import 'about_numbers_screen.dart';
 
@@ -51,6 +52,13 @@ const _groups = <String, List<_Q>>{
             'If a figure looks wrong, it is usually one of three things. Money that came in another way, which you '
             'can add under You, then Money outside M-PESA. Payments that are not sorted yet, under Who you pay. Or '
             'cash you spent that M-PESA never saw, which you can type in yourself.'),
+    _Q(Icons.rule_rounded, 'What if the income I give is wrong?',
+        'Tosha checks it against your statement once you tell it who pays you: under Your records, Who you pay, '
+            'tag your pay or allowance. From then on your score and budget use the money that actually came in, not '
+            'the figure you typed. Until then, Home reminds you.\n\n'
+            'If your statement shows much less coming in than you said, for two months or more, Home asks you which '
+            'is right. Often both are: part of the money comes another way, like pay into a bank or cash. Add that '
+            'under You, then Money outside M-PESA, and Tosha counts it.'),
   ],
   'Your records': [
     _Q(Icons.calendar_today_rounded, 'Why does Tosha want a whole year?',
@@ -129,6 +137,13 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                     const SizedBox(height: 6),
                     Text('What Tosha does, what the numbers mean, and why it asks what it asks. Tap a question.',
                         style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF2B3110))),
+                    const SizedBox(height: 12),
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(backgroundColor: c.onLime, foregroundColor: c.lime),
+                      onPressed: () => AppTour.show(context),
+                      icon: const Icon(Icons.explore_rounded),
+                      label: const Text('Take the quick tour'),
+                    ),
                   ]),
                 ),
                 for (final group in _groups.entries) ...[

@@ -10,6 +10,7 @@ import '../widgets/busy_words.dart';
 import '../widgets/charts.dart';
 import '../widgets/choice_sheet.dart';
 import '../widgets/format.dart';
+import '../widgets/info_note.dart';
 import '../widgets/money_in.dart';
 import '../widgets/panel.dart';
 import '../widgets/state_chip.dart';
@@ -398,6 +399,19 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
                   ]),
                 ),
                 const SizedBox(height: 8),
+                if (_filter == 'unsorted' && unsorted > 0)
+                  // Testers asked for a guide through sorting: three steps, shown only while sorting.
+                  const InfoNote(
+                    icon: Icons.checklist_rounded,
+                    title: 'How to sort these',
+                    points: [
+                      'Tap a payment below.',
+                      'Pick what it was for. Keep "Always for this payee" on and every past and future payment '
+                          'to them is sorted too, so most lists shrink after a few taps.',
+                      'Not sure? Leave it. It stays outside your budget lines until you sort it.',
+                    ],
+                    margin: EdgeInsets.only(top: 4, bottom: 8),
+                  ),
                 if (txs == null)
                   const BusyCenter(monthWords)
                 else if (shown.isEmpty)
@@ -445,7 +459,7 @@ class _MonthSummary extends StatelessWidget {
               onTap: () => editMonthIncome(context, summary['year'] as int, summary['month'] as int,
                   scored['income'] as num, setByYou: scored['income_from'] == 'you'),
               child: figure(kesAmount(scored['income'] as num),
-                  scored['income_from'] == 'you' ? 'Money in · set by you · change' : 'Money in · change'),
+                  scored['income_from'] == 'you' ? 'Money in (set by you) · tap to edit' : 'Money in · tap to edit'),
             ),
           if (scored != null) figure(kesAmount(scored['saved'] as num), 'Saved'),
           if (oneOff > 0) figure(kesAmount(oneOff), 'One-off, kept apart'),

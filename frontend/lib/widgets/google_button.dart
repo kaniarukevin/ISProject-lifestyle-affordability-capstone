@@ -11,16 +11,18 @@ import 'google_button_target.dart' if (dart.library.js_interop) 'google_button_t
 /// "Continue with Google" (11 Nov). The server checks the token with Google, then either opens a new account or
 /// links an existing email account with the same verified address, so nobody ends up with two accounts.
 ///
-/// The client id is passed in at build time:
-///   flutter build web --release --dart-define=GOOGLE_CLIENT_ID=xxx.apps.googleusercontent.com
-/// Without it the button is simply not shown, and signing in with an email and password still works.
+/// The live client id is the default (see clientId); pass --dart-define=GOOGLE_CLIENT_ID=... to use another, or
+/// --dart-define=GOOGLE_CLIENT_ID= (empty) to hide the button. Email and password sign-in always works.
 class GoogleButton extends StatefulWidget {
   const GoogleButton({super.key, this.onError});
 
   /// Shown on the sign-in screen when Google works but the server refuses the sign-in.
   final ValueChanged<String>? onError;
 
-  static const clientId = String.fromEnvironment('GOOGLE_CLIENT_ID');
+  // A web client id is public (every visitor's browser sees it), so the live one is the default: a plain
+  // `flutter build web` keeps the Google button. --dart-define=GOOGLE_CLIENT_ID=... still overrides it.
+  static const clientId = String.fromEnvironment('GOOGLE_CLIENT_ID',
+      defaultValue: '882679562067-v8a5rvooqakj3iia12f4pqme5gokbmdv.apps.googleusercontent.com');
   static bool get available => kIsWeb && clientId.isNotEmpty;
 
   @override

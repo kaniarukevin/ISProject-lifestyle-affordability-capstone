@@ -53,6 +53,14 @@ class Api {
         if (token != null) 'Authorization': 'Bearer $token',
       };
 
+  /// Wake the free server as soon as the sign-in page opens, so it is up by the time someone presses the button
+  /// (25 Nov: a tester got "Could not reach the server" on her first try). Errors are ignored.
+  Future<void> wake() async {
+    try {
+      await _client.get(Uri.parse('$baseUrl/health')).timeout(_timeout);
+    } catch (_) {}
+  }
+
   Future<dynamic> _send(String method, String path, [Object? body]) async {
     final uri = Uri.parse('$baseUrl$path');
     late http.Response r;
@@ -61,7 +69,8 @@ class Api {
       if (body != null) req.body = jsonEncode(body);
       r = await http.Response.fromStream(await _client.send(req).timeout(_timeout));
     } catch (_) {
-      throw ApiException('Could not reach the server. Check your internet connection and try again.');
+      throw ApiException('Could not reach the server. It may be waking up, which can take up to a minute. '
+          'Check your internet connection and try again.');
     }
     final data = _decode(r);
     if (method != 'GET' && !_changesNothing(path)) onWrite?.call(path);
@@ -292,7 +301,8 @@ class Api {
     try {
       r = await http.Response.fromStream(await _client.send(req).timeout(_timeout));
     } catch (_) {
-      throw ApiException('Could not reach the server. Check your internet connection and try again.');
+      throw ApiException('Could not reach the server. It may be waking up, which can take up to a minute. '
+          'Check your internet connection and try again.');
     }
     return _decode(r) as Map<String, dynamic>;
   }

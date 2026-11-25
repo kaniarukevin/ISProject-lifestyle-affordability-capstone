@@ -72,7 +72,9 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
       final forecast = api.budgetForecast().then<Map<String, dynamic>?>((f) => f['has_data'] == true ? f : null,
           onError: (_) => null); // for example no income yet: the rest of the overview still shows
       final checks = api.scenarios().then<Map<String, dynamic>?>(
-          (h) => h.isEmpty ? null : (h.first['result'] as Map).cast<String, dynamic>(),
+          (h) => h.isEmpty
+              ? null
+              : {...(h.first['result'] as Map).cast<String, dynamic>(), 'checked_at': h.first['created_at']},
           onError: (_) => null); // past checks are optional
       final d = await api.overview();
       final f = await forecast;
@@ -147,6 +149,10 @@ class _DashboardScreenState extends State<DashboardScreen> with ReloadOnChange {
             _SavingsCheckCard(check: (d['savings_check'] as Map).cast<String, dynamic>()),
             const SizedBox(height: 20),
           ],
+          if (d['income_untagged'] != null) ...[
+            _IncomeUntaggedCard(profileKes: (d['income_untagged'] as Map)['profile_KES'] as num),
+            const SizedBox(height: 20),
+          ],
           if (d['income_gap'] != null) ...[
             _IncomeGapCard(gap: (d['income_gap'] as Map).cast<String, dynamic>()),
             const SizedBox(height: 20),
@@ -209,13 +215,18 @@ String? _scoreFacts(Map<String, dynamic> d) {
   final spent = (m['spent'] as num?)?.round() ?? 0;
   final income = (m['income'] as num?)?.round() ?? 0;
   if (income <= 0) return null;
-  final line = 'In ${_monthShort[(m['month'] as int) - 1]} about KES ${money(spent)} went out and about '
-      'KES ${money(income)} came in.';
+  // 23 Nov: bills from Commitments that are not in the records are counted here, so say so, or the figure
+  // disagrees with Records with no reason given.
+  final recorded = (m['recorded'] as num?)?.round() ?? spent;
+  final extra = spent - recorded >= 500 ? spent - recorded : 0;
+  final line = 'In ${_monthShort[(m['month'] as int) - 1]} about KES ${money(spent)} went out'
+      '${extra > 0 ? ' (KES ${money(recorded)} in your records plus KES ${money(extra)} of bills from Commitments)' : ''}'
+      ' and about KES ${money(income)} came in.';
   final rec = (d['track_record'] as Map?)?.cast<String, dynamic>();
   final over = (rec?['overspent_months'] as num?)?.toInt() ?? 0;
   final of = (rec?['months'] as num?)?.toInt() ?? 0;
   if (of >= 3 && over > 0) return '$line In $over of your last $of months you spent more than came in.';
-  if (of >= 3) return '$line Your last $of months all stayed inside what came in.';
+  if (of >= 3) return '$line In none of your last $of months did you spend more than came in.';
   return line;
 }
 
@@ -269,6 +280,11 @@ class _ScoreCard extends StatelessWidget {
           const SizedBox(width: 12),
           StateChip(state: state, background: Colors.white, ink: _onLime),
         ]),
+        // 23 Nov: "66 / 100" said nothing about whether 66 is good. Same cut-offs as the Questions page
+        // (Affordable 56, Stretch 33 in the engine).
+        const SizedBox(height: 6),
+        Text('Above 56: room left over. 33 to 56: tight. Below 33: more going out than coming in.',
+            style: theme.textTheme.bodySmall?.copyWith(color: const Color(0xFF3A4214))),
         const SizedBox(height: 10),
         Text(stateMeaning(state), style: theme.textTheme.bodyLarge?.copyWith(color: const Color(0xFF2B3110))),
         if (facts != null) ...[
@@ -354,6 +370,15 @@ class _AffordCard extends StatelessWidget {
                   ],
                   Text((last['title'] ?? 'Check') as String,
                       style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  // 23 Nov: an old answer sat here as if it were today's, so a bigger cost checked weeks ago
+                  // could read Affordable next to a smaller one that is a Stretch now.
+                  if (DateTime.tryParse((last['checked_at'] ?? '') as String) case final at?) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                        'Checked ${at.toLocal().day} ${_monthShort[at.toLocal().month - 1]}'
+                        '${DateTime.now().difference(at).inDays >= 7 ? '. Your money has changed since, so check again for today\'s answer.' : ', on your figures then.'}',
+                        style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+                  ],
                 ]),
               ),
             ),
@@ -396,7 +421,7 @@ class _LeftCard extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           left >= 0
-              ? 'Before savings · $daysLeft days to go'
+              ? 'Before you put any aside · $daysLeft days to go'
               : savings >= -left
                   ? 'This comes out of your savings, which go down to ${kesAmount(savings + left)} · $daysLeft days to go'
                   : 'More than your savings (${kesAmount(savings)}) can cover · $daysLeft days to go',
@@ -608,7 +633,12 @@ class _ComingUpCard extends StatelessWidget {
             Expanded(
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(g['name'] as String, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
-                Text('At risk: needs ${kesAmount(g['monthly_needed_KES'] as num)} a month',
+                // 23 Nov: "At risk" next to "Doing fine" read as a contradiction; say what is short.
+                Text(
+                    g['put_aside_KES'] is num
+                        ? 'Behind: needs ${kesAmount(g['monthly_needed_KES'] as num)} a month, and you usually have '
+                            'about ${kesAmount(g['put_aside_KES'] as num)} to put aside'
+                        : 'Behind: needs ${kesAmount(g['monthly_needed_KES'] as num)} a month',
                     style: theme.textTheme.bodySmall?.copyWith(color: c.warn)),
               ]),
             ),
@@ -760,8 +790,9 @@ class _YearCard extends StatelessWidget {
         const PanelTitle('Your year', icon: Icons.grid_view_rounded),
         const SizedBox(height: 10),
         Text(
-            'Each square is a month: ${counts['Stable']} doing fine, ${counts['Strained']} stretched and '
-            '${counts['Critical']} struggling. Tap a month to see it.',
+            // 23 Nov: "stretched" read as overspending next to "none of your months spent more than came in".
+            'Each square is a month: ${counts['Stable']} doing fine, ${counts['Strained']} stretched (tight, little '
+            'left over) and ${counts['Critical']} struggling. Tap a month to see it.',
             style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
         const SizedBox(height: 16),
         LayoutBuilder(builder: (context, box) {
@@ -905,6 +936,42 @@ class _SavingsCheckCardState extends State<_SavingsCheckCard> {
 }
 
 /// The statement shows clearly less money coming in than the user said (8 Nov: a 16,000 salary on M-PESA, the
+/// 25 Nov (tester): a statement is in, but no sender is tagged as pay or allowance, so the score still uses the
+/// income typed at setup. Point straight at the fix.
+class _IncomeUntaggedCard extends StatelessWidget {
+  const _IncomeUntaggedCard({required this.profileKes});
+  final num profileKes;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    return Panel(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Icon(Icons.payments_rounded, color: theme.colorScheme.onSurface),
+          const SizedBox(width: 10),
+          Expanded(child: Text('Who pays you?', style: theme.textTheme.titleLarge)),
+        ]),
+        const SizedBox(height: 8),
+        Text('Your spending comes from your statement, but for money in Tosha is still using the '
+            'KES ${money(profileKes)} you typed at the start. Tell it which senders are your pay or allowance and '
+            'it uses what really came in each month instead.',
+            style: TextStyle(color: c.muted)),
+        const SizedBox(height: 14),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: c.lime, foregroundColor: c.onLime),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PayeesScreen())),
+            child: const Text('Tag who pays me'),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
 /// rest of a 30,000 income paid to a bank). Tosha asks once instead of scoring the months as poorer.
 class _IncomeGapCard extends StatelessWidget {
   const _IncomeGapCard({required this.gap});

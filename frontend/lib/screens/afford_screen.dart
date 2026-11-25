@@ -620,7 +620,7 @@ class ResultView extends StatelessWidget {
             question: 'Does this answer match what you would expect?'),
       ],
       const SizedBox(height: 12),
-      Text('Based on ${result['months_used'] ?? 'your recent'} month(s) of your own records. '
+      Text('Based on ${result['months_used'] ?? 'your recent'} month${result['months_used'] == 1 ? '' : 's'} of your own records. '
           'This is guidance from a model, not financial advice.',
           style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
     ]);
@@ -637,8 +637,13 @@ class ResultView extends StatelessWidget {
           'a month. That frees ${kesAmount(m['total_cut_KES'] as num)} and leaves ${kesAmount(m['left_over_after_KES'] as num)}.';
     }
 
-    if (cut['to_be_comfortable'] != null) return plan(cut['to_be_comfortable']);
-    if (cut['to_break_even'] != null) return plan(cut['to_break_even']);
+    // 23 Nov: "to_be_comfortable" is a sentence when no cut reaches Affordable. It used to win over a real
+    // break-even plan, so a KES 110 shortfall read "Not reachable by cutting ... by up to half".
+    final comfy = cut['to_be_comfortable'], even = cut['to_break_even'];
+    if (comfy is Map) return plan(comfy);
+    if (even is Map) return 'To stop being short: ${plan(even)}';
+    if (comfy != null) return plan(comfy);
+    if (even != null) return plan(even);
     if (cut['monthly_cuts_KES'] is Map) {
       final cuts = (cut['monthly_cuts_KES'] as Map).cast<String, num>().entries.where((e) => e.value > 0);
       return 'Spend ${cuts.map((e) => 'KES ${money(e.value)} less on ${categoryLabel(e.key).toLowerCase()}').join(', ')} a month.';

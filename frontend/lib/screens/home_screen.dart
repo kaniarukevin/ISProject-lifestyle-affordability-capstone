@@ -4,12 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
+import '../widgets/app_tour.dart';
 import '../widgets/tosha_logo.dart';
 import 'add_sheet.dart';
 import 'afford_screen.dart';
 import 'commitments_screen.dart';
 import 'dashboard_screen.dart';
 import 'forecast_screen.dart';
+import 'questions_screen.dart';
 import 'spending_screen.dart';
 import 'you_screen.dart';
 
@@ -54,6 +56,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _restorePlace();
     _requests = context.read<AppState>().tabRequest..addListener(_onTabRequest);
+    // First time Home opens on this device: a short walk through the five places.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AppTour.showIfNew(context);
+    });
   }
 
   ValueNotifier<int?>? _requests;
@@ -223,6 +229,13 @@ class _Page extends StatelessWidget {
                 Text(title, style: wide ? theme.textTheme.headlineMedium : theme.textTheme.headlineSmall),
               ]),
             ),
+            // Questions on every page: testers could not find them under You.
+            IconButton(
+              tooltip: 'Questions',
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuestionsScreen())),
+              icon: Icon(Icons.help_outline_rounded, color: c.muted),
+            ),
+            const SizedBox(width: 4),
             if (onRecords != null) ...[
               wide
                   ? FilledButton.tonal(onPressed: onRecords, child: const Text('Records'))

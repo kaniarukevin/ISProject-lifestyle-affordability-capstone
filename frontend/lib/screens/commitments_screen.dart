@@ -142,6 +142,17 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
     final s = summary;
     final fixed = (s?['for_budget']?['fixed'] as Map?)?.cast<String, dynamic>() ?? {};
     final monthlyTotal = fixed.values.fold<num>(0, (a, v) => a + (v as num));
+    // Show what the total is made of, so it always matches the items listed below
+    // (bills paid per term or year are spread per month; extra paid on debts is counted too).
+    final billsMonthly = monthlyTotal - ((fixed['loan_repayment'] ?? 0) as num);
+    final debtPayments = c!.debts.fold<double>(0, (a, d) => a + d.monthlyPayment);
+    final extraOnDebts = c!.debts.isEmpty ? 0.0 : c!.extraPerMonth;
+    final totalParts = [
+      if (billsMonthly > 0) 'Bills KES ${money(billsMonthly)}',
+      if (debtPayments > 0) 'debt payments KES ${money(debtPayments)}',
+      if (extraOnDebts > 0) 'extra on debts KES ${money(extraOnDebts)}',
+    ];
+    final totalNote = totalParts.length > 1 ? totalParts.join(' + ') : null;
     final goalsMonthly = (s?['for_budget']?['goal_per_month'] ?? 0) as num;
     final debts = s?['debts'] as Map<String, dynamic>?;
     final owed = c!.debts.fold<double>(0, (a, d) => a + d.balance);
@@ -173,10 +184,10 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
             Padding(padding: const EdgeInsets.only(top: 10), child: Text(error!, style: TextStyle(color: col.warn))),
           const SizedBox(height: 16),
           CardRow(minWidth: 220, children: [
-            stat('Bills and debts each month', 'KES ${money(monthlyTotal)}'),
+            stat('Bills and debts each month', 'KES ${money(monthlyTotal)}', totalNote),
             stat('Debts left', 'KES ${money(owed)}',
                 debts == null ? null : debts['as_planned']['debt_free_by'] != null
-                    ? 'Debt-free by ${debts['as_planned']['debt_free_by']}'
+                    ? 'Debt-free by ${_monthName(debts['as_planned']['debt_free_by'])}'
                     : 'Some debts are never cleared at these payments'),
             stat('Towards goals each month', 'KES ${money(goalsMonthly)}'),
           ]),
@@ -238,7 +249,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                     title: e.value.name,
                     amount: '${money(e.value.monthlyPayment)} a month',
                     subtitle: 'KES ${money(e.value.balance)} still owed · ${e.value.annualRate}% interest a year'
-                        '${plan != null && plan['cleared_by'] != null ? ' · paid off by ${plan['cleared_by']}' : ''}'
+                        '${plan != null && plan['cleared_by'] != null ? ' · paid off by ${_monthName(plan['cleared_by'])}' : ''}'
                         '${_fromCheck(e.value.fromCheck)}',
                     onTap: () => _edit('debt', e.value, (x) => c!.debts[e.key] = x as Debt),
                     onDelete: () => _confirmRemove(e.value.name, () => c!.debts.removeAt(e.key)),
@@ -265,7 +276,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                       ),
                       if (debts?['extra_saves'] != null) ...[
                         const SizedBox(height: 8),
-                        Text('Debt-free ${debts!['extra_saves']['months']} month(s) sooner, '
+                        Text('Debt-free ${debts!['extra_saves']['months']} month${debts['extra_saves']['months'] == 1 ? '' : 's'} sooner, '
                             'KES ${money(debts['extra_saves']['interest_KES'] as num)} less interest.',
                             style: theme.textTheme.bodyMedium),
                       ],
@@ -579,4 +590,11 @@ class _AddDialogState extends State<_AddDialog> {
       ],
     );
   }
+}
+
+/// "2028-10" as "October 2028" (23 Nov: the raw form read like a typo).
+String _monthName(dynamic ym) {
+  final p = '$ym'.split('-');
+  final m = p.length == 2 ? int.tryParse(p[1]) : null;
+  return m != null && m >= 1 && m <= 12 ? '${monthLong[m - 1]} ${p[0]}' : '$ym';
 }

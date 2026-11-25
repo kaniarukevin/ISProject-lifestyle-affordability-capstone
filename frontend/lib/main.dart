@@ -33,8 +33,9 @@ class App extends StatelessWidget {
         themeMode: context.watch<ThemeController>().mode,
         home: const _Start(),
         // A whole-app wait (logging out) is said in words over whatever screen is showing.
+        // SelectionArea: text anywhere in the app can be selected and copied (it could not be before).
         builder: (context, child) => Stack(children: [
-          ?child,
+          if (child != null) SelectionArea(child: child),
           if (context.watch<AppState>().busy case final lines?)
             Positioned.fill(
               child: ColoredBox(

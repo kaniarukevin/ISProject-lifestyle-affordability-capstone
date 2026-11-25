@@ -246,7 +246,30 @@ class _BudgetViewState extends State<BudgetView> with ReloadOnChange {
         children: [
           switcher,
           const SizedBox(height: 16),
-          if (d['safe_per_day'] != null && daysLeft > 0)
+          if (d['safe_per_day'] != null && daysLeft > 0 && (d['everyday_left'] as num) <= 0)
+            // Everyday money is used up: say so plainly instead of "KES 0 a day" and a negative amount left.
+            Panel(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  Icon(Icons.warning_amber_rounded, color: c.warn),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Your everyday money for this month is used up',
+                        style: theme.textTheme.titleMedium?.copyWith(color: c.warn, fontWeight: FontWeight.w700)),
+                  ),
+                ]),
+                const SizedBox(height: 8),
+                Text(
+                    (d['everyday_left'] as num) < 0
+                        ? 'You have spent ${kesAmount(-(d['everyday_left'] as num))} more than your plan allows for '
+                            'everyday spending. Anything more in the next $daysLeft day${daysLeft == 1 ? '' : 's'} '
+                            'comes out of your savings, so keep to essentials until the month ends.'
+                        : 'Anything more in the next $daysLeft day${daysLeft == 1 ? '' : 's'} comes out of your '
+                            'savings, so keep to essentials until the month ends.',
+                    style: TextStyle(color: c.muted)),
+              ]),
+            ),
+          if (d['safe_per_day'] != null && daysLeft > 0 && (d['everyday_left'] as num) > 0)
             Panel(
               color: c.lime,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

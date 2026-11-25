@@ -437,8 +437,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           _money(income, 'Money in, a usual month',
               big: true, helper: 'Needed. Type 0 if nothing comes in right now.'),
           const InfoNote.why(
-              text: 'Everything Tosha tells you is measured against what comes in. A rough figure is fine; your '
-                  'statement will correct it.'),
+              text: 'Everything Tosha tells you is measured against what comes in. A rough figure is fine. Once '
+                  'you add a statement and tell Tosha who pays you, it uses what really came in instead.'),
           const SizedBox(height: 20),
           Panel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

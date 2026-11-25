@@ -78,7 +78,23 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> signIn(String email, String password, {required bool newAccount, bool consent = false}) async {
-    newAccount ? await api.register(email, password, consent: consent) : await api.login(email, password);
+    if (!newAccount) {
+      await api.login(email, password);
+    } else {
+      try {
+        await api.register(email, password, consent: consent);
+      } on ApiException catch (e) {
+        // 25 Nov: on a slow connection the account was created but the reply never arrived, so pressing again
+        // said "already exists". Same email and password: it is their account, so just sign them in.
+        if (e.status != 409) rethrow;
+        try {
+          await api.login(email, password);
+        } on ApiException {
+          throw ApiException('An account with this email already exists. Sign in instead, or use '
+              '"Forgot password" if you do not remember it.', 409);
+        }
+      }
+    }
     await _afterLogin();
   }
 

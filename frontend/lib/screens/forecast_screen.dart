@@ -136,7 +136,7 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
         children: [
           Text(d['based_on'] == 'setup'
               ? 'Based on the rough figures you gave at setup'
-              : 'Based on ${d['months_used']} month(s) of your records',
+              : 'Based on ${d['months_used']} month${d['months_used'] == 1 ? '' : 's'} of your records',
               style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
           const SizedBox(height: 16),
           Panel(
@@ -215,12 +215,13 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                     [m, x['budget'] as num, x['usual'] as num].reduce((a, b) => a > b ? a : b))),
                 const SizedBox(height: 4),
                 Wrap(spacing: 14, runSpacing: 6, children: [
-                  _Key(mark: Container(width: 14, height: 8, color: theme.colorScheme.onSurface), text: 'Budget'),
+                  _Key(mark: Container(width: 14, height: 8, color: theme.colorScheme.onSurface), text: 'Budget: the most to spend'),
                   _Key(mark: Container(width: 14, height: 8, color: c.muted), text: 'You usually spend'),
                   _Key(mark: Container(width: 14, height: 8, color: c.warn), text: 'Usually over budget'),
                 ]),
                 const SizedBox(height: 14),
-                Text('Rent, loans and fees are taken out first; these are the everyday lines.',
+                Text('Rent, loans and fees are taken out first; these are the everyday lines. A budget is a limit, '
+                    'not a target: spending what you usually do leaves more to save.',
                     style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                 const SizedBox(height: 12),
                 Align(
@@ -248,7 +249,9 @@ class _ForecastScreenState extends State<ForecastScreen> with ReloadOnChange {
                         value: path.last['usual_pace'] as num, from: d['savings_now'] as num),
                     const SizedBox(height: 12),
                     _SavingsLine(
-                        label: 'End of ${monthLong[(path.last['month'] as int) - 1]}, if you keep to your budget',
+                        // 23 Nov: "keep to your budget" read as being careful, yet savings fell. The line assumes
+                        // every shilling of the budget is spent.
+                        label: 'End of ${monthLong[(path.last['month'] as int) - 1]}, if you spend your whole budget',
                         value: path.last['on_budget'] as num, from: d['savings_now'] as num),
                     const SizedBox(height: 14),
                     Text(_savingsSentence(path, d['savings_now'] as num),
