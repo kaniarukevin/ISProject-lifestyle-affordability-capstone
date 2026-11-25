@@ -1716,3 +1716,40 @@ def test_afford_terms_are_whole_months_up_to_25_years(client, monkeypatch):
     for months in (1, 12, 300, "12"):
         r = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 60000, "months": months})
         assert r.status_code == 200, months
+
+
+def _jan_fees_household(client, fees=15000):
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "dependants": 1,
+                                               "incomes": [{"name": "Salary", "amount": 30000}]})
+    for y, m in [(2025, 11), (2025, 12)] + [(2026, k) for k in range(1, 11)]:
+        rows = [{"date": f"{y}-{m:02d}-02", "amount": 9000, "category": "housing"},
+                {"date": f"{y}-{m:02d}-05", "amount": 8000, "category": "food_groceries"},
+                {"date": f"{y}-{m:02d}-09", "amount": 2000, "category": "transport"}]
+        if m == 1 and fees:
+            rows.append({"date": f"{y}-01-06", "amount": fees, "category": "school_fees"})
+        client.post("/me/transactions", headers=h, json=rows)
+    return h
+
+
+def test_afford_on_credit_flags_the_school_fee_month(client, monkeypatch):
+    """26 Nov: a purchase on credit showed the same money left every month, while the home screen warned that
+    January (school fees) costs more than comes in."""
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _jan_fees_household(client)
+    a = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 36000, "months": 12}).get_json()
+    assert a["verdict"] != "Affordable"
+    assert any(t["month"] == 1 and t["short_KES"] > 0 for t in a["tight_months"])
+    assert a["reasons"][0].startswith("January costs about KES 15,000 more than a usual month, mostly school fees")
+    jan = next(r for r in a["cash_flow"] if r["calendar_month"] == 1)
+    feb = next(r for r in a["cash_flow"] if r["calendar_month"] == 2)
+    assert jan["left_after_KES"] < feb["left_after_KES"]
+
+
+def test_afford_without_heavy_months_is_unchanged(client, monkeypatch):
+    monkeypatch.setattr(store, "user_forecast_model", lambda: None)
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = _jan_fees_household(client, fees=0)
+    a = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 36000, "months": 12}).get_json()
+    assert "tight_months" not in a and len({r["left_after_KES"] for r in a["cash_flow"]}) == 1

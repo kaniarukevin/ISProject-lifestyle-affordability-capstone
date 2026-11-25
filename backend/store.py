@@ -2932,6 +2932,72 @@ def _savings_offer(room, cost):
             "keep_after_KES": room["balance_KES"] - round(use), "months_to_rebuild": rebuild}
 
 
+def _seasonal_check(s, user_id, pic, result):
+    """Heavy months inside the paying period (26 Nov). The engine judges a typical month, so a phone on credit read
+    "KES 12,890 left each month" while the home screen said January (school fees) costs more than comes in. Each
+    month of the plan now carries its own extra: the spending forecast for this month and the next two, or the
+    same calendar month last year when that was heavier. A month that is still short after pausing the usual saving lowers Affordable
+    to Stretch and is named in the reasons."""
+    rows, before, complete = result.get("cash_flow") or [], result.get("before") or {}, pic["complete"]
+    if len(rows) < 2 or not complete or pic.get("estimated"):
+        return              # a one-off cash buy is judged on this month by the engine already
+    spend = lambda mo: sum(mo.get(c, 0) for c in SPENDING_CATEGORIES if c != "savings")
+    usual = statistics.median(spend(mo) for mo in complete)
+    small = 0.05 * usual    # a few hundred shillings above usual is noise, not a heavy month
+    today = pic["today"]
+    extra = {}
+    for f in outlook_for_user(s, user_id, complete, today.year, today.month):
+        extra[(f["year"], f["month"])] = (max(0.0, f["total"] - f.get("breakdown", {}).get("savings", 0) - usual),
+                                          f.get("breakdown", {}).get("school_fees", 0))
+    last_year = {mo["month"]: mo for mo in complete[-12:]}
+    left, usual_saving = float(before.get("left_over_KES") or 0), float(before.get("savings_KES") or 0)
+    bal = float(result.get("savings_balance_KES") or pic["savings_balance"] or 0)
+    tight = []
+    for r in rows:
+        k = today.month - 1 + r["month"] - 1
+        y, m = today.year + k // 12, k % 12 + 1
+        more, fees = extra.get((y, m), (0.0, 0))
+        if m in last_year and spend(last_year[m]) - usual > more:      # the forecast can miss a yearly cost
+            more, fees = spend(last_year[m]) - usual, last_year[m].get("school_fees", 0)
+        if more < small:
+            more, fees = 0.0, 0
+        room = left - more
+        short = max(0.0, r["pay_KES"] - room)
+        paused = min(usual_saving, short)
+        bal += usual_saving - paused
+        r.update({"year": y, "calendar_month": m, "heavier_by_KES": round(more),
+                  "left_after_KES": round(max(0.0, room - r["pay_KES"])), "saving_paused_KES": round(paused),
+                  "short_KES": round(short - paused), "savings_balance_KES": round(bal)})
+        if short - paused > 0 or (paused > 0 and more > 0):
+            tight.append((r, fees))
+    if not tight:
+        return
+    result["tight_months"] = [{"year": r["year"], "month": r["calendar_month"], "short_KES": r["short_KES"],
+                               "saving_paused_KES": r["saving_paused_KES"]} for r, _ in tight]
+    short_rows = [(r, f) for r, f in tight if r["short_KES"] > 0]
+    r, fees = (short_rows or tight)[0]                 # the soonest, as the home screen warns about the soonest
+    name = calendar.month_name[r["calendar_month"]]
+    why = ("" if fees < 1000 else ", mostly school fees" if fees >= 0.7 * r["heavier_by_KES"] else
+           f", including about KES {round(fees):,} of school fees")
+    others = list(dict.fromkeys(calendar.month_name[x["calendar_month"]] for x, _ in tight if x is not r))
+    others = [o for o in others if o != name]
+    also = (f" {' and '.join(others) if len(others) <= 2 else ', '.join(others[:-1]) + ' and ' + others[-1]} "
+            f"also look{'s' if len(others) == 1 else ''} tight.") if others else ""
+    result["reasons"] = [x.replace(" left each month.", " left in a usual month.")
+                         for x in (result.get("reasons") or [])]
+    if short_rows:
+        if result.get("verdict") == "Affordable":
+            result["verdict"] = "Stretch"
+        result.setdefault("reasons", []).insert(0,
+            f"{name} costs about KES {r['heavier_by_KES']:,} more than a usual month{why}. With this payment you "
+            f"would be about KES {r['short_KES']:,} short that month, even after pausing your usual saving. "
+            f"Set that aside before {name}, or start paying after it.{also}")
+    else:
+        result.setdefault("reasons", []).append(
+            f"{name} costs about KES {r['heavier_by_KES']:,} more than a usual month{why}. With this payment you "
+            f"would need to pause KES {r['saving_paused_KES']:,} of your usual saving that month.{also}")
+
+
 @bp.post("/me/afford")
 @login_required
 def afford():
@@ -3008,6 +3074,8 @@ def afford():
                 # A purchase is either paid from savings or not: offer it only when the free savings cover it all.
                 if offer and (not cash_buy or offer["covers_all"]):
                     result["savings_offer"] = offer
+        if used == 0 and scenario is not None:
+            _seasonal_check(s, g.user_id, pic, result)
         result["title"] = title
         result["months_used"] = len(months)
         borrowing = _borrowing(s, g.user_id, pic)
