@@ -427,6 +427,32 @@ REGISTER_PER_HOUR = 30
 PLAIN_STATE = {"Stable": "doing fine", "Strained": "stretched", "Critical": "struggling"}
 
 
+# Passwords people pick first and attackers try first (common worldwide lists, plus Kenyan favourites). Checked on
+# sign-up, password change and reset, on top of the 8-character minimum (25 Nov: panel asked about password security).
+COMMON_PASSWORDS = {
+    "12345678", "123456789", "1234567890", "87654321", "11111111", "00000000", "12341234", "11223344",
+    "password", "password1", "password12", "password123", "passw0rd", "p@ssw0rd", "qwertyui", "qwerty123",
+    "qwertyuiop", "asdfghjk", "asdfghjkl", "zxcvbnm1", "iloveyou", "iloveyou1", "abcd1234", "abc12345",
+    "1q2w3e4r", "1qaz2wsx", "letmein1", "welcome1", "welcome123", "admin123", "sunshine", "princess",
+    "football", "baseball", "superman", "trustno1", "whatever", "starwars", "monkey12", "dragon12",
+    "kenya123", "kenya2026", "nairobi1", "nairobi123", "mpesa123", "safaricom", "jesus123", "godisgood",
+    "tosha123", "toshapass", "changeme", "computer", "internet", "michael1", "blessing", "blessed1",
+}
+
+
+def password_problem(password, email=""):
+    """Why a new password is not good enough, or None."""
+    if len(password) < 8:
+        return "password must be at least 8 characters"
+    low = password.lower()
+    if low in COMMON_PASSWORDS or len(set(low)) <= 2:
+        return "that password is too common; pick one that is harder to guess"
+    name = email.split("@")[0].lower()
+    if len(name) >= 4 and name in low:
+        return "don't use your email in your password"
+    return None
+
+
 def _recent(key, window):
     """How many attempts were recorded for key within the last `window` seconds."""
     now = time.monotonic()
@@ -579,8 +605,8 @@ def register():
     password = str(b.get("password", ""))
     if "@" not in email or "." not in email.split("@")[-1]:
         raise InputError("enter a valid email address")
-    if len(password) < 8:
-        raise InputError("password must be at least 8 characters")
+    if problem := password_problem(password, email):
+        raise InputError(problem)
     with session() as s:
         if s.scalar(select(User).where(User.email == email)):
             return jsonify(error="an account with this email already exists"), 409
@@ -787,10 +813,10 @@ def change_password():
     key = ("password-fail", g.user_id)
     if _recent(key, 900) >= 5:
         return jsonify(error="too many wrong passwords, wait 15 minutes"), 429
-    if len(new) < 8:
-        raise InputError("the new password must be at least 8 characters")
     with session() as s:
         user = s.get(User, g.user_id)
+        if problem := password_problem(new, user.email):
+            raise InputError("the new " + problem)
         if not check_password_hash(user.password_hash, current):
             _record(key)
             return jsonify(error="your current password is not right"), 403
@@ -849,8 +875,8 @@ def reset_password():
     b = _body()
     email = str(b.get("email", "")).strip().lower()
     code, new = str(b.get("code", "")).strip(), str(b.get("new", ""))
-    if len(new) < 8:
-        raise InputError("the new password must be at least 8 characters")
+    if problem := password_problem(new, email):
+        raise InputError("the new " + problem)
     wrong = jsonify(error="that code is not right or has expired; ask for a new one"), 400
     with session() as s:
         user = s.scalar(select(User).where(User.email == email))

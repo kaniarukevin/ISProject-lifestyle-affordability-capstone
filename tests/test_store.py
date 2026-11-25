@@ -1607,3 +1607,13 @@ def test_home_asks_who_pays_you_until_a_pay_sender_is_tagged(client, monkeypatch
     assert client.get("/me/overview", headers=h).get_json()["income_untagged"] == {"profile_KES": 80000}
     client.put("/me/payees", headers=h, json={"key": "in:jane", "tag": "income"})
     assert client.get("/me/overview", headers=h).get_json()["income_untagged"] is None
+
+
+def test_weak_passwords_are_refused(client):
+    # 25 Nov: the panel asked about password security. Common passwords and ones containing the email are refused.
+    for pw in ("short", "password123", "12345678", "aaaaaaaa", "kevinkaniaru99"):
+        r = client.post("/auth/register", json={"email": "kevinkaniaru@example.com", "password": pw, "consent": True})
+        assert r.status_code == 400, pw
+    ok = client.post("/auth/register", json={"email": "kevinkaniaru@example.com", "password": "mango-river-42",
+                                             "consent": True})
+    assert ok.status_code in (200, 201)
