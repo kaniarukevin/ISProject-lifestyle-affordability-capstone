@@ -51,6 +51,7 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
   final Map<String, List<Txn>> _txs = {};  // months already fetched (shown at once when you come back)
   List<Map<String, dynamic>> _timeline = const [];   // state and score per month, from the last overview
   String _filter = 'all';
+  bool _sortLater = false;   // "Later" on the not-sorted banner: hidden until the page is opened again
   String? error;
   bool _loading = false;
   final _search = TextEditingController();
@@ -352,29 +353,35 @@ class _RecordsViewState extends State<RecordsView> with ReloadOnChange {
             const SizedBox(height: 12),
             if (summary != null) _MonthSummary(summary: summary, timeline: _timeline),
             const SizedBox(height: 20),
-            if (unsorted > 0)
+            // 25 Nov: a short banner with the fast way to sort, and a way to put it off, so it doesn't nag.
+            if (unsorted > 0 && !_sortLater)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: Material(
+                child: Panel(
                   color: c.lime,
-                  borderRadius: BorderRadius.circular(20),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => setState(() => _filter = 'unsorted'),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Row(children: [
-                        Icon(Icons.help_rounded, color: c.onLime),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text('$unsorted payment${unsorted == 1 ? ' is' : 's are'} not sorted yet, so this month\'s '
-                              'split may be off. Tap to sort ${unsorted == 1 ? 'it' : 'them'}.',
-                              style: TextStyle(color: c.onLime, fontWeight: FontWeight.w600)),
-                        ),
-                        Icon(Icons.chevron_right_rounded, color: c.onLime),
-                      ]),
-                    ),
-                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('$unsorted payment${unsorted == 1 ? '' : 's'} not sorted yet',
+                        style: TextStyle(color: c.onLime, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 10),
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      FilledButton(
+                        style: FilledButton.styleFrom(backgroundColor: c.onLime, foregroundColor: c.lime),
+                        onPressed: () =>
+                            Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PayeesScreen())),
+                        child: const Text('Sort by who I pay'),
+                      ),
+                      TextButton(
+                        style: TextButton.styleFrom(foregroundColor: c.onLime),
+                        onPressed: () => setState(() => _filter = 'unsorted'),
+                        child: const Text('Show them'),
+                      ),
+                      TextButton(
+                        style: TextButton.styleFrom(foregroundColor: c.onLime),
+                        onPressed: () => setState(() => _sortLater = true),
+                        child: const Text('Later'),
+                      ),
+                    ]),
+                  ]),
                 ),
               ),
             Panel(

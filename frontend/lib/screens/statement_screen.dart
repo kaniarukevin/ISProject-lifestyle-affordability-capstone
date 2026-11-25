@@ -35,6 +35,7 @@ class _StatementScreenState extends State<StatementScreen> {
   final goalsDone = <String>{};
   bool replaceManual = true;
   bool _showAll = false;
+  bool _sortNow = false;     // the optional sorting on this page, folded at first
 
   Api get api => context.read<AppState>().api;
 
@@ -161,6 +162,225 @@ class _StatementScreenState extends State<StatementScreen> {
           hintText: 'TK12AB3CD4 Confirmed. Ksh1,240.00 paid to NAIVAS…',
         ),
       ),
+      if (error != null) _Problem(error!),
+      const SizedBox(height: 18),
+      FilledButton(
+        style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
+        onPressed: busy || _text.text.trim().isEmpty ? null : _read,
+        child: busy
+            ? const BusyWords(lines: ['Reading your messages…', 'Sorting shops and bills…', 'Skipping ones already in…'])
+            : const Text('Read messages'),
+      ),
+      const SizedBox(height: 12),
+      Row(children: [
+        Icon(Icons.lock_rounded, size: 16, color: c.muted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text('Only payments are kept, and only after you check them. Messages already in the app are '
+              'skipped, so pasting one twice is safe.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+        ),
+      ]),
+    ]);
+  }
+
+  Widget _pickStep(BuildContext context) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    Widget step(String n, String text) => Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            CircleAvatar(radius: 12, backgroundColor: c.field,
+                child: Text(n, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: theme.colorScheme.onSurface))),
+            const SizedBox(width: 12),
+            Expanded(child: Padding(padding: const EdgeInsets.only(top: 2), child: Text(text))),
+          ]),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Panel(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const PanelTitle('Bring in months of spending at once', icon: Icons.file_upload_outlined),
+          const SizedBox(height: 10),
+          Text('Tosha reads your M-PESA statement, checks every total and sorts what it is sure about.',
+              style: TextStyle(color: c.muted)),
+          const SizedBox(height: 18),
+          step('1', 'Dial *334#, then My Account, M-PESA Statement, Request Statement. Choose a full statement for 12 '
+              'months: a full year gives the most accurate answers.'),
+          step('2', 'Safaricom emails you a PDF and texts you its password.'),
+          step('3', 'Save the PDF to your phone (iPhone: open the email, tap the PDF, Share, Save to Files), then '
+              'choose it here and type the password.'),
+          const InfoNote(
+            icon: Icons.lock_rounded,
+            text: 'The file and its password are used to read it, then thrown away. You see everything before '
+                'anything is saved.',
+            margin: EdgeInsets.only(top: 14),
+          ),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      Material(
+        color: bytes == null ? c.field : c.lime.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(24),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: busy ? null : _pick,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+            child: Column(children: [
+              Icon(bytes == null ? Icons.upload_file_rounded : Icons.picture_as_pdf_rounded, size: 36,
+                  color: theme.colorScheme.onSurface),
+              const SizedBox(height: 8),
+              Text(filename ?? 'Choose your statement (PDF)', textAlign: TextAlign.center,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(bytes == null ? 'Tap to pick the file' : 'Tap to choose a different file',
+                  style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+            ]),
+          ),
+        ),
+      ),
+      const SizedBox(height: 14),
+      TextField(
+        controller: _password,
+        obscureText: true,
+        decoration: const InputDecoration(
+            labelText: 'Password (if the PDF is locked)',
+            helperText: 'Safaricom locks the PDF. Tosha needs the code it texted you to open it, and never keeps it.',
+            helperMaxLines: 3),
+      ),
+      if (error != null) _Problem(error!),
+      const SizedBox(height: 18),
+      FilledButton(
+        style: FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(54), backgroundColor: c.lime, foregroundColor: c.onLime),
+        onPressed: busy || bytes == null ? null : _read,
+        child: busy ? const BusyWords(lines: statementWords) : const Text('Read statement'),
+      ),
+    ]);
+  }
+
+  Widget _reviewStep(BuildContext context, Map<String, dynamic> p) {
+    final theme = Theme.of(context);
+    final c = AppColors.of(context);
+    final unsorted = (((p['coverage'] as Map)['unsorted'] ?? 0) as num).toDouble();
+    final all = (p['payees'] as List).cast<Map<String, dynamic>>();
+    final pay = all.where((x) => x['direction'] != 'in').toList();
+    final paidBy = all.where((x) => x['direction'] == 'in').toList();
+    final big = (p['transactions'] as List).cast<Map<String, dynamic>>().where((t) => t['one_off'] == true).toList();
+    final overlap = (p['manual_overlap'] as Map?)?.cast<String, dynamic>();
+    final fromMessages = p['origin'] == 'messages';
+    final notRead = ((p['not_read'] as List?) ?? []).cast<Map<String, dynamic>>();
+    Widget section(String title, String help) => Padding(
+          padding: const EdgeInsets.only(top: 24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(help, style: theme.textTheme.bodyMedium?.copyWith(color: c.muted)),
+          ]),
+        );
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Panel(
+        color: c.lime,
+        child: Row(children: [
+          Icon(Icons.verified_rounded, color: c.onLime, size: 32),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(fromMessages ? 'Read ${p['checks']['rows']} payment message(s)' : 'All ${p['checks']['rows']} transactions read',
+                  style: theme.textTheme.titleLarge?.copyWith(color: c.onLime)),
+              Text(fromMessages
+                  ? 'Check them below, then import. Anything you typed in by hand is kept.'
+                  : '${(p['period'] as List?)?.join(' to ') ?? ''}. Every total matches your statement, so nothing '
+                      'was missed.', style: TextStyle(color: c.onLime)),
+            ]),
+          ),
+        ]),
+      ),
+      if (notRead.isNotEmpty)
+        Container(
+          margin: const EdgeInsets.only(top: 12),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: c.warnBg, borderRadius: BorderRadius.circular(16)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${notRead.length} message(s) not read', style: TextStyle(color: c.warn, fontWeight: FontWeight.w700)),
+            for (final m in notRead.take(5))
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('"${m['message']}…": ${m['reason']}', style: TextStyle(color: c.warn)),
+              ),
+          ]),
+        ),
+      const SizedBox(height: 16),
+      CardRow(minWidth: 200, children: [
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${p['new']}', style: theme.textTheme.headlineMedium),
+            Text(p['new'] == 0 ? 'Everything is already in the app' : 'New payments to bring in',
+                style: TextStyle(color: c.muted)),
+          ]),
+        ),
+        Panel(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('${((1 - unsorted) * 100).round()}%', style: theme.textTheme.headlineMedium),
+            Text('of the money sorted already', style: TextStyle(color: c.muted)),
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(value: (1 - unsorted).clamp(0.0, 1.0), minHeight: 10,
+                  color: c.lime, backgroundColor: c.range),
+            ),
+          ]),
+        ),
+      ]),
+      const SizedBox(height: 10),
+      Text('Known shops and bills are sorted for you. Anything unclear waits in "Not sorted yet".',
+          style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
+      if ((overlap?['count'] ?? 0) > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 16),
+          child: Panel(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: replaceManual,
+              onChanged: (v) => setState(() => replaceManual = v),
+              title: Text('Replace my ${overlap!['count']} typed-in record(s) in ${(overlap['months'] as List).join(', ')}'),
+              subtitle: const Text('Recommended, so nothing is counted twice. Turn off only if those were cash '
+                  'payments M-PESA does not show.'),
+            ),
+          ),
+        ),
+      // 25 Nov: a year of payments made this page long before the Import button. Only "Who pays you" (it changes
+      // the score) stays open; the rest is optional and folded, and can all be done later in Who you pay.
+      if (paidBy.isNotEmpty) ...[
+        section('Who pays you', 'Tag your pay or allowance so your score uses real income.'),
+        ...paidBy.map(_payee),
+      ],
+      if (pay.isNotEmpty || big.isNotEmpty) ...[
+        const SizedBox(height: 16),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => setState(() => _sortNow = !_sortNow),
+            icon: Icon(_sortNow ? Icons.expand_less_rounded : Icons.expand_more_rounded),
+            label: Text(_sortNow ? 'Hide' : 'Optional: sort before importing'),
+          ),
+        ),
+      ],
+      if (_sortNow && pay.isNotEmpty) ...[
+        section('Who you pay', 'Suggestions are in lime. Skip any you don\'t recognise; you can sort later.'),
+        ...pay.take(_showAll ? pay.length : 8).map(_payee),
+        if (pay.length > 8 && !_showAll)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: FilledButton.tonal(
+                onPressed: () => setState(() => _showAll = true), child: Text('Show ${pay.length - 8} more')),
+          ),
+      ],
+      if (_sortNow && big.isNotEmpty) ...[
+        section('Big one-off payments', 'Keep a rare big buy out of your usual spending.'),
+        for (final t in big) _oneOffCard(t),
+      ],
       if (error != null) _Problem(error!),
       const SizedBox(height: 18),
       FilledButton(
