@@ -290,8 +290,11 @@ class _StatementScreenState extends State<StatementScreen> {
                   style: theme.textTheme.titleLarge?.copyWith(color: c.onLime)),
               Text(fromMessages
                   ? 'Check them below, then import. Anything you typed in by hand is kept.'
-                  : '${(p['period'] as List?)?.join(' to ') ?? ''}. Every total matches your statement, so nothing '
-                      'was missed.', style: TextStyle(color: c.onLime)),
+                  : ((p['checks'] as Map?)?['gap_note'] as String?) != null
+                      // 25 Nov: Safaricom's own statement can have a gap in the balance; say so, don't refuse it.
+                      ? '${(p['period'] as List?)?.join(' to ') ?? ''}. ${(p['checks'] as Map)['gap_note']}'
+                      : '${(p['period'] as List?)?.join(' to ') ?? ''}. Every total matches your statement, so nothing '
+                          'was missed.', style: TextStyle(color: c.onLime)),
             ]),
           ),
         ]),

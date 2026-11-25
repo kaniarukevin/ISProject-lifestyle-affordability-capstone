@@ -1547,6 +1547,24 @@ def household_picture(s, user_id):
             "savings_balance": float(profile.savings_balance or 0) if profile else 0.0}
 
 
+PARTIAL_SHARE = 0.35        # recorded spending under 35% of the income given: most money moves where Tosha can't see
+
+
+def _partial_picture(pic):
+    """Tosha reads M-PESA only. When most money moves through a bank or card, the income given is far above the
+    spending Tosha sees, and the gap looks like money left over (found 25 Nov on a real statement: KES 150,000 given,
+    about KES 35,000 a month seen, so Home showed over KES 110,000 spare and a KES 1.5M car loan came back
+    Affordable). Returns a warning sentence for Home, Budget, the forecast and 'Can I afford it?', or None."""
+    if pic["estimated"] or len(pic["complete"]) < 2 or pic["income"] <= 0:
+        return None
+    seen = statistics.median(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in pic["scored"])
+    if seen >= PARTIAL_SHARE * pic["income"]:
+        return None
+    return (f"Tosha only sees about KES {round(seen, -2):,.0f} a month of spending, but KES {round(pic['income']):,} "
+            "comes in. Paying by bank or card too? Add those costs under Bills, or results will look better than "
+            "they are.")
+
+
 LOW_MONTH_SHARE = 0.85      # income "varies" when the low month is below 85% of the usual one
 LOW_MONTH_WINDOW = 6        # months of income that actually arrived
 LOW_MONTH_MIN = 3           # fewer than this: not enough history to know
@@ -1936,6 +1954,9 @@ def overview():
     if pic["not_sorted_share"] > 0.10:
         notes.append(f"{pic['not_sorted_share']:.0%} of your spending is not sorted yet. Your totals are right. The "
                      "split between food, transport and the rest is still a guess. Sort it under Who you pay.")
+    partial = _partial_picture(pic)
+    if partial:
+        notes.insert(0, partial)
     if not pic["estimated"] and not complete:
         notes.append("You only have this month so far, and it is not over yet. Your score and forecast need one full "
                      "month. Add your M-PESA statement to see them now.")
@@ -2058,6 +2079,9 @@ def _recommend(pic, prev_limits, py, pm, set_aside=0.0):
     if set_aside:
         fixed["other_commitments"] = float(fixed.get("other_commitments", 0)) + set_aside
     plan = bud.evaluate(payload)
+    partial = _partial_picture(pic)
+    if partial:
+        notes.insert(0, partial)
     plan["notes"] = notes + plan["notes"]
     _add_extra_lines(plan, complete[-6:] if complete else [])
     _apply_edits(plan, profile.budget_edits or {})
@@ -2596,6 +2620,9 @@ def budget_forecast():
     if pic["estimated"]:
         notes.append("Based on the rough figures you gave at setup. Upload a statement or record spending and "
                      "your own pattern takes over.")
+    partial = _partial_picture(pic)
+    if partial:
+        notes.insert(0, partial)
     first = (rows[0]["year"], rows[0]["month"]) if rows else (9999, 1)
     history = [{"year": m["year"], "month": m["month"],
                 "spent": round(sum(m[c] for c in SPENDING_CATEGORIES if c != "savings"))}
@@ -2988,6 +3015,10 @@ def afford():
                 result.setdefault("reasons", []).append(
                     f"On {lm['when']} (KES {lm['income_KES']:,} came in) this would be {lm['verdict'].lower()}"
                     + (f": KES {-lm['left_over_KES']:,} short that month." if (lm["left_over_KES"] or 0) < 0 else "."))
+        partial = _partial_picture(pic)
+        if partial:
+            result["partial_picture"] = True
+            result["reasons"] = list(result.get("reasons") or []) + [partial]
         # A one-off cash buy does not change the monthly budget, so no budget table (25 Nov: it showed a second,
         # different "missing" figure next to the shortfall).
         result["budgets"] = (None if result.get("upfront_short_KES") or scenario is None or cash_buy or

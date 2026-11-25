@@ -1677,3 +1677,29 @@ def test_afford_never_cuts_essentials_and_asks_before_using_savings(client, monk
     assert r["verdict"] == "Affordable" and r["using_savings"]["keep_KES"] == 250000
     texts = json.dumps(r) + json.dumps(client.post("/me/afford", headers=h, json=buy).get_json())
     assert "1 months" not in texts and "about 0 months" not in texts
+
+
+def test_a_partial_picture_is_flagged_when_most_money_moves_through_a_bank(client, monkeypatch):
+    # 25 Nov, a real statement: KES 150,000 given, about KES 35,000 a month on M-PESA. Without a warning Home showed
+    # over KES 110,000 spare and a KES 1.5M car loan came back Affordable.
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "incomes": [{"name": "Pension", "amount": 150000}]})
+    client.post("/me/transactions", headers=h, json=[
+        {"date": f"2026-{mo:02d}-05", "amount": amt, "category": cat} for mo in (8, 9, 10)
+        for cat, amt in (("food_groceries", 20000), ("transport", 5000), ("utilities", 5000))])
+    warn = "Tosha only sees about KES 30,000 a month of spending, but KES 150,000 comes in."
+    assert client.get("/me/overview", headers=h).get_json()["notes"][0].startswith(warn)
+    assert any(n.startswith(warn) for n in client.get("/me/budget-plan", headers=h).get_json()["plan"]["notes"])
+    assert any(n.startswith(warn) for n in client.get("/me/budget-forecast", headers=h).get_json()["notes"])
+    r = client.post("/me/afford", headers=h, json={"preset": "loan", "amount": 1500000, "months": 36,
+                                                   "annual_rate": 14}).get_json()
+    assert r["partial_picture"] and r["reasons"][-1].startswith(warn)
+
+
+def test_no_partial_picture_warning_when_spending_matches_income(client, monkeypatch):
+    h = _earner(client, monkeypatch)
+    assert not any("Tosha only sees" in n for n in client.get("/me/overview", headers=h).get_json()["notes"])
+    r = client.post("/me/afford", headers=h, json={"preset": "loan", "amount": 50000, "months": 12,
+                                                   "annual_rate": 14}).get_json()
+    assert "partial_picture" not in r

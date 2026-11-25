@@ -278,3 +278,17 @@ def test_pasted_messages_of_every_common_kind():
     sent = next(r for r in info["rows"] if r["mpesa_type"] == "money_in")
     assert sent["payee_key"] == "in:person:0722***111:JANE WANJIKU"          # masked like the statement
     assert info["skipped"] == [{"message": info["skipped"][0]["message"], "reason": "no date"}]   # never guessed
+
+
+def test_a_gap_in_safaricoms_own_balance_is_allowed_and_explained():
+    # 25 Nov, a real statement: the balance fell KES 1,260 between two lines with no payment listed for it, so the
+    # totals still matched. Refusing it left the user unable to start; now it is read and the gap is explained.
+    rs = [{"receipt": "A1", "time": "2026-10-21 09:42:36", "amount": -100.0, "balance": 2847.45},
+          {"receipt": "A2", "time": "2026-10-24 17:32:12", "amount": -1350.0, "balance": 237.45},
+          {"receipt": "A3", "time": "2026-10-24 17:34:41", "amount": 3000.0, "balance": 3237.45}]
+    c = mpesa._checks(rs, None)
+    assert c["ok"] and c["balance_breaks"] == 1
+    assert c["gaps"] == [{"after": "2026-10-21", "before": "2026-10-24", "missing_KES": 1260.0}]
+    assert "KES 1,260 gap" in mpesa.gap_note(c) and mpesa.gap_note(mpesa._checks(rs[:1], None)) is None
+    many = [dict(r, balance=r["balance"] - 100 * i) for i, r in enumerate(rs * 2)]      # more gaps than allowed
+    assert mpesa._checks(many, None)["balance_breaks"] > mpesa.MAX_GAPS and not mpesa._checks(many, None)["ok"]

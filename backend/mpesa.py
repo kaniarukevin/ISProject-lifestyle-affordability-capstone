@@ -126,6 +126,9 @@ def _same_second_order(rows):
     return out
 
 
+MAX_GAPS = 2          # balance gaps allowed when the totals match (Safaricom's own statements have them)
+
+
 def _checks(rows, total):
     """Did we read every shilling? Totals against the statement's summary, and the running balance."""
     paid_in = round(sum(r["amount"] for r in rows if r["amount"] > 0), 2)
@@ -142,16 +145,23 @@ def _checks(rows, total):
             groups[-1].append(r)
         else:
             groups.append([r])
-    prev = None
+    prev, prev_time, gaps = None, None, []
     for g in groups:
         bal = {round(x["balance"], 2) for x in g}
         if prev is not None and round(prev + sum(x["amount"] for x in g), 2) not in bal and \
                 not any(round(prev + x["amount"], 2) in bal for x in g):
             breaks += 1
+            gaps.append({"after": prev_time[:10], "before": g[0]["time"][:10],
+                         "missing_KES": round(prev + sum(x["amount"] for x in g) - g[-1]["balance"], 2)})
         prev = round(prev + sum(x["amount"] for x in g), 2) if prev is not None and \
             round(prev + sum(x["amount"] for x in g), 2) in bal else g[-1]["balance"]
+        prev_time = g[-1]["time"]
     out["balance_breaks"] = breaks
-    out["ok"] = out.get("totals_match", True) and breaks == 0
+    out["gaps"] = gaps
+    # Totals must match exactly. A real Safaricom statement (25 Nov) had one running-balance gap of KES 1,260 with
+    # no line for it, so its totals still matched; refusing it left the user unable to start. Up to MAX_GAPS such
+    # gaps are allowed and shown to the user; more means the reading itself went wrong.
+    out["ok"] = out.get("totals_match", True) and breaks <= MAX_GAPS
     return out
 
 
@@ -459,7 +469,19 @@ def read_statement(data, password=None, remembered=None):
                              f"on the statement; {c['balance_breaks']} balance mismatches).")
     rows = understand(info["rows"], remembered)
     info.update(summarise(rows))
+    info["checks"]["gap_note"] = gap_note(info["checks"])
     return info
+
+
+def gap_note(checks):
+    """A plain sentence for gaps in the statement's running balance, or None."""
+    gaps = checks.get("gaps") or []
+    if not gaps:
+        return None
+    first, more = gaps[0], len(gaps) - 1
+    return (f"Totals match. Safaricom's statement has a KES {abs(first['missing_KES']):,.0f} gap in the balance "
+            f"({first['after']} to {first['before']}{f', and {more} more' if more else ''}) with no payment shown, so "
+            "that money isn't in your records.")
 
 
 # ---------------------------------------------------------------- 3. pasted M-PESA messages (6 Nov)
