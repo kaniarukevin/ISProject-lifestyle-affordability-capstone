@@ -3,48 +3,35 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_theme.dart';
 
-/// A short walk through the app (25 Nov: testers said setup is staged, but nothing shows them around the app
-/// afterwards, and a card that only describes places does not show where to tap). Each step moves the app to the
-/// place it talks about, so its button lights up (the lime one) behind the card. Shown once, the first time Home
-/// opens on a device; "Take the quick tour" in Questions replays it.
+/// A short walk through the app (25 Nov testers: nothing showed them around, and describing a place did not show
+/// where to tap). Each step opens its place and makes the button to tap pulse (see [TourGlow]). Shown once per
+/// device, the first time Home opens; "Take the quick tour" in Questions replays it.
 class AppTour {
-  /// Kept per device, not wiped at log out (cached figures use cache_v1_ keys).
   static const seenKey = 'app_tour_seen';
 
-  /// Where a step points: a tab index (0-4), [records], or [none] (stay where you are).
-  static const none = -1;
+  /// Highlight targets besides the five tab indexes (0-4).
   static const records = 99;
+  static const help = 98;
+  static const none = -1;
+
+  /// The button the current step points at; [TourGlow] widgets listen to it.
+  static final highlight = ValueNotifier<int?>(null);
 
   /// Questions asks Home to replay the tour (Home owns the tabs the tour moves between).
   static final replay = ValueNotifier<int>(0);
 
-  static const _steps = <(int, IconData, String, String)>[
-    (none, Icons.waving_hand_rounded, 'A quick look around',
-        'Tosha has five places, on the dark bar at the bottom of the screen (on the left on a wide screen). '
-            'As you go through this tour, the place it talks about lights up in lime. About 30 seconds.'),
-    (0, Icons.home_rounded, 'How you\'re doing',
-        'You are here now: the lime house button. Your money score out of 100, what it is based on, and any hard '
-            'month coming up. Tap "Why this score?" on the score card to see what pushes it up or down.'),
-    (1, Icons.verified_user_rounded, 'Can I afford it?',
-        'The second button, now lit up. Try a decision before you make it: a phone on credit, moving house, a loan, '
-            'school fees. Pick one, fill in the amount, and Tosha shows your months before and after.'),
-    (2, Icons.bar_chart_rounded, 'Budget and the next 3 months',
-        'The third button. This month\'s budget line by line, how much you can spend a day, and what the next '
-            'three months look like.'),
-    (3, Icons.calendar_month_rounded, 'Bills, debts and goals',
-        'The fourth button. Add rent, school fees, loans and what you are saving for. Anything here is set aside '
-            'before everyday money.'),
-    (records, Icons.receipt_long_rounded, 'Your records',
-        'Opened from the receipt button at the top right of Home. Your payments month by month: add a statement, '
-            'sort what Tosha was not sure about, and tell it who you pay. The more is sorted, the better every answer.'),
-    (4, Icons.person_rounded, 'You',
-        'The last button. Your household and income, money outside M-PESA, privacy, and signing out.'),
-    (0, Icons.help_outline_rounded, 'Stuck?',
-        'Back on Home. The ? at the top of every page answers what the numbers mean and why Tosha asks what it '
-            'asks. You can replay this tour from there.'),
+  // (tab to open, button to highlight, title, text). Short on purpose: testers skim.
+  static const _steps = <(int, int, String, String)>[
+    (none, none, 'Quick tour', 'Five places on the dark bar. Watch for the glowing button. 30 seconds.'),
+    (0, 0, 'Home', 'Your money score and what\'s coming up.'),
+    (1, 1, 'Can I afford it?', 'Test a phone, a loan or a move before you commit.'),
+    (2, 2, 'Budget', 'This month\'s budget and the next 3 months.'),
+    (3, 3, 'Bills and goals', 'Rent, fees, loans and savings goals. Set aside first.'),
+    (0, records, 'Your records', 'Tap here for your payments. Add a statement or sort them.'),
+    (4, 4, 'You', 'Your household, income and privacy.'),
+    (0, help, 'Stuck?', 'Tap ? on any page for answers, or to replay this tour.'),
   ];
 
-  /// Shows the tour if it has never been seen on this device.
   static Future<void> showIfNew(BuildContext context, {ValueChanged<int>? onStep}) async {
     final p = await SharedPreferences.getInstance();
     if (p.getBool(seenKey) ?? false) return;
@@ -52,16 +39,77 @@ class AppTour {
     await show(context, onStep: onStep);
   }
 
-  /// onStep moves the app to each step's place (a tab index, [records] or [none]).
+  /// onStep opens each step's tab.
   static Future<void> show(BuildContext context, {ValueChanged<int>? onStep}) async {
     await showGeneralDialog<void>(
       context: context,
       barrierDismissible: false,
-      barrierColor: Colors.black.withValues(alpha: 0.25),   // light, so the page and the lit button stay visible
+      barrierColor: Colors.transparent,   // nothing dimmed, so the glowing button is easy to see
       pageBuilder: (_, _, _) => _TourCard(onStep: onStep),
     );
+    highlight.value = null;
     final p = await SharedPreferences.getInstance();
     await p.setBool(seenKey, true);
+  }
+}
+
+/// Wraps a button the tour can point at: while the tour's current step targets [target], a lime ring pulses
+/// around it with a small "Tap here" label.
+class TourGlow extends StatefulWidget {
+  const TourGlow({super.key, required this.target, required this.child, this.labelAbove = false});
+  final int target;
+  final Widget child;
+  final bool labelAbove;   // nav bar at the bottom: label above; buttons at the top: label below
+
+  @override
+  State<TourGlow> createState() => _TourGlowState();
+}
+
+class _TourGlowState extends State<TourGlow> with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))
+    ..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.of(context);
+    return ValueListenableBuilder<int?>(
+      valueListenable: AppTour.highlight,
+      child: widget.child,
+      builder: (context, on, child) {
+        if (on != widget.target) return child!;
+        final label = Positioned(
+          top: widget.labelAbove ? -30 : null,
+          bottom: widget.labelAbove ? null : -30,
+          child: IgnorePointer(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(color: c.lime, borderRadius: BorderRadius.circular(10)),
+              child: Text('Tap here', style: TextStyle(color: c.onLime, fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        );
+        return Stack(clipBehavior: Clip.none, alignment: Alignment.center, children: [
+          AnimatedBuilder(
+            animation: _pulse,
+            builder: (_, inner) => DecoratedBox(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                boxShadow: [BoxShadow(color: c.lime, blurRadius: 6 + 10 * _pulse.value, spreadRadius: 2 + 4 * _pulse.value)],
+              ),
+              child: inner,
+            ),
+            child: child,
+          ),
+          label,
+        ]);
+      },
+    );
   }
 }
 
@@ -76,13 +124,21 @@ class _TourCard extends StatefulWidget {
 class _TourCardState extends State<_TourCard> {
   int _i = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    AppTour.highlight.value = AppTour._steps[0].$2;
+  }
+
   void _to(int i) {
     setState(() => _i = i);
-    final target = AppTour._steps[i].$1;
-    if (target != AppTour.none) widget.onStep?.call(target);
+    final (tab, target, _, _) = AppTour._steps[i];
+    if (tab != AppTour.none) widget.onStep?.call(tab);
+    AppTour.highlight.value = target;
   }
 
   void _close() {
+    AppTour.highlight.value = null;
     widget.onStep?.call(0);   // finish on Home
     Navigator.pop(context);
   }
@@ -91,41 +147,33 @@ class _TourCardState extends State<_TourCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = AppColors.of(context);
-    final (_, icon, title, text) = AppTour._steps[_i];
+    final (_, _, title, text) = AppTour._steps[_i];
     final last = _i == AppTour._steps.length - 1;
-    // At the top of the screen, so the bottom bar (and its lit button) stays in view.
+    // In the middle of the screen: clear of the bar at the bottom and the buttons at the top.
     return SafeArea(
       child: Align(
-        alignment: Alignment.topCenter,
+        alignment: const Alignment(0, -0.15),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
+            constraints: const BoxConstraints(maxWidth: 400),
             child: Material(
               color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(24),
-              elevation: 8,
+              borderRadius: BorderRadius.circular(22),
+              elevation: 10,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 18, 12, 10),
+                padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
                 child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Row(children: [
-                    CircleAvatar(radius: 20, backgroundColor: c.lime, child: Icon(icon, color: c.onLime, size: 20)),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(title, style: theme.textTheme.titleLarge)),
-                  ]),
-                  const SizedBox(height: 10),
-                  Text(text, style: theme.textTheme.bodyMedium),
+                  Text(title, style: theme.textTheme.titleLarge),
                   const SizedBox(height: 6),
+                  Text(text, style: theme.textTheme.bodyLarge),
                   Row(children: [
-                    Text('${_i + 1} of ${AppTour._steps.length}',
+                    Text('${_i + 1}/${AppTour._steps.length}',
                         style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
                     const Spacer(),
                     if (!last) TextButton(onPressed: _close, child: const Text('Skip')),
                     if (_i > 0) TextButton(onPressed: () => _to(_i - 1), child: const Text('Back')),
-                    FilledButton(
-                      onPressed: last ? _close : () => _to(_i + 1),
-                      child: Text(last ? 'Done' : 'Next'),
-                    ),
+                    FilledButton(onPressed: last ? _close : () => _to(_i + 1), child: Text(last ? 'Done' : 'Next')),
                   ]),
                 ]),
               ),

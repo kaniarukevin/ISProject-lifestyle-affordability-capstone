@@ -64,14 +64,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   /// The tour moves the app to the place each step talks about, so its button lights up behind the card.
-  void _tourStep(int target) {
-    if (!mounted) return;
-    if (target == AppTour.records) {
-      _go(0);
-      _openRecords();
-    } else {
-      _go(target);
-    }
+  void _tourStep(int tab) {
+    if (mounted) _go(tab);
   }
 
   void _replayTour() {
@@ -247,16 +241,22 @@ class _Page extends StatelessWidget {
               ]),
             ),
             // Questions on every page: testers could not find them under You.
-            IconButton(
-              tooltip: 'Questions',
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuestionsScreen())),
-              icon: Icon(Icons.help_outline_rounded, color: c.muted),
+            TourGlow(
+              target: AppTour.help,
+              child: IconButton(
+                tooltip: 'Questions',
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const QuestionsScreen())),
+                icon: Icon(Icons.help_outline_rounded, color: c.muted),
+              ),
             ),
             const SizedBox(width: 4),
             if (onRecords != null) ...[
-              wide
-                  ? FilledButton.tonal(onPressed: onRecords, child: const Text('Records'))
-                  : IconButton.filledTonal(tooltip: 'Your records', onPressed: onRecords, icon: const Icon(Icons.receipt_long_rounded)),
+              TourGlow(
+                target: AppTour.records,
+                child: wide
+                    ? FilledButton.tonal(onPressed: onRecords, child: const Text('Records'))
+                    : IconButton.filledTonal(tooltip: 'Your records', onPressed: onRecords, icon: const Icon(Icons.receipt_long_rounded)),
+              ),
               const SizedBox(width: 8),
             ],
             if (onAdd != null)
@@ -322,7 +322,8 @@ class NavRail extends StatelessWidget {
     final c = AppColors.of(context);
     Widget item(int i) => Padding(
           padding: const EdgeInsets.only(bottom: 10),
-          child: _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 48, idle: c.navIcon),
+          child: TourGlow(target: i,
+              child: _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 48, idle: c.navIcon)),
         );
     return Container(
       width: 76,
@@ -358,7 +359,8 @@ class PillNav extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         for (var i = 0; i < dests.length; i++) ...[
           if (i > 0) const SizedBox(width: 6),
-          _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 52, idle: Colors.white),
+          TourGlow(target: i, labelAbove: true,
+              child: _NavButton(dest: dests[i], selected: i == selected, onTap: () => onSelect(i), size: 52, idle: Colors.white)),
         ],
       ]),
     );
