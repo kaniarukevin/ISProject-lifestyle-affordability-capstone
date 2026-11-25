@@ -200,8 +200,20 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
         if (box.maxWidth >= 900) {
           // Desktop (reference 2): the form alone on the left, the promise on a dark panel on the right.
+          // 25 Nov: the phone's lime glow kept on desktop too, behind the form side.
+          final dark = Theme.of(context).brightness == Brightness.dark;
+          final bg = dark ? const Color(0xFF0B0B0B) : Theme.of(context).scaffoldBackgroundColor;
           return Scaffold(
-            body: SafeArea(
+            backgroundColor: bg,
+            body: DecoratedBox(
+             decoration: BoxDecoration(
+               gradient: RadialGradient(
+                 center: const Alignment(-1.05, -1.1),
+                 radius: 1.2,
+                 colors: [AppColors.of(context).lime.withValues(alpha: dark ? 0.28 : 0.45), bg.withValues(alpha: 0)],
+               ),
+             ),
+             child: SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -226,6 +238,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 ]),
               ),
             ),
+          ),
           );
         }
         // Phone (reference 1): follows the app's light or dark mode. Dark = the reference: near-black with a lime glow;
