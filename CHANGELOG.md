@@ -4,6 +4,8 @@ Format follows Keep a Changelog. Dataset tags: `v0.1-data` onward.
 
 ## [Unreleased]
 ### Fixed
+- "Can I afford it?" checks each month of a purchase or loan, not only a typical month: heavy months (school fees, December) come from the spending forecast for the next three months, or the same month last year when that was heavier. A month still short after pausing the usual saving turns Affordable into Stretch and is named in the reasons.
+- Payment terms must be whole months from 1 to 300 (25 years); 600 months was accepted and 1.5 was read as 1.
 - Screens load faster: Overview needs 15 database queries instead of 36, the budget forecast 12 instead of 21; the last figures show at once while fresh ones load, and are removed at log out.
 - A statement month where the tagged pay did not arrive but money came in from your own accounts or from people is no longer scored as no income; it counts up to your usual income.
 - Past months keep the income they were lived on: raising your income no longer turns earlier months Stable. Saving a new income asks whether it changed or a mistake is being corrected.
