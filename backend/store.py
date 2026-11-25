@@ -1183,10 +1183,14 @@ def _user_months(s, user_id):
     # the months a statement covers, that replaces the profile figure (a late or short allowance then shows);
     # other months keep the profile income.
     ins = s.scalars(select(MoneyIn).where(MoneyIn.user_id == user_id)).all()
-    actual, mixed, other, covered = {}, {}, {}, set()
+    actual, mixed, other, covered, seen_in = {}, {}, {}, set(), {}
     for x in ins:
         key = (x.day.year, x.day.month)
         covered.add(key)
+        # What the statement shows coming in, whatever Tosha uses for scoring (25 Nov): pay, money from people and
+        # mixed bank money; the user's own accounts moving money and one-offs are left out.
+        if x.kind in ("income", "mixed", "received"):
+            seen_in[key] = seen_in.get(key, 0.0) + x.amount
         if x.kind == "income":
             actual[key] = actual.get(key, 0.0) + x.amount
         elif x.kind == "mixed":                      # pay and the user's own money together
@@ -1259,6 +1263,7 @@ def _user_months(s, user_id):
         months.append({"year": y, "month": mo, **spread,
                        "income_primary": round(money_in, 2),
                        "income_from": source, "outside_estimate": round(extra, 2),
+                       "statement_in": round(seen_in.get((y, mo), 0.0)) if (y, mo) in covered else None,
                        "unsorted": round(un, 2), "outside": {k: round(v, 2) for k, v in out.items()},
                        "known": {c: round(v, 2) for c, v in cats.items()}})
     return months, income, one_offs
@@ -1888,13 +1893,19 @@ def overview():
     # What the records alone say, before bills from Commitments are counted (23 Nov: Home said KES 64,110 went
     # out while Records said 60,110 spent, with nothing to say why).
     originals = {(o["year"], o["month"]): o for o in (pic["complete"] or pic["months"])}
-    for mo, r in zip(pic["scored"], by_month):
+    # Money carried over from earlier months (25 Nov: shown in Records, and "overspent" means beyond it).
+    carry = aff.carry_over([mo["income_primary"] for mo in pic["scored"]],
+                           [sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings") for mo in pic["scored"]],
+                           [mo["savings"] for mo in pic["scored"]])
+    for mo, r, f in zip(pic["scored"], by_month, carry):
         orig = originals.get((mo["year"], mo["month"]), mo)
         timeline.append({"year": mo["year"], "month": mo["month"], "state": r["state"], "score": r["score"],
                          "spent": round(sum(mo[c] for c in SPENDING_CATEGORIES if c != "savings")),
                          "recorded": round(sum(orig[c] for c in SPENDING_CATEGORIES if c != "savings")),
                          "saved": round(mo["savings"]), "income": round(mo["income_primary"]),
-                         "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"]})
+                         "income_from": mo.get("income_from", "profile"), "estimated": pic["estimated"],
+                         "statement_in": mo.get("statement_in"), "carry_in": round(f["carry_in"]),
+                         "overspent": bool(f["over"]), "covered": bool(f["covered"])})
     counts = Counter(x["state"] for x in timeline)
     summary = None
     if len(timeline) >= 2:
@@ -1992,6 +2003,8 @@ def overview():
                                          for f in outlook],
                    notes=notes, timeline=timeline, bills_due=due, goals_at_risk=at_risk, budget_warnings=warnings,
                    lifestyle=_lifestyle(pic, betting), timeline_summary=summary, track_record=record,
+                   # The month in progress: what the statement shows coming in so far (25 Nov, for Records).
+                   current_in=_current_in(s, g.user_id, pic["today"]),
                    borrowing=borrowing, goal_progress=pic["goal_progress"], records_until=records_until,
                    forecast_checks=forecast_checks, income_gap=_income_gap(pic), income_untagged=_income_untagged(s, g.user_id, pic), savings_check=_savings_check(g.user_id, pic),
                    next_month=_next_month_sentence(pic, outlook, income),
@@ -2150,6 +2163,17 @@ def _apply_edits(plan, edits):
     plan["notes"].append("You set " + ", ".join(f"{NOTE_LABELS.get(c, c)} to KES {round(v):,}" for c, v in mine.items())
                          + "; the other everyday lines were adjusted so the total still fits your income.")
     return plan
+
+
+def _current_in(s, user_id, today):
+    """The month in progress: what the statement shows coming in so far (pay, money from people, mixed bank money),
+    or None when no statement money has come in this month (25 Nov, for Records)."""
+    first = date(today.year, today.month, 1)
+    total = s.scalar(select(func.coalesce(func.sum(MoneyIn.amount), 0.0)).where(
+        MoneyIn.user_id == user_id, MoneyIn.day >= first, MoneyIn.kind.in_(("income", "mixed", "received"))))
+    if not total:
+        return None
+    return {"year": today.year, "month": today.month, "statement_in": round(float(total))}
 
 
 def _income_untagged(s, user_id, pic):

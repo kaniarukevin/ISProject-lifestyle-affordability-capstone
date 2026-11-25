@@ -1617,3 +1617,23 @@ def test_weak_passwords_are_refused(client):
     ok = client.post("/auth/register", json={"email": "kevinkaniaru@example.com", "password": "mango-river-42",
                                              "consent": True})
     assert ok.status_code in (200, 201)
+
+
+def test_timeline_shows_statement_money_in_and_carry_over(client, monkeypatch):
+    # 25 Nov: Records shows what the statement says came in, and money left over from earlier months.
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 1, "incomes": [{"name": "Pay", "amount": 50000}]})
+    for m, amt in ((8, 30000), (9, 30000), (10, 60000)):
+        client.post("/me/transactions", headers=h, json=[{"date": f"2026-{m:02d}-05", "amount": amt,
+                                                           "category": "food_groceries"}])
+    with store.session() as s:
+        s.add_all([store.MoneyIn(user_id=1, day=store.date(2026, m, 1), amount=amt, kind=kind, payee_key="in:x")
+                   for m, amt, kind in ((8, 70000, "received"), (9, 70000, "received"), (10, 5000, "own_account"),
+                                        (11, 12000, "received"))])
+        s.commit()
+    o = client.get("/me/overview", headers=h).get_json()
+    by = {m["month"]: m for m in o["timeline"]}
+    assert by[8]["statement_in"] == 70000 and by[10]["statement_in"] == 0     # own-account money is not income
+    assert by[10]["carry_in"] > 0 and by[10]["overspent"] is False and by[10]["covered"] is True
+    assert o["current_in"] == {"year": 2026, "month": 11, "statement_in": 12000}
