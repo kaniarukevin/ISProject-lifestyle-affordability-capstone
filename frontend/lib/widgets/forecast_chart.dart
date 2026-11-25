@@ -463,7 +463,7 @@ void _tooltip(Canvas canvas, Size size, double atX, List<String> lines) {
   const pad = 10.0;
   final w = tps.map((t) => t.width).reduce(math.max) + pad * 2;
   final h = tps.fold<double>(0, (s, t) => s + t.height) + pad * 2;
-  final bx = (atX + 12 + w > size.width ? atX - 12 - w : atX + 12).clamp(0.0, math.max(0.0, size.width - w));
+  final bx = (atX + 12 + w > size.width ? atX - 12 - w : atX + 12).clamp(0.0, math.max(0.0, size.width - w)).toDouble();
   final rect = RRect.fromRectAndRadius(Rect.fromLTWH(bx, 2, w, h), const Radius.circular(12));
   canvas.drawRRect(rect, Paint()..color = const Color(0xFF111111));
   var ty = 2 + pad;

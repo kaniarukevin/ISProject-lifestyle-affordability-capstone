@@ -55,10 +55,7 @@ class CardLayout {
                 child: ReorderableListView(
                   shrinkWrap: true,
                   buildDefaultDragHandles: false,
-                  onReorder: (from, to) => set(() {
-                    if (to > from) to -= 1;
-                    o.insert(to, o.removeAt(from));
-                  }),
+                  onReorderItem: (from, to) => set(() => o.insert(to, o.removeAt(from))),
                   children: [
                     for (var i = 0; i < o.length; i++)
                       ListTile(
