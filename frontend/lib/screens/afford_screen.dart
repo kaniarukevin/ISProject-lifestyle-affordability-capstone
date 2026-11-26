@@ -728,18 +728,25 @@ class _SavingsOfferState extends State<_SavingsOffer> {
       if ((kept['goals_KES'] as num) > 0) '${kesAmount(kept['goals_KES'] as num)} for your goals',
     ];
     final rebuild = o['months_to_rebuild'] as num?;
+    final intoCushion = o['into_cushion'] == true;   // 26 Nov: offered, but it would go into the cushion
     return Panel(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Icon(Icons.savings_rounded),
           const SizedBox(width: 10),
-          Expanded(child: Text('Use your savings?', style: theme.textTheme.titleMedium)),
+          Expanded(child: Text(intoCushion ? 'Use your savings? Not recommended' : 'Use your savings?',
+              style: theme.textTheme.titleMedium?.copyWith(color: intoCushion ? c.warn : null))),
         ]),
         const SizedBox(height: 8),
+        if (intoCushion)
+          Text('Your savings could pay for it, but you would keep only ${kesAmount(o['keep_after_KES'] as num)}, '
+              'below your ${o['cushion_months']}-month cushion of ${kesAmount(kept['cushion_KES'] as num)} kept for '
+              'emergencies. Tosha recommends against it.')
+        else
         Text(o['covers_all'] == true
             ? 'Your savings could cover ${kesAmount(o['use_KES'] as num)}. You would keep ${kesAmount(o['keep_after_KES'] as num)}.'
             : 'Your savings could cover ${kesAmount(o['use_KES'] as num)} of it. The rest would come from your monthly money.'),
-        if (keptParts.isNotEmpty) ...[
+        if (keptParts.isNotEmpty && !intoCushion) ...[
           const SizedBox(height: 6),
           Text('Kept aside first: ${keptParts.join(', ')}.', style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),
         ],
@@ -754,7 +761,7 @@ class _SavingsOfferState extends State<_SavingsOffer> {
         FilledButton.icon(
           onPressed: _busy ? null : _use,
           icon: const Icon(Icons.savings_outlined),
-          label: Text(_busy ? 'Checking…' : 'Check it using savings'),
+          label: Text(_busy ? 'Checking…' : (intoCushion ? 'Check it anyway using savings' : 'Check it using savings')),
         ),
       ]),
     );

@@ -2928,11 +2928,17 @@ def _savings_offer(room, cost):
     if not room or cost <= 0:
         return None
     use = min(cost, room["free_KES"])
+    into_cushion = use < cost <= room["balance_KES"]
+    if into_cushion:
+        # 26 Nov: savings could pay, but only by going into the cushion. The choice is still offered (it is her
+        # money), with Tosha recommending against it.
+        use = cost
     if use <= 0:
         return None
     rebuild = (math.ceil(use / room["monthly_saving_KES"]) if room["monthly_saving_KES"] > 0 else None)
     return {**room, "cost_KES": round(cost), "use_KES": round(use), "covers_all": use >= cost,
-            "keep_after_KES": room["balance_KES"] - round(use), "months_to_rebuild": rebuild}
+            "keep_after_KES": room["balance_KES"] - round(use), "months_to_rebuild": rebuild,
+            "into_cushion": into_cushion, "recommended": not into_cushion}
 
 
 def _seasonal_check(s, user_id, pic, result):
@@ -3036,7 +3042,9 @@ def afford():
         except aff.AffordabilityInputError as exc:
             raise InputError(str(exc))
         cash_buy = scenario is not None and scenario.get("type") == "purchase" and scenario.get("months") == 1
-        if use_savings and cash_buy and room and room["free_KES"] >= float(scenario["price"]):
+        into_cushion = bool(use_savings and cash_buy and room
+                            and room["free_KES"] < float(scenario["price"]) <= room["balance_KES"])
+        if use_savings and cash_buy and room and (room["free_KES"] >= float(scenario["price"]) or into_cushion):
             used = float(scenario["price"])
             short_now = -min(0, (result.get("before") or {}).get("left_over_KES") or 0)
             result.update({"verdict": "Affordable" if short_now == 0 else "Stretch",
@@ -3051,8 +3059,17 @@ def afford():
                                                              if room["monthly_saving_KES"] > 0 else None)}
             rest = ("" if scenario is None or scenario.get("type") != "savings_goal" else
                     f" The other KES {round(scenario['target']):,} comes from your monthly money.")
-            result["reasons"].insert(0, f"Using KES {round(used):,} of your savings, you keep KES {keep:,}, "
-                                        f"including your {room['cushion_months']}-month cushion.{rest}")
+            if into_cushion:
+                cushion = room["kept"]["cushion_KES"]
+                result["verdict"] = "Stretch"
+                result["using_savings"].update({"into_cushion": True, "recommended": False, "cushion_KES": cushion})
+                result["reasons"].insert(0, f"Not recommended. Using KES {round(used):,} of your savings leaves you "
+                                            f"KES {keep:,}, below your {room['cushion_months']}-month cushion of about "
+                                            f"KES {cushion:,} kept for emergencies. If something goes wrong, you "
+                                            f"would have less to fall back on.")
+            else:
+                result["reasons"].insert(0, f"Using KES {round(used):,} of your savings, you keep KES {keep:,}, "
+                                            f"including your {room['cushion_months']}-month cushion.{rest}")
             if cash_buy and result["verdict"] == "Stretch":
                 result["reasons"].append(f"You are already short about KES {short_now:,} a month, and that also comes "
                                          "out of your savings.")

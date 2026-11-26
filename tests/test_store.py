@@ -1753,3 +1753,16 @@ def test_afford_without_heavy_months_is_unchanged(client, monkeypatch):
     h = _jan_fees_household(client, fees=0)
     a = client.post("/me/afford", headers=h, json={"preset": "purchase", "price": 36000, "months": 12}).get_json()
     assert "tight_months" not in a and len({r["left_after_KES"] for r in a["cash_flow"]}) == 1
+
+
+def test_savings_inside_the_cushion_are_offered_but_not_recommended(client, monkeypatch):
+    """26 Nov: savings that could pay only by going into the 3-month cushion were not offered at all. It is the
+    user's money, so the choice is shown, with Tosha recommending against it."""
+    h = _earner(client, monkeypatch, savings=60000)
+    buy = {"preset": "purchase", "price": 30000, "months": 1, "label": "Fridge"}
+    r = client.post("/me/afford", headers=h, json=buy).get_json()
+    offer = r["savings_offer"]
+    assert offer["free_KES"] < 30000 and offer["into_cushion"] and offer["recommended"] is False
+    r = client.post("/me/afford", headers=h, json={**buy, "use_savings": True}).get_json()
+    assert r["verdict"] == "Stretch" and r["reasons"][0].startswith("Not recommended")
+    assert r["using_savings"]["into_cushion"] and r["using_savings"]["keep_KES"] == 30000
