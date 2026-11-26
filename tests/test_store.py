@@ -1289,7 +1289,7 @@ def test_a_check_shows_the_budget_now_and_after_side_by_side(client, monkeypatch
     assert sum(x["now"] for x in lines.values()) == sum(x["after"] for x in lines.values()) == 30000
     # 25 Nov: a move that only fits by cutting food or transport below need shows no budget, and says why.
     r = client.post("/me/afford", headers=h, json={"preset": "move_house", "new_rent": 18000}).get_json()
-    assert all(x["after"] is None for x in r["budgets"]["lines"]) and "missing" in r["budgets"]["note"]
+    assert all(x["after"] is None for x in r["budgets"]["lines"]) and "full budget plan" in r["budgets"]["note"] and "short" in r["budgets"]["note"]
     r = client.post("/me/afford", headers=h, json={"preset": "new_expense", "category": "transport", "amount": 2000})
     lines = {x["category"]: x for x in r.get_json()["budgets"]["lines"]}
     assert lines["transport"]["after"] > lines["transport"]["now"] + 1000          # the new cost has its own line

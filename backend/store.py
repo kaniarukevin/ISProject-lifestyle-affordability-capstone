@@ -2875,8 +2875,11 @@ def _budget_side_by_side(s, pic, scenario, result):
             if below > 0:
                 # No budget that cuts food or transport to fit: say what is missing instead (25 Nov sweep).
                 after = None
-                note = (f"This does not fit without cutting food, transport or bills below what you need: about "
-                        f"KES {below:,} a month is missing.")
+                # 26 Nov: "This does not fit" read as a contradiction next to "KES 4,552 left each month". This note
+                # is about the full budget plan (saving and margin kept), not about paying for the change.
+                note = (f"Your full budget plan, with your usual saving, would be about KES {below:,} a month short "
+                        f"unless food, transport or bills were cut below what you need. Tosha won't cut those, so "
+                        f"no new budget is shown.")
         for cat, add in (everyday_added.items() if after is not None else []):   # the new cost on its own line
             after[cat] = after.get(cat, 0) + round(add)
             after["other_commitments"] = after.get("other_commitments", 0) - round(add)
