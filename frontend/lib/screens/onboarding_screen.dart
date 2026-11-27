@@ -207,7 +207,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   ),
                 ]),
                 const SizedBox(height: 28),
-                Expanded(child: ListView(children: [_body(theme, c)])),
+                // Bottom padding and a gap, so the last line of a long step never runs into the footer
+                // (found 12 Nov on step 3 at 390 x 844).
+                Expanded(child: ListView(padding: const EdgeInsets.only(bottom: 16), children: [_body(theme, c)])),
+                const SizedBox(height: 8),
                 if (error != null)
                   Padding(padding: const EdgeInsets.only(bottom: 10), child: Text(error!, style: TextStyle(color: c.warn))),
                 Text(_footnote, textAlign: TextAlign.center, style: theme.textTheme.bodySmall?.copyWith(color: c.muted)),

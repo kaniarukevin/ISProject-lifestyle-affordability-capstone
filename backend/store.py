@@ -1912,8 +1912,10 @@ def overview():
         betting = _betting(s, g.user_id, pic["scored"])
         borrowing = _borrowing(s, g.user_id, pic)
         records_until = _records_until(s, g.user_id)
-        _snapshot(s, g.user_id, outlook_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month,
-                                                 blend=False), pic["today"], pic["estimated"])
+        # The plain outlook ("at your usual pace") is what the chart and the next-3-months view show, so the
+        # month-ahead note below uses it too (found 12 Nov: the note and the chart disagreed by KES 4,000).
+        plain_outlook = outlook_for_user(s, g.user_id, basis, pic["today"].year, pic["today"].month, blend=False)
+        _snapshot(s, g.user_id, plain_outlook, pic["today"], pic["estimated"])
         forecast_checks = _forecast_checks(s, g.user_id, pic)
         saved_budget = _saved_budget(s, g.user_id, pic["today"].year, pic["today"].month)
     health = aff.evaluate({"household": {"household_size": profile.household_size,
@@ -1986,7 +1988,7 @@ def overview():
     if fc["total"] > income > 0:
         notes.append(f"This month's spending is expected to be KES {fc['total']:,}, more than your income of "
                      f"KES {round(income):,}.")
-    later = [f for f in outlook[1:] if f["total"] > income > 0]
+    later = [f for f in plain_outlook[1:] if f["total"] > income > 0]
     if later:
         f = later[0]
         fees = f["breakdown"].get("school_fees", 0)

@@ -1069,6 +1069,27 @@ def test_a_costly_month_ahead_gets_a_note(client, monkeypatch):
     assert any(n.startswith("January looks like about") and "school fees" in n for n in o["notes"])
 
 
+def test_the_month_ahead_note_matches_the_chart_even_with_a_saved_budget(client, monkeypatch):
+    """Found 12 Nov: the overview note said January was ~79,910 while the chart (the forecast endpoint, which
+    the budget is compared with) showed 75,958. Both now come from the same plain outlook."""
+    monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 15))
+    h = signup(client)
+    client.put("/me/profile", headers=h, json={"householdSize": 3, "dependants": 1,
+                                                "incomes": [{"name": "Pay", "amount": 30000}]})
+    for m in range(1, 11):
+        rows = [{"date": f"2026-{m:02d}-03", "amount": 24000, "category": "food_groceries"}]
+        if m in (1, 5, 9):
+            rows.append({"date": f"2026-{m:02d}-05", "amount": 20000, "category": "school_fees"})
+        client.post("/me/transactions", headers=h, json=rows)
+    # a saved budget for the current month, far above usual, so a blended forecast would differ
+    client.put("/me/budgets/2026/11", headers=h, json={"budget": {"food_groceries": 36000, "transport": 5000}})
+    o = client.get("/me/overview", headers=h).get_json()
+    f = client.get("/me/budget-forecast", headers=h).get_json()
+    jan_chart = next(m for m in f["months"] if (m["year"], m["month"]) == (2027, 1))["spending"]
+    note = next(n for n in o["notes"] if n.startswith("January looks like about"))
+    assert f"KES {jan_chart:,}" in note
+
+
 def test_paying_a_bill_moves_its_due_date_and_the_dashboard_lists_what_is_due(client, monkeypatch):
     monkeypatch.setattr(store, "user_forecast_model", lambda: None)
     monkeypatch.setattr(store, "_today", lambda: store.date(2026, 11, 5))

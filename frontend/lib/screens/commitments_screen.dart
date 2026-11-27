@@ -276,7 +276,7 @@ class _CommitmentsScreenState extends State<CommitmentsScreen> with ReloadOnChan
                       ),
                       if (debts?['extra_saves'] != null) ...[
                         const SizedBox(height: 8),
-                        Text('Debt-free ${debts!['extra_saves']['months']} month${debts['extra_saves']['months'] == 1 ? '' : 's'} sooner, '
+                        Text('Debt-free ${monthsWord(debts!['extra_saves']['months'])} sooner, '
                             'KES ${money(debts['extra_saves']['interest_KES'] as num)} less interest.',
                             style: theme.textTheme.bodyMedium),
                       ],
